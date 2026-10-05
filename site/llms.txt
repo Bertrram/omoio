@@ -39,3 +39,5 @@ Omoio is in early development and runs on 64-bit Windows only. It is not an emul
 - [Issues and bug reports](https://github.com/Bertrram/omoio/issues)
 - [Launch video](https://www.youtube.com/watch?v=wWmthRdoImE)
 - [YouTube channel](https://www.youtube.com/@OmoioApp)
+- [TikTok](https://www.tiktok.com/@omoioapp)
+- [Instagram](https://www.instagram.com/omoioapp)
