@@ -44,7 +44,31 @@ use tauri::AppHandle;
 /// v2.6), so this Pro Controller takes its d-pad from the stick
 /// (`dpad_from_stick`). Omoio shows only the TV picture, so nothing of the
 /// GamePad's screen is lost.
-pub const PRO_FIRST: [&str; 2] = ["0005000010181f00", "000500001017c600"];
+///
+/// Skylanders SWAP Force is here on two reports of the same stop, a game
+/// that starts and a language screen no button answers (v0.2.3, 6 October
+/// 2026), and has not yet been played this way. Its ids are the two Cemu's
+/// own graphic packs for it name (`SkylandersSwapForce/Mods/FPS`), which
+/// don't say which is which region. Its d-pad, taken from the stick as Trap
+/// Team's is, may have a job in SWAP Force that Trap Team's has not.
+pub const PRO_FIRST: [&str; 4] = [
+    // Skylanders Trap Team, European and American
+    "0005000010181f00",
+    "000500001017c600",
+    // Skylanders SWAP Force
+    "0005000010140400",
+    "0005000010139200",
+];
+
+/// Whether the game about to start takes a Pro Controller as player 1. It is
+/// known by name as well as by id, since a disc image's id is known only once
+/// Cemu has run it, and a game's first start is when it needs this. `title_id`
+/// is asked only when the name doesn't tell.
+pub fn pro_first(title: &str, title_id: impl FnOnce() -> Option<String>) -> bool {
+    use crate::core::figures::{game_from_title, Game};
+    matches!(game_from_title(title), Some(Game::TrapTeam | Game::SwapForce))
+        || title_id().is_some_and(|id| PRO_FIRST.contains(&id.to_ascii_lowercase().as_str()))
+}
 
 /// Player 1's file as each kind of controller, kept beside the others so the
 /// one a game needs can become `controller0.xml` as the game starts.
@@ -649,6 +673,31 @@ mod tests {
         let two = std::fs::read_to_string(dir.join("controller1.xml")).unwrap();
         assert!(two.contains("<api>XInput</api>"), "an Xbox pad beside it stays XInput: {two}");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn trap_team_and_swap_force_take_a_pro_controller_as_player_one() {
+        let unknown = || None;
+        assert!(pro_first("Skylanders Trap Team", unknown));
+        assert!(pro_first("Skylanders - Trap Team (Europe) (En,Fr)", unknown));
+        assert!(pro_first("Skylanders SWAP Force", unknown));
+        assert!(pro_first("Skylanders - Swap Force", unknown), "a disc image's file name");
+        assert!(pro_first("Skylanders SWAP Force", || panic!("the name is enough")));
+        for id in PRO_FIRST {
+            assert!(pro_first("WUP-ASFP", || Some(id.to_string())), "{id}");
+            assert!(pro_first("WUP-ASFP", || Some(id.to_ascii_uppercase())), "{id} as a game's own id has it");
+        }
+        assert!(!pro_first("Skylanders Giants", unknown));
+        assert!(!pro_first("Skylanders SuperChargers", || Some("0005000010abcd00".to_string())));
+    }
+
+    #[test]
+    fn pro_first_ids_are_as_cemu_logs_them() {
+        for id in PRO_FIRST {
+            assert_eq!(id.len(), 16, "{id}");
+            assert!(id.starts_with("00050000"), "a game, not its update: {id}");
+            assert!(id.chars().all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c)), "{id}");
+        }
     }
 
     fn scratch(name: &str) -> std::path::PathBuf {
