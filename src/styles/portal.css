@@ -1354,9 +1354,12 @@ body {
   filter: drop-shadow(0 10px 26px color-mix(in srgb, var(--tint) 45%, transparent));
 }
 
+/* The game's own vehicle pictures are 88 px. Twice that stays sharp, and a
+   set size keeps the picture inside its box, where a share of the card's
+   width grew it over the name. */
 .portal-car-card .portal-villain-card-art > img {
-  width: 100%;
-  height: 100%;
+  width: 176px;
+  height: 176px;
   object-fit: contain;
 }
 
