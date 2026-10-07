@@ -85,9 +85,42 @@ pub fn detect_version(app: &AppHandle) -> Option<String> {
     if installing {
         return None;
     }
-    let version = read_version(&exe)?;
+    let version = if running(&exe) {
+        let log = std::fs::read_to_string(install_dir(app).ok()?.join("log").join("RPCS3.log")).ok()?;
+        log_version(&log)?
+    } else {
+        read_version(&exe)?
+    };
     *known = Some((stamp.0, stamp.1, version.clone()));
     Some(version)
+}
+
+/// Whether Omoio's RPCS3 is running. It allows one copy of itself at a time:
+/// a second, even one asked only for `--version`, puts up a "Fatal Error"
+/// window over the game and waits there until someone presses OK, and the
+/// portal menu waited with it.
+fn running(exe: &Path) -> bool {
+    use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
+    let mut system = System::new();
+    system.refresh_processes_specifics(
+        ProcessesToUpdate::All,
+        true,
+        ProcessRefreshKind::nothing().with_exe(UpdateKind::OnlyIfNotSet),
+    );
+    system
+        .processes()
+        .values()
+        .any(|process| process.exe().is_some_and(|own| own.as_os_str().eq_ignore_ascii_case(exe.as_os_str())))
+}
+
+/// The version a running RPCS3 gives on its log's first line, "RPCS3
+/// v0.0.43-20240-5f8dd1de Alpha | master", in the form `--version` gives it.
+/// The log is rewritten at every start, so it is the running copy's.
+fn log_version(log: &str) -> Option<String> {
+    let first = log.trim_start_matches('\u{feff}').lines().next()?;
+    let mut words = first.split_whitespace();
+    (words.next()? == "RPCS3").then_some(())?;
+    words.next()?.strip_prefix('v').map(str::to_string)
 }
 
 pub fn open_in_explorer(folder: &Path) -> Result<(), String> {
@@ -535,6 +568,15 @@ mod tests {
             Some("0.0.42-19985-6ba56a52")
         );
         assert_eq!(version_from_archive("rpcs3-v0.0.42-19985-6ba56a52_win64_msvc.7z.sha256"), None);
+    }
+
+    #[test]
+    fn a_running_rpcs3s_version_is_read_from_its_log() {
+        let log = "\u{feff}RPCS3 v0.0.43-20240-5f8dd1de Alpha | master\nArchitecture: x64\n";
+        assert_eq!(log_version(log), Some("0.0.43-20240-5f8dd1de".to_string()));
+        assert_eq!(log_version("RPCS3 v0.0.43-20240-5f8dd1de Alpha"), Some("0.0.43-20240-5f8dd1de".to_string()));
+        assert_eq!(log_version("·! 0:00:00.00000 SYS: something"), None);
+        assert_eq!(log_version(""), None);
     }
 
     #[test]
