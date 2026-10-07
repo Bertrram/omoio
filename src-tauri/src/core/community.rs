@@ -56,3 +56,31 @@ pub struct PackChange {
     #[serde(default)]
     pub choices: BTreeMap<String, String>,
 }
+
+/// Whether a game takes the figures an emulator's figure maker makes for it.
+/// Imaginators checks a factory signature on the figures released for it,
+/// which a made figure doesn't carry, and a community pack can switch that
+/// check off.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct MadeFigures {
+    pub check: Check,
+    /// The pack that switches the check off, as the Community packs list
+    /// names it. Empty when the game checks nothing.
+    pub pack: String,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Check {
+    /// The game takes made figures as they are.
+    #[default]
+    None,
+    /// The pack is on in the game running now.
+    Passed,
+    /// The pack is on, and counts from the game's next start.
+    NextStart,
+    /// The user switched the pack off.
+    Off,
+    /// The emulator's packs aren't downloaded, or this one isn't among them.
+    NotDownloaded,
+}
