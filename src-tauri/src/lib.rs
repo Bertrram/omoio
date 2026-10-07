@@ -122,6 +122,7 @@ pub fn run() {
             commands::add_figures,
             commands::close_portal_menu,
             commands::portal_menu_family,
+            commands::portal_game,
             commands::pads_held,
             commands::figure_characters,
             commands::portal_create,

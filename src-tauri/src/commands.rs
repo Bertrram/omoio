@@ -1674,6 +1674,14 @@ pub fn portal_menu_family() -> String {
     crate::portal_menu::family()
 }
 
+/// The Skylanders game running now, so the menu lays itself out for it.
+/// `None` when nothing runs or the title doesn't say which game it is.
+#[tauri::command]
+pub fn portal_game(app: AppHandle) -> Option<crate::core::figures::Game> {
+    let playing = app.state::<Session>().playing()?;
+    crate::core::figures::game_from_title(&playing.title)
+}
+
 /// Everything held on any pad, for a menu any player may use. Nothing while
 /// another program is in front, so Omoio's menus never act on presses meant
 /// for it. Asked of Windows rather than of the page's focus: the page loses

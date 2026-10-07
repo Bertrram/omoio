@@ -38,7 +38,8 @@ pub enum Kind {
 
 /// The games in the order they came out. A game reads the figures of its own
 /// year and of every earlier one, never those of a later one.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Game {
     Spyro,
     Giants,
@@ -570,6 +571,20 @@ mod tests {
         assert_eq!(game_from_title("Skylanders: Trap Team"), Some(Game::TrapTeam));
         assert_eq!(game_from_title("Skylanders SuperChargers"), Some(Game::SuperChargers));
         assert_eq!(game_from_title("LittleBigPlanet 3"), None);
+    }
+
+    #[test]
+    fn games_are_written_the_way_the_menu_reads_them() {
+        let written = [
+            Game::Spyro,
+            Game::Giants,
+            Game::SwapForce,
+            Game::TrapTeam,
+            Game::SuperChargers,
+            Game::Imaginators,
+        ]
+        .map(|game| serde_json::to_value(game).unwrap());
+        assert_eq!(written, ["spyro", "giants", "swapforce", "trapteam", "superchargers", "imaginators"]);
     }
 
     #[test]
