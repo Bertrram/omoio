@@ -42,6 +42,7 @@ pub fn run() {
             #[cfg(desktop)]
             app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
             big_picture::start(app.handle());
+            figure_pictures::tidy(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

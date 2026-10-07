@@ -4,14 +4,23 @@
 //! readers it needs don't live in Omoio. Omoio downloads it only when the
 //! user asks for the pictures, and checks it against the fingerprint below
 //! every time before it runs, so nothing else can stand in for it.
+//!
+//! A Wii U disc image is encrypted, so for one Omoio has Cemu make a copy it
+//! can read, reads the pictures from that, and deletes the copy at once. The
+//! copy is about the size of the game and takes minutes to make, so it is
+//! made only when it fits with room to spare, and only for a game the reader
+//! knows. Nothing of it is kept but the pictures, and a copy left by a run
+//! that never finished goes the next time Omoio starts.
 
 use crate::backends::EmulatorBackend;
+use crate::core::figures;
 use crate::core::library::Game;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -19,10 +28,33 @@ const READER_URL: &str = "https://github.com/Bertrram/omoio-portraits/releases/d
 const READER_SHA256: &str = "ad5ade731e957f509623aba4e9457b2dc66de81154d33164c13905b5edce820f";
 const READER: &str = "omoio-portraits.exe";
 
-const NO_COPY: &str = "Omoio reads the pictures from a copy of the game that Cemu makes, and there isn't one yet. In Cemu's Title Manager, right-click the game, choose Convert to compressed Wii U archive, and save it in the game's folder.";
+/// The Wii U games whose pictures the reader at `READER_URL` knows (its
+/// README). A copy of a disc image is made only for one of these: for any
+/// other the minutes and gigabytes would come to nothing. SuperChargers
+/// joins them with the reader that reads it.
+const COPIES_FOR: [figures::Game; 2] = [figures::Game::SwapForce, figures::Game::TrapTeam];
+
+/// Room left free on the drive on top of the copy, so it is never filled to
+/// the last byte.
+const SPARE: u64 = 2 << 30;
+
+/// The folder a copy is made in: in Omoio's own data, or when that drive has
+/// no room, beside the game.
+const COPY_FOLDER: &str = "picture-copy";
+const COPY_BESIDE: &str = ".omoio-picture-copy";
+/// Where a copy beside a game is noted while it is made, for tidying away
+/// one that a run left behind.
+const COPY_NOTE: &str = "picture-copy.txt";
+
+const NO_COPY: &str = "Omoio can't read the pictures from this copy of the game.";
+const NOT_YET: &str = "Omoio can't read this game's pictures yet.";
 
 /// The reader while it runs, so it can be stopped.
 static RUNNING: Mutex<Option<Child>> = Mutex::new(None);
+/// Asks a copy being made to stop.
+static CANCEL: AtomicBool = AtomicBool::new(false);
+/// Whether the emulator is making a copy, so no game starts in it meanwhile.
+static COPYING: AtomicBool = AtomicBool::new(false);
 
 fn data_dir(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(app.path().data_dir().map_err(|e| e.to_string())?.join("Omoio"))
@@ -147,70 +179,197 @@ fn title_of(reader: &Path, copy: &Path) -> Option<String> {
 #[derive(Clone, serde::Serialize)]
 struct Progress {
     title_id: String,
+    /// "copy" while the emulator makes a copy to read from, "read" while
+    /// the pictures are read.
+    step: &'static str,
     done: usize,
     of: usize,
 }
 
+/// What asking for a game's pictures came to: how many were read, or, for
+/// a game whose own files can't be read, what a temporary copy of it would
+/// take in bytes, for the user to agree to first.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Got {
+    Pictures(usize),
+    Copy { need: u64, free: u64 },
+}
+
+fn copies_for(game: &Game) -> bool {
+    figures::game_from_title(&game.title).is_some_and(|which| COPIES_FOR.contains(&which))
+}
+
+fn local_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(app.path().local_data_dir().map_err(|e| e.to_string())?.join("Omoio"))
+}
+
+/// Where a copy of the game may go, in the order tried.
+fn copy_places(app: &AppHandle, game: &Game) -> Vec<PathBuf> {
+    let own = local_dir(app).ok().map(|dir| dir.join(COPY_FOLDER));
+    let beside = game.path.parent().map(|dir| dir.join(COPY_BESIDE));
+    own.into_iter().chain(beside).collect()
+}
+
+/// The room free on the drive a folder is on, whether or not the folder is
+/// there yet.
+fn free_space(folder: &Path) -> Option<u64> {
+    let there = folder.ancestors().find(|dir| dir.is_dir())?;
+    let path = windows::core::HSTRING::from(there);
+    let mut free = 0u64;
+    unsafe { windows::Win32::Storage::FileSystem::GetDiskFreeSpaceExW(&path, Some(&mut free), None, None) }.ok()?;
+    Some(free)
+}
+
+fn gigabytes(bytes: u64) -> String {
+    format!("{:.0} GB", (bytes as f64 / f64::from(1u32 << 30)).ceil())
+}
+
+/// The most room free where a copy of the game could go.
+fn most_free(app: &AppHandle, game: &Game) -> u64 {
+    copy_places(app, game).iter().filter_map(|place| free_space(place)).max().unwrap_or(0)
+}
+
+/// Has the emulator make a copy of the game Omoio can read, `need` bytes
+/// with room to spare, in the first place with room for it, and returns the
+/// folder it is in. The folder is Omoio's alone and goes again after reading.
+fn make_copy(app: &AppHandle, backend: &dyn EmulatorBackend, game: &Game, need: u64) -> Result<PathBuf, String> {
+    let playing = app.state::<crate::session::Session>().playing();
+    if playing.is_some_and(|playing| playing.console == game.console) {
+        return Err(format!("Close the game first. {} makes a copy of this one to read the pictures from.", backend.name()));
+    }
+    let places = copy_places(app, game);
+    let Some(place) = places.iter().find(|place| free_space(place).is_some_and(|free| free >= need)) else {
+        return Err(format!(
+            "Reading the pictures needs {} free for a few minutes, and {} is free. Free some room and try again.",
+            gigabytes(need),
+            gigabytes(most_free(app, game))
+        ));
+    };
+    let _ = std::fs::remove_dir_all(place);
+    std::fs::create_dir_all(place).map_err(|_| "Couldn't make room for a copy of the game.".to_string())?;
+    if let Ok(dir) = data_dir(app) {
+        let _ = std::fs::write(dir.join(COPY_NOTE), place.to_string_lossy().as_bytes());
+    }
+    CANCEL.store(false, Ordering::Relaxed);
+    COPYING.store(true, Ordering::Relaxed);
+    let progress = |percent: u32| {
+        let progress = Progress { title_id: game.title_id.clone(), step: "copy", done: percent as usize, of: 100 };
+        let _ = app.emit("figure-pictures", progress);
+    };
+    let made = backend.make_copy(app, game, &place.join("game.wua"), &progress, &CANCEL);
+    COPYING.store(false, Ordering::Relaxed);
+    match made {
+        Ok(()) => Ok(place.clone()),
+        Err(said) => {
+            remove_copy(app, place);
+            Err(said)
+        }
+    }
+}
+
+fn remove_copy(app: &AppHandle, place: &Path) {
+    let _ = std::fs::remove_dir_all(place);
+    if let Ok(dir) = data_dir(app) {
+        let _ = std::fs::remove_file(dir.join(COPY_NOTE));
+    }
+}
+
+/// Deletes a copy a run left behind, when Omoio was closed or stopped while
+/// one was being made or read.
+pub fn tidy(app: &AppHandle) {
+    let noted = data_dir(app).ok().and_then(|dir| std::fs::read_to_string(dir.join(COPY_NOTE)).ok());
+    if let Some(place) = noted.map(PathBuf::from).filter(|place| place.ends_with(COPY_BESIDE) || place.ends_with(COPY_FOLDER)) {
+        remove_copy(app, &place);
+    }
+    if let Ok(dir) = local_dir(app) {
+        let _ = std::fs::remove_dir_all(dir.join(COPY_FOLDER));
+    }
+}
+
+/// Whether the emulator is busy making a copy of a game.
+pub fn copying() -> bool {
+    COPYING.load(Ordering::Relaxed)
+}
+
 /// Reads the figures' pictures out of the game and keeps them, in place of
-/// any from before. Returns how many there are. Progress goes out as
-/// `figure-pictures` events.
-pub async fn get(app: AppHandle, backend: &'static dyn EmulatorBackend, game: Game) -> Result<usize, String> {
+/// any from before, and says how many there are. Progress goes out as
+/// `figure-pictures` events. A game whose own files can't be read gets a
+/// temporary copy first, once `copy` says the user agreed to it, and the
+/// copy is deleted again whatever happens.
+pub async fn get(app: AppHandle, backend: &'static dyn EmulatorBackend, game: Game, copy: bool) -> Result<Got, String> {
     let reader = reader(&app).await?;
     let folder = folder(&app, &game.title_id)?;
     tauri::async_runtime::spawn_blocking(move || {
-        let copy = backend
-            .readable_copy(&app, &game, &|path| title_of(&reader, path))
-            .ok_or(NO_COPY)?;
-        // Written beside and swapped in at the end, so a run that fails or is
-        // stopped leaves the pictures from before as they were.
-        let fresh = folder.with_extension("new");
-        let _ = std::fs::remove_dir_all(&fresh);
-        let mut child = run(&reader)
-            .arg("pictures")
-            .arg(&copy)
-            .arg(&fresh)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|_| "Couldn't start the picture reader.".to_string())?;
-        let (out, err) = (child.stdout.take(), child.stderr.take());
-        *RUNNING.lock().unwrap() = Some(child);
-
-        let mut written = 0;
-        for line in out.map(BufReader::new).into_iter().flat_map(BufRead::lines).map_while(Result::ok) {
-            if let Some((done, of)) = line.strip_prefix("progress ").and_then(|rest| rest.split_once(' ')) {
-                let progress = Progress {
-                    title_id: game.title_id.clone(),
-                    done: done.parse().unwrap_or(0),
-                    of: of.parse().unwrap_or(0),
-                };
-                let _ = app.emit("figure-pictures", progress);
-            } else if let Some(count) = line.strip_prefix("done ") {
-                written = count.parse().unwrap_or(0);
-            }
+        if let Some(found) = backend.readable_copy(&app, &game, &|path| title_of(&reader, path)) {
+            return read(&app, &reader, &game, &found, &folder).map(Got::Pictures);
         }
-        let Some(mut child) = RUNNING.lock().unwrap().take() else {
-            let _ = std::fs::remove_dir_all(&fresh);
-            return Err("Stopped. The pictures from before are kept.".to_string());
-        };
-        let finished = child.wait().is_ok_and(|status| status.success());
-        if !finished {
-            let mut said = String::new();
-            let _ = err.map(|mut err| err.read_to_string(&mut said));
-            let _ = std::fs::remove_dir_all(&fresh);
-            let said = said.trim();
-            return Err(if said.is_empty() { "Couldn't read the pictures out of the game." } else { said }.to_string());
+        let need = backend.copy_size(&game).ok_or(NO_COPY)? + SPARE;
+        if !copies_for(&game) {
+            return Err(NOT_YET.to_string());
         }
-        let _ = std::fs::remove_dir_all(&folder);
-        std::fs::rename(&fresh, &folder).map_err(|_| "Couldn't keep the pictures in Omoio's folder.".to_string())?;
-        Ok(written)
+        if !copy {
+            return Ok(Got::Copy { need, free: most_free(&app, &game) });
+        }
+        let place = make_copy(&app, backend, &game, need)?;
+        let read = read(&app, &reader, &game, &place.join("game.wua"), &folder);
+        remove_copy(&app, &place);
+        read.map(Got::Pictures)
     })
     .await
     .map_err(|e| e.to_string())?
 }
 
-/// Stops the reader if it is running.
+fn read(app: &AppHandle, reader: &Path, game: &Game, copy: &Path, folder: &Path) -> Result<usize, String> {
+    // Written beside and swapped in at the end, so a run that fails or is
+    // stopped leaves the pictures from before as they were.
+    let fresh = folder.with_extension("new");
+    let _ = std::fs::remove_dir_all(&fresh);
+    let mut child = run(reader)
+        .arg("pictures")
+        .arg(copy)
+        .arg(&fresh)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|_| "Couldn't start the picture reader.".to_string())?;
+    let (out, err) = (child.stdout.take(), child.stderr.take());
+    *RUNNING.lock().unwrap() = Some(child);
+
+    let mut written = 0;
+    for line in out.map(BufReader::new).into_iter().flat_map(BufRead::lines).map_while(Result::ok) {
+        if let Some((done, of)) = line.strip_prefix("progress ").and_then(|rest| rest.split_once(' ')) {
+            let progress = Progress {
+                title_id: game.title_id.clone(),
+                step: "read",
+                done: done.parse().unwrap_or(0),
+                of: of.parse().unwrap_or(0),
+            };
+            let _ = app.emit("figure-pictures", progress);
+        } else if let Some(count) = line.strip_prefix("done ") {
+            written = count.parse().unwrap_or(0);
+        }
+    }
+    let Some(mut child) = RUNNING.lock().unwrap().take() else {
+        let _ = std::fs::remove_dir_all(&fresh);
+        return Err("Stopped. The pictures from before are kept.".to_string());
+    };
+    let finished = child.wait().is_ok_and(|status| status.success());
+    if !finished {
+        let mut said = String::new();
+        let _ = err.map(|mut err| err.read_to_string(&mut said));
+        let _ = std::fs::remove_dir_all(&fresh);
+        let said = said.trim();
+        return Err(if said.is_empty() { "Couldn't read the pictures out of the game." } else { said }.to_string());
+    }
+    let _ = std::fs::remove_dir_all(folder);
+    std::fs::rename(&fresh, folder).map_err(|_| "Couldn't keep the pictures in Omoio's folder.".to_string())?;
+    Ok(written)
+}
+
+/// Stops the reader if it is running, or the copy it would read from.
 pub fn stop() {
+    CANCEL.store(true, Ordering::Relaxed);
     if let Some(mut child) = RUNNING.lock().unwrap().take() {
         let _ = child.kill();
     }

@@ -99,9 +99,11 @@ in this game.
 
 Omoio doesn't come with the figures' pictures. It reads them from your own copy
 of the game when you press Get pictures once in the game's panel. A Wii U game
-imported as an unpacked folder or a .wua file is read as it is, and for a disc
-image Omoio reads a .wua file that Cemu packed beside it. For a PS3 game it
-reads the game's folder. A small separate program,
+imported as an unpacked folder or a .wua file is read as it is. A disc image
+can't be read as it is, so Omoio asks first, then has Cemu make a temporary
+copy, reads the pictures from it and deletes it again. It says how much room
+that needs for the few minutes it takes. For a PS3 game it reads the game's
+folder. A small separate program,
 [omoio-portraits](https://github.com/Bertrram/omoio-portraits), does the reading.
 Omoio downloads it only when you ask and checks it before it runs. The pictures
 stay on your computer, and the screenshots above show them as they look once

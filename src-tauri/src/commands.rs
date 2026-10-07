@@ -569,6 +569,11 @@ pub fn launch_game(app: AppHandle, title_id: String) -> Result<(), String> {
         return Err(format!("{name} is being updated. Try again in a minute."));
     }
 
+    // Cemu may be busy making a copy of a game to read figure pictures from.
+    if game.console == crate::core::console::Console::WiiU && crate::figure_pictures::copying() {
+        return Err("Cemu is busy getting figure pictures. Try again when that is done, or stop it.".to_string());
+    }
+
     // One game at a time: starting another stops the one already running.
     app.state::<Session>().stop();
     let backend = crate::backends::for_console(game.console)
@@ -1785,11 +1790,16 @@ pub fn figure_pictures(app: AppHandle, title_id: Option<String>) -> Result<crate
 }
 
 /// Reads the figures' pictures out of the user's own copy of the game.
-/// Resolves to how many were kept.
+/// Resolves to how many were kept, or, for a copy that can't be read as it
+/// is, to what a temporary copy would take until `copy` says to make one.
 #[tauri::command]
-pub async fn get_figure_pictures(app: AppHandle, title_id: String) -> Result<usize, String> {
+pub async fn get_figure_pictures(
+    app: AppHandle,
+    title_id: String,
+    copy: Option<bool>,
+) -> Result<crate::figure_pictures::Got, String> {
     let (backend, game) = game_and_emulator(&app, &title_id)?;
-    crate::figure_pictures::get(app, backend, game).await
+    crate::figure_pictures::get(app, backend, game, copy.unwrap_or(false)).await
 }
 
 #[tauri::command]

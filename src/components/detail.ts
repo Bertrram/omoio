@@ -269,17 +269,35 @@ function fill(body: HTMLElement, hero: HTMLElement, game: Game): void {
         .catch(() => 0);
     void countPictures().then(showPictures);
 
+    // A disc image can't be read as it is. The first press says what a
+    // temporary copy would take; pressing again makes it, and it is gone
+    // again once the pictures are read.
+    const gigabytes = (bytes: number) => `${Math.ceil(bytes / 2 ** 30)} GB`;
+    const sayWithSizes = (parts: (string | number)[]) => {
+      picturesNote.replaceChildren(
+        ...parts.map((part) => {
+          if (typeof part === "string") return document.createTextNode(part);
+          const size = document.createElement("span");
+          size.className = "n";
+          size.textContent = gigabytes(part);
+          return size;
+        })
+      );
+    };
     let reading = false;
+    let copyAgreed = false;
     pictures.onclick = async () => {
       if (reading) {
         await stopFigurePictures();
         return;
       }
       reading = true;
+      const copy = copyAgreed;
+      copyAgreed = false;
       picturesValue.className = "d-row-v";
       picturesValue.innerHTML = `<span class="pct"></span><span class="d-key">Stop</span>`;
       const pct = picturesValue.querySelector<HTMLElement>(".pct")!;
-      picturesNote.textContent = "Reading the pictures from your game…";
+      picturesNote.textContent = copy ? "Cemu is making a temporary copy of the game…" : "Reading the pictures from your game…";
       picturesFill.style.width = "0%";
       picturesBar.classList.remove("gone");
       const unlisten = onFigurePictures((progress) => {
@@ -287,9 +305,31 @@ function fill(body: HTMLElement, hero: HTMLElement, game: Game): void {
         const done = Math.round((progress.done / progress.of) * 100);
         picturesFill.style.width = `${done}%`;
         pct.textContent = `${done}%`;
+        picturesNote.textContent =
+          progress.step === "copy" ? "Cemu is making a temporary copy of the game…" : "Reading the pictures from your game…";
       });
       try {
-        showPictures(await getFigurePictures(game.title_id));
+        const got = await getFigurePictures(game.title_id, copy);
+        if ("pictures" in got) {
+          showPictures(got.pictures);
+        } else {
+          showPictures(await countPictures());
+          const { need, free } = got.copy;
+          if (free >= need) {
+            copyAgreed = true;
+            picturesValue.className = "d-row-v ask";
+            picturesValue.textContent = "Make a copy";
+            sayWithSizes([
+              "Omoio can't read this copy of the game as it is. Cemu can make a temporary copy to read the pictures from, and Omoio deletes it afterwards. It needs ",
+              need,
+              " free for a few minutes, and ",
+              free,
+              " is free.",
+            ]);
+          } else {
+            sayWithSizes(["Reading the pictures needs ", need, " free for a few minutes, and ", free, " is free. Free some room first."]);
+          }
+        }
       } catch (err) {
         showPictures(await countPictures());
         picturesNote.textContent = typeof err === "string" ? err : "Couldn't read the pictures. Try again.";
