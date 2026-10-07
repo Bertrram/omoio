@@ -1631,21 +1631,22 @@ pub async fn portal_load(app: AppHandle, slot: usize, figure: String) -> Result<
 
 /// The user's figure files, the ones used lately first. With `playable`, only
 /// those the running game reads, for the portal menu: a figure from a later
-/// game does nothing in an earlier one. A file the user brought is kept, since
+/// game does nothing in an earlier one, and Nintendo's SuperChargers figures
+/// do nothing away from the Wii U. A file the user brought is kept, since
 /// Omoio can't tell which character it is.
 #[tauri::command]
 pub fn figures(app: AppHandle, playable: Option<bool>) -> Vec<crate::portal_menu::Figure> {
     use crate::core::figures::{game_from_title, reads};
-    let game = playable
-        .unwrap_or(false)
-        .then(|| app.state::<Session>().playing())
-        .flatten()
-        .and_then(|playing| game_from_title(&playing.title));
+    use crate::core::vehicles::plays_on;
+    let playing = playable.unwrap_or(false).then(|| app.state::<Session>().playing()).flatten();
+    let game = playing.as_ref().and_then(|playing| game_from_title(&playing.title));
+    let console = playing.map(|playing| playing.console);
     crate::portal_menu::list(&app)
         .into_iter()
         .filter(|figure| {
             let character = figure.id.zip(figure.variant);
             game.is_none_or(|game| character.is_none_or(|(id, variant)| reads(game, id, variant)))
+                && console.is_none_or(|console| figure.id.is_none_or(|id| plays_on(console, id)))
         })
         .collect()
 }
@@ -1692,7 +1693,7 @@ pub fn pads_held(app: AppHandle) -> Vec<&'static str> {
 }
 
 /// Every character the running game's emulator can make a figure of that
-/// the game reads, each with its element and kind.
+/// the game reads on its console, each with its element and kind.
 #[tauri::command]
 pub async fn figure_characters(app: AppHandle) -> Result<Vec<crate::core::figures::Offer>, String> {
     let (backend, pid) = running_emulator(&app)?;
@@ -1705,7 +1706,7 @@ pub async fn figure_characters(app: AppHandle) -> Result<Vec<crate::core::figure
     .await
     .map_err(|e| e.to_string())?;
     crate::portal_menu::take_front(&app);
-    Ok(crate::core::figures::offers(characters?, game))
+    Ok(crate::core::figures::offers(characters?, game, playing.console))
 }
 
 /// A new figure on the portal: what the portal holds now, and the figure's

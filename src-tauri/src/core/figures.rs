@@ -418,13 +418,15 @@ pub struct Offer {
     pub partner: Option<u16>,
 }
 
-/// The characters `game` reads, each with its element and kind. Every one
-/// when the game isn't known. A figure made from an offer carries the
-/// game's own variant, so a trap Cemu lists wrongly is made right.
-pub fn offers(characters: Vec<Character>, game: Option<Game>) -> Vec<Offer> {
+/// The characters `game` reads on `console`, each with its element and
+/// kind. Every one when the game isn't known, but for Nintendo's figures
+/// away from the Wii U. A figure made from an offer carries the game's own
+/// variant, so a trap Cemu lists wrongly is made right.
+pub fn offers(characters: Vec<Character>, game: Option<Game>, console: Console) -> Vec<Offer> {
     characters
         .into_iter()
         .filter(|c| game.is_none_or(|game| reads(game, c.id, c.variant)))
+        .filter(|c| vehicles::plays_on(console, c.id))
         .map(|character| {
             let name = named(&character.name);
             let variant = game_variant(&name, character.id, character.variant);
@@ -642,7 +644,11 @@ mod tests {
         assert_eq!(game_variant("Tempest Timer", 212, 0x300E), 0x300E);
         // Another figure that happens to share an id and variant.
         assert_eq!(game_variant("Whirlwind", 216, 0x3000), 0x3000);
-        let made = offers(vec![Character { name: "Tempest Timer".into(), id: 212, variant: 0x300D }], Some(Game::TrapTeam));
+        let made = offers(
+            vec![Character { name: "Tempest Timer".into(), id: 212, variant: 0x300D }],
+            Some(Game::TrapTeam),
+            Console::WiiU,
+        );
         assert_eq!((made[0].character.id, made[0].character.variant), (212, 0x300E));
     }
 
@@ -712,13 +718,42 @@ mod tests {
             Character { name: "Whirlwind".into(), id: 0, variant: 0 },
             Character { name: "Gusto".into(), id: 450, variant: 0x3000 },
         ];
-        let offered = offers(list.clone(), Some(Game::SwapForce));
+        let offered = offers(list.clone(), Some(Game::SwapForce), Console::Ps3);
         assert_eq!(offered.len(), 1);
         let json = serde_json::to_value(&offered[0]).unwrap();
         assert_eq!(json["name"], "Whirlwind");
         assert_eq!(json["element"], "air");
         assert_eq!(json["kind"], "character");
-        assert_eq!(offers(list, None).len(), 2);
+        assert_eq!(offers(list, None, Console::Ps3).len(), 2);
+    }
+
+    #[test]
+    fn nintendos_figures_are_offered_on_the_wii_u_only() {
+        let list = vec![
+            Character { name: "Hammer Slam Bowser (Nintendo Only)".into(), id: 3424, variant: 0 },
+            Character { name: "Dark Turbo Charge Donkey Kong (Nintendo Only)".into(), id: 3423, variant: 0x4502 },
+            Character { name: "Clown Cruiser (Nintendo Only)".into(), id: 3233, variant: 0 },
+            Character { name: "Dark Barrel Blaster (Nintendo Only)".into(), id: 3240, variant: 0x4402 },
+            Character { name: "Spitfire".into(), id: 3412, variant: 0 },
+        ];
+        let names = |console| -> Vec<String> {
+            offers(list.clone(), Some(Game::SuperChargers), console)
+                .into_iter()
+                .map(|offer| offer.character.name)
+                .collect()
+        };
+        assert_eq!(names(Console::Ps3), ["Spitfire"]);
+        assert_eq!(
+            names(Console::WiiU),
+            [
+                "Hammer Slam Bowser",
+                "Dark Turbo Charge Donkey Kong",
+                "Clown Cruiser",
+                "Dark Barrel Blaster",
+                "Spitfire"
+            ]
+        );
+        assert_eq!(offers(list, None, Console::Ps3).len(), 1, "whatever the game");
     }
 
     #[test]
@@ -729,7 +764,7 @@ mod tests {
             Character { name: "Sea Trophy".into(), id: 3502, variant: 0 },
             Character { name: "Whirlwind".into(), id: 0, variant: 0 },
         ];
-        let json = serde_json::to_value(offers(list, Some(Game::SuperChargers))).unwrap();
+        let json = serde_json::to_value(offers(list, Some(Game::SuperChargers), Console::Ps3)).unwrap();
         assert_eq!(json[0]["kind"], "vehicle");
         assert_eq!(json[0]["terrain"], "land");
         assert_eq!(json[0]["partner"], 3412);
