@@ -75,7 +75,7 @@ pub fn has_portal_menu(console: Console, title: &str) -> bool {
     is_skylanders(title)
         && matches!(
             (console, game_from_title(title)),
-            (Console::Ps3, Some(Game::Giants | Game::TrapTeam))
+            (Console::Ps3, Some(Game::Giants | Game::SwapForce | Game::TrapTeam))
                 | (Console::WiiU, Some(Game::SwapForce | Game::TrapTeam))
         )
 }
@@ -621,6 +621,7 @@ mod tests {
     #[test]
     fn the_portal_menu_works_in_the_games_played_with_on_each_console() {
         assert!(has_portal_menu(Console::Ps3, "Skylanders Giants™"));
+        assert!(has_portal_menu(Console::Ps3, "Skylanders SWAP Force"));
         assert!(has_portal_menu(Console::Ps3, "Skylanders Trap Team"));
         assert!(has_portal_menu(Console::WiiU, "Skylanders: Swap Force"));
         assert!(has_portal_menu(Console::WiiU, "Skylanders - Trap Team"));
@@ -632,14 +633,13 @@ mod tests {
 
     #[test]
     fn the_other_skylanders_games_have_no_portal_menu_yet() {
-        // Spyro's Adventure comes later, through Dolphin. Its Wii U release
-        // was sold in Japan only.
+        // Spyro's Adventure is next, on the PS3. Its Wii U release was sold
+        // in Japan only.
         assert!(!has_portal_menu(Console::Ps3, "Skylanders: Spyro's Adventure"));
         assert!(!has_portal_menu(Console::WiiU, "Skylanders Spyro's Adventure"));
         assert!(!has_portal_menu(Console::Ps3, "Skylanders SuperChargers"));
         assert!(!has_portal_menu(Console::Ps3, "Skylanders Imaginators"));
         assert!(!has_portal_menu(Console::WiiU, "Skylanders Imaginators"));
-        assert!(!has_portal_menu(Console::Ps3, "Skylanders SWAP Force"));
     }
 
     #[test]

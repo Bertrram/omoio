@@ -328,16 +328,11 @@ mod tests {
     /// The Cemu wiki rates SWAP Force Runs, from before Cemu's Portal
     /// Stability Fix pack. It has been played in Omoio since.
     #[test]
-    fn a_tested_game_gets_no_warning_and_is_offered_for_the_other_console() {
+    fn a_tested_game_gets_no_warning_on_either_console() {
         assert_eq!(warning(&wii_u_game("Skylanders - Swap Force"), &lists()), None);
         assert_eq!(warning(&wii_u_game("Skylanders - Trap Team"), &lists()), None);
+        assert_eq!(warning(&ps3_game("BLES01860", "Skylanders SWAP Force"), &lists()), None);
         assert_eq!(warning(&ps3_game("BLES02055", "Skylanders Trap Team"), &lists()), None);
-
-        let swap_force = warning(&ps3_game("BLES01860", "Skylanders SWAP Force"), &lists()).unwrap();
-        assert_eq!(
-            swap_force.better,
-            "The Wii U version runs well in Omoio, and the portal menu works in it."
-        );
     }
 
     #[test]

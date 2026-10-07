@@ -30,8 +30,8 @@ really appreciated, so open an issue.
 - One controller layout for every emulator, set by pressing the buttons, for up
   to four players.
 - A Skylanders portal menu that puts figures and traps on the portal from your
-  controller, in Giants and Trap Team on PS3 and in SWAP Force and Trap Team
-  on Wii U.
+  controller, in Giants, SWAP Force and Trap Team on PS3 and in SWAP Force and
+  Trap Team on Wii U.
 - Community packs for every game, downloaded with one press: RPCS3's patches
   for PS3 games and Cemu's graphic packs for Wii U games, like 60 fps for
   Skylanders SWAP Force.
@@ -62,10 +62,9 @@ two buttons take you back into the game.
 Skylanders games need figures on a portal. Omoio opens a portal menu over the
 game instead, and these games have it so far:
 
-- Skylanders Giants, the PS3 version, through RPCS3
-- Skylanders SWAP Force, the Wii U version, through Cemu
-- Skylanders Trap Team, the Wii U version, through Cemu
-- Skylanders Trap Team, the PS3 version, through RPCS3
+- Skylanders Giants on PS3, through RPCS3
+- Skylanders SWAP Force on PS3 and Wii U, through RPCS3 and Cemu
+- Skylanders Trap Team on PS3 and Wii U, through RPCS3 and Cemu
 
 During the game, press your controller's home button (Guide, PS or Home) and
 the menu opens. You can pick another button in the game's panel. Choose a
