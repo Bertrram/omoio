@@ -17,7 +17,7 @@ import { coverFor, knownCover } from "../components/catalogueCovers";
 import { openImportSheet } from "../components/importSheet";
 import { rawgCredit } from "../components/rawgCredit";
 import { CATALOGUE_PAGE, store, type CatalogueChoice } from "../state";
-import { emptyState, type View } from "./view";
+import { chips, emptyState, type View } from "./view";
 
 function tag(className: string, text: string): HTMLElement {
   const span = document.createElement("span");
@@ -124,25 +124,6 @@ function card(listing: Listing, covers: boolean, region: string, selected: boole
   card.appendChild(action);
 
   return card;
-}
-
-function chips<T>(
-  label: string,
-  options: [T, string][],
-  current: T,
-  choose: (value: T) => void
-): HTMLElement {
-  const group = document.createElement("div");
-  group.className = "filter-group";
-  group.appendChild(tag("filter-label", label));
-  for (const [value, text] of options) {
-    const button = document.createElement("button");
-    button.className = value === current ? "chip on" : "chip";
-    button.textContent = text;
-    button.onclick = () => choose(value);
-    group.appendChild(button);
-  }
-  return group;
 }
 
 const REGIONS: [string, string][] = [

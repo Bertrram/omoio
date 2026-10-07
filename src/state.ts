@@ -41,6 +41,8 @@ interface AppState {
   games: Game[] | undefined;
   /// The library search box.
   search: string;
+  /// The one console the library shows, or every console.
+  libraryConsole: Console | null;
   /// The catalogue has its own, over every PS3 game rather than yours.
   catalogueQuery: string;
   /// What the catalogue is narrowed to and sorted by.
@@ -72,6 +74,7 @@ class Store {
     firmwareVersion: undefined,
     games: undefined,
     search: "",
+    libraryConsole: null,
     catalogueQuery: "",
     catalogueFilter: {
       console: null,
@@ -120,6 +123,12 @@ class Store {
   setSearch(search: string): void {
     if (search === this.state.search) return;
     this.state = { ...this.state, search };
+    this.notify();
+  }
+
+  setLibraryConsole(libraryConsole: Console | null): void {
+    if (libraryConsole === this.state.libraryConsole) return;
+    this.state = { ...this.state, libraryConsole };
     this.notify();
   }
 

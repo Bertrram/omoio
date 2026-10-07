@@ -64,6 +64,13 @@
   /* "Giant" under a Giant's name, in a warm stone colour. */
   --kind-giant: #e3a36a;
 
+  /* Each console's tag on a library tile, two colours far apart, so the same
+     game owned on both consoles tells apart at a glance: silver for the PS3,
+     the light blue of the Wii U's boxes. Dark text on both. */
+  --console-ps3: #d4d9e3;
+  --console-wiiu: #35c3f0;
+  --on-console: #0b0e14;
+
   --ui: system-ui, -apple-system, "Segoe UI", Inter, Roboto, sans-serif;
   --mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Mono", Menlo, Consolas, monospace;
 

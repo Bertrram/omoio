@@ -1,10 +1,10 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { CONSOLE_SHORT, type Game } from "../api";
+import { CONSOLE_SHORT, type Console, type Game } from "../api";
 import { fitCovers, placeholderArt } from "../components/art";
 import { rawgCredit } from "../components/rawgCredit";
 import { openImportSheet } from "../components/importSheet";
 import { store } from "../state";
-import { emptyState, type View } from "./view";
+import { chips, emptyState, type View } from "./view";
 
 function formatSize(bytes: number): string {
   if (bytes <= 0) return "";
@@ -33,18 +33,25 @@ function gameCard(game: Game, mixed: boolean, selected: boolean): HTMLElement {
       ? ""
       : `<span class="badge warn">Offline</span>`;
 
+  // A game owned on two consoles is in twice, often under the same cover, so
+  // the console goes on the picture in a colour of its own, where the eye
+  // lands before it reads the name.
+  const consoleTag = mixed
+    ? `<span class="console-tag ${game.console}">${CONSOLE_SHORT[game.console]}</span>`
+    : "";
+
   // Dimmed either way: neither can be played right now.
   card.className = `card${game.set_up && game.available ? "" : " ghost"}${selected ? " on" : ""}`;
   card.innerHTML = `
     <div class="art">
       ${art}
       ${mark}
+      ${consoleTag}
     </div>
     <div class="card-name"></div>
     <div class="meta">
       <span class="id">${game.title_id}</span>
       <span>${game.set_up ? formatSize(game.size_bytes) : "no files yet"}</span>
-      ${mixed ? `<span class="region">${CONSOLE_SHORT[game.console]}</span>` : ""}
     </div>
   `;
   // Set through textContent so a game's own title can never be markup.
@@ -58,7 +65,7 @@ function gameCard(game: Game, mixed: boolean, selected: boolean): HTMLElement {
 }
 
 export function renderLibrary(): View {
-  const { games, search, notice, selected } = store.get();
+  const { games, search, notice, selected, libraryConsole } = store.get();
 
   // The library has not been read yet. Showing "No games yet" here would tell
   // someone with a shelf full of games that they have none, for a moment, every
@@ -67,13 +74,22 @@ export function renderLibrary(): View {
     return { title: "Library", subtitle: "", content: document.createElement("div") };
   }
 
+  // In the same order every time, whichever game came in first.
+  const consoles = (Object.keys(CONSOLE_SHORT) as Console[]).filter((kind) =>
+    games.some((game) => game.console === kind)
+  );
+  // The console is only worth saying once there is more than one.
+  const mixed = consoles.length > 1;
+  // A console picked earlier whose last game has gone shows every game again,
+  // rather than an empty library with no way back to the others.
+  const only = libraryConsole && consoles.includes(libraryConsole) ? libraryConsole : null;
+
   const query = search.trim().toLowerCase();
-  const shown = query
-    ? games.filter(
-        (g) =>
-          g.title.toLowerCase().includes(query) || g.title_id.toLowerCase().includes(query)
-      )
-    : games;
+  const shown = games.filter(
+    (g) =>
+      (!only || g.console === only) &&
+      (!query || g.title.toLowerCase().includes(query) || g.title_id.toLowerCase().includes(query))
+  );
 
   const content = document.createElement("div");
 
@@ -82,6 +98,17 @@ export function renderLibrary(): View {
     banner.className = "notice";
     banner.textContent = notice;
     content.appendChild(banner);
+  }
+
+  if (mixed) {
+    const bar = document.createElement("div");
+    bar.className = "filter-bar";
+    const options: [Console | null, string][] = [
+      [null, "All"],
+      ...consoles.map((kind): [Console, string] => [kind, CONSOLE_SHORT[kind]]),
+    ];
+    bar.appendChild(chips("Console", options, only, (kind) => store.setLibraryConsole(kind)));
+    content.appendChild(bar);
   }
 
   if (games.length === 0) {
@@ -100,8 +127,6 @@ export function renderLibrary(): View {
   } else {
     const grid = document.createElement("div");
     grid.className = "grid";
-    // The console is only worth saying once there is more than one.
-    const mixed = new Set(games.map((game) => game.console)).size > 1;
     shown.forEach((game) => grid.appendChild(gameCard(game, mixed, game.title_id === selected)));
     content.appendChild(grid);
     if (shown.some((game) => game.cover_source === "rawg")) content.appendChild(rawgCredit());
