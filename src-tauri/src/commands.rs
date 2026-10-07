@@ -198,8 +198,18 @@ pub async fn import_archive(
 
         // Answered from the names inside, before anything is unpacked: a dump
         // that needs a key is refused in seconds rather than after the wait.
-        if let Some(why) = crate::backends::refuses(&app, &archive::names(&source, kind)?) {
+        let names = archive::names(&source, kind)?;
+        if let Some(why) = crate::backends::refuses(&app, &names) {
             return Err(why);
+        }
+
+        // Unpacking the same archive again would leave a second copy of the
+        // whole game behind the replaced library entry.
+        if let Some(game) = crate::backends::identify_packed(&names, &|name| archive::read_small(&source, kind, name)) {
+            let library = Library::load(&library_path(&app)?);
+            if library.games().iter().any(|had| had.title_id == game.title_id && had.path.exists()) {
+                return Err("That game is already in your library.".to_string());
+            }
         }
 
         let needed = archive::unpacked_size(&source, kind)?;
@@ -215,10 +225,7 @@ pub async fn import_archive(
             .file_stem()
             .map(|s| s.to_string_lossy().into_owned())
             .ok_or("That file has no name.")?;
-        let dest = games_folder.join(&name);
-        if dest.exists() {
-            return Err("There's already a folder with that name in your games folder.".to_string());
-        }
+        let dest = archive::free_folder(&games_folder, &name);
 
         let mut last_sent = 0u64;
         let outcome = archive::extract(&source, kind, &dest, &cancel, &mut |done| {

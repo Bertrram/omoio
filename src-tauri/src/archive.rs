@@ -303,6 +303,20 @@ pub fn extended_length(path: &Path) -> PathBuf {
     }
 }
 
+/// A folder in `parent` to unpack an archive called `name` into that nothing
+/// uses yet: the name itself, then "name (2)", "name (3)" and so on. One
+/// game's versions for two consoles often come in archives named alike.
+pub fn free_folder(parent: &Path, name: &str) -> PathBuf {
+    let first = parent.join(name);
+    if !first.exists() {
+        return first;
+    }
+    (2..)
+        .map(|n| parent.join(format!("{name} ({n})")))
+        .find(|folder| !folder.exists())
+        .unwrap_or(first)
+}
+
 /// Keeps an archive from writing outside the folder we chose for it, however
 /// its entries are named.
 fn safe_join(dest: &Path, name: &str) -> Option<PathBuf> {
@@ -345,6 +359,22 @@ mod tests {
         assert_eq!(detect_kind(&tiny), None);
 
         assert_eq!(detect_kind(Path::new("no-such-archive.7z")), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_taken_folder_name_gets_a_number() {
+        let dir = std::env::temp_dir().join(format!("omoio-free-{}", std::process::id()));
+        let name = "Skylanders - Swap Force (Europe)";
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        assert_eq!(free_folder(&dir, name), dir.join(name));
+
+        std::fs::create_dir(dir.join(name)).unwrap();
+        assert_eq!(free_folder(&dir, name), dir.join(format!("{name} (2)")));
+
+        std::fs::create_dir(dir.join(format!("{name} (2)"))).unwrap();
+        assert_eq!(free_folder(&dir, name), dir.join(format!("{name} (3)")));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
