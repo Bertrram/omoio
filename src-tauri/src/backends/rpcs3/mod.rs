@@ -351,6 +351,10 @@ impl super::EmulatorBackend for Rpcs3 {
         portal::create(pid, slot, character, file)
     }
 
+    fn is_game_window(&self, title: &str) -> bool {
+        title.starts_with(portal::GAME_TITLE)
+    }
+
     fn tidy_window(&self, pid: u32, game: isize) {
         portal::tidy(pid, game);
     }

@@ -50,6 +50,12 @@ pub const QT_PLATFORM: &str = "windows:dialogs=none";
 
 /// The start of RPCS3's main window title, which goes on with the version.
 pub const MAIN_TITLE: &str = "RPCS3 ";
+/// How the game window's title starts, from the Window Title Format in
+/// RPCS3's config.yml ("FPS: %F | %R | %V | %T [%t]"), which Omoio leaves as
+/// it comes; the window has it from the moment it opens (`gs_frame.cpp`).
+/// RPCS3's other windows without an owner never start so, such as the one
+/// that shows progress while a game's code is compiled on its first start.
+pub const GAME_TITLE: &str = "FPS:";
 
 /// RPCS3's windows, as `rpcs3qt/skylander_dialog.cpp` titles them.
 const MANAGER: &str = "Skylanders Manager";
@@ -332,7 +338,7 @@ fn give_back_to_game(pid: u32) {
     }
     let game = showing(pid)
         .into_iter()
-        .find(|&window| !owned_by_rpcs3(pid, window) && !title(window).starts_with(MAIN_TITLE));
+        .find(|&window| !owned_by_rpcs3(pid, window) && title(window).starts_with(GAME_TITLE));
     let Some(game) = game.filter(|&game| game != front) else {
         return;
     };

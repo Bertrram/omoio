@@ -19,8 +19,9 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WS_THICKFRAME, WS_VISIBLE,
 };
 
-struct Search {
+struct Search<'a> {
     pid: u32,
+    is_game: &'a dyn Fn(&str) -> bool,
     found: Option<HWND>,
 }
 
@@ -29,26 +30,30 @@ unsafe extern "system" fn visit(window: HWND, state: LPARAM) -> BOOL {
     let mut owner = 0u32;
     unsafe { GetWindowThreadProcessId(window, Some(&mut owner)) };
 
-    if owner == search.pid && unsafe { IsWindowVisible(window) }.as_bool() && is_game_window(window) {
+    if owner == search.pid && unsafe { IsWindowVisible(window) }.as_bool() && is_game_window(window, search.is_game) {
         search.found = Some(window);
         return BOOL(0); // stop at the first one
     }
     BOOL(1)
 }
 
-/// Whether a window can be the game's. An emulator's dialogs have an owner,
-/// and RPCS3's main window, there for a Skylanders game's portal, shows for a
-/// moment before it is hidden.
-fn is_game_window(window: HWND) -> bool {
+/// Whether a window can be the game's. An emulator's dialogs have an owner;
+/// `is_game` tells its game window from its other windows without one. With
+/// RPCS3's interface showing, as for a Skylanders game's portal, those are
+/// its main window, shown for a moment before it is hidden, and on a game's
+/// first start a progress window that comes and goes before the game's.
+/// Taking that one for the game, Omoio saw it close and quit RPCS3 under the
+/// game.
+fn is_game_window(window: HWND, is_game: &dyn Fn(&str) -> bool) -> bool {
     let owned = unsafe { GetWindow(window, GW_OWNER) }.is_ok();
-    !owned && !super::portal::title(window).starts_with(super::portal::MAIN_TITLE)
+    !owned && is_game(&super::portal::title(window))
 }
 
 /// The emulator's game window for a given process. Called on a timer while
 /// the game boots, because the window only appears once it has something to
 /// show.
-pub fn find_window(pid: u32) -> Option<isize> {
-    let mut search = Search { pid, found: None };
+pub fn find_window(pid: u32, is_game: &dyn Fn(&str) -> bool) -> Option<isize> {
+    let mut search = Search { pid, is_game, found: None };
     let _ = unsafe { EnumWindows(Some(visit), LPARAM(&mut search as *mut Search as isize)) };
     search.found.map(|hwnd| hwnd.0 as isize)
 }

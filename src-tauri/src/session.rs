@@ -246,7 +246,9 @@ pub fn watch(app: AppHandle, pid: u32) {
             if !attached {
                 // The window only exists once RPCS3 has something to draw, so
                 // this keeps looking while the game boots.
-                if let Some(game) = overlay::find_window(pid) {
+                let backend = session.playing().and_then(|playing| crate::backends::for_console(playing.console));
+                let is_game = |title: &str| backend.is_none_or(|backend| backend.is_game_window(title));
+                if let Some(game) = overlay::find_window(pid, &is_game) {
                     overlay::attach(game, host);
                     session.adopt_window(game);
                     // Big Picture was asked for while the game was starting.

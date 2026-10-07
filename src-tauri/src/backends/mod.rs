@@ -163,6 +163,13 @@ pub trait EmulatorBackend: Sync {
         None
     }
 
+    /// Whether a window of the running emulator that has no owner, by its
+    /// title, is the game's, for Omoio to take into its own window. Most
+    /// emulators show no other window like it.
+    fn is_game_window(&self, _title: &str) -> bool {
+        true
+    }
+
     /// Called again and again while a game runs, with the game's window, for
     /// anything the emulator puts on the screen that doesn't belong over the
     /// game.
