@@ -13,5 +13,6 @@ pub mod sfo;
 pub mod tested;
 pub mod tga;
 pub mod types;
+pub mod vehicles;
 pub mod versions;
 pub mod villains;
