@@ -13,6 +13,7 @@ use crate::core::console::Console;
 use crate::core::figure_data::{self, Trapped};
 use crate::core::figures::{self, Character, Class, Element, Kind, Movement};
 use crate::core::settings::Settings;
+use crate::core::vehicles::{self, Terrain};
 use crate::core::villains::{Villain, VILLAINS};
 use crate::session::Session;
 use std::collections::BTreeMap;
@@ -63,6 +64,10 @@ pub struct Figure {
     /// How a swapper's bottom half moves.
     pub movement: Option<Movement>,
     pub class: Option<Class>,
+    /// A vehicle's terrain, or a trophy's.
+    pub terrain: Option<Terrain>,
+    /// A vehicle's own SuperCharger, or a SuperCharger's own vehicle.
+    pub partner: Option<u16>,
     /// The villain a trap holds, read from the data the game wrote to it.
     pub holds: Option<Trapped>,
 }
@@ -131,6 +136,8 @@ pub fn list(app: &AppHandle) -> Vec<Figure> {
                         series: character.and_then(|[_, variant]| figures::series(variant)),
                         movement: character.and_then(|[id, _]| figures::movement(id)),
                         class: character.and_then(|[id, _]| figures::class(id)),
+                        terrain: character.and_then(|[id, _]| vehicles::terrain(id)),
+                        partner: character.and_then(|[id, _]| vehicles::partner(id)),
                         holds,
                     }
                 })

@@ -5,7 +5,7 @@
 //! which has them for every figure; the table here is Omoio's own.
 
 use crate::core::console::{Console, Features};
-use crate::core::vehicles;
+use crate::core::vehicles::{self, Terrain};
 use serde::{Deserialize, Serialize};
 
 /// The element a figure belongs to.
@@ -403,6 +403,10 @@ pub struct Offer {
     pub series: Option<u8>,
     pub movement: Option<Movement>,
     pub class: Option<Class>,
+    /// A vehicle's terrain, or a trophy's.
+    pub terrain: Option<Terrain>,
+    /// A vehicle's own SuperCharger, or a SuperCharger's own vehicle.
+    pub partner: Option<u16>,
 }
 
 /// The characters `game` reads, each with its element and kind. Every one
@@ -422,6 +426,8 @@ pub fn offers(characters: Vec<Character>, game: Option<Game>) -> Vec<Offer> {
                 series: series(variant),
                 movement: movement(character.id),
                 class: class(character.id),
+                terrain: vehicles::terrain(character.id),
+                partner: vehicles::partner(character.id),
                 character: Character { name, id: character.id, variant },
             }
         })
@@ -694,5 +700,25 @@ mod tests {
         assert_eq!(json["element"], "air");
         assert_eq!(json["kind"], "character");
         assert_eq!(offers(list, None).len(), 2);
+    }
+
+    #[test]
+    fn a_vehicle_and_its_supercharger_are_offered_as_partners() {
+        let list = vec![
+            Character { name: "Dark Hot Streak".into(), id: 3224, variant: 0x4402 },
+            Character { name: "Dark Spitfire".into(), id: 3412, variant: 0x4502 },
+            Character { name: "Sea Trophy".into(), id: 3502, variant: 0 },
+            Character { name: "Whirlwind".into(), id: 0, variant: 0 },
+        ];
+        let json = serde_json::to_value(offers(list, Some(Game::SuperChargers))).unwrap();
+        assert_eq!(json[0]["kind"], "vehicle");
+        assert_eq!(json[0]["terrain"], "land");
+        assert_eq!(json[0]["partner"], 3412);
+        assert_eq!(json[1]["class"], "supercharger");
+        assert!(json[1]["terrain"].is_null(), "a SuperCharger goes by its vehicle's");
+        assert_eq!(json[1]["partner"], 3224);
+        assert_eq!(json[2]["terrain"], "sea");
+        assert!(json[2]["partner"].is_null());
+        assert!(json[3]["terrain"].is_null() && json[3]["partner"].is_null());
     }
 }
