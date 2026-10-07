@@ -87,12 +87,13 @@ pub fn offers_portal_menu(features: Features, console: Console, title: &str) -> 
     features.portal && has_portal_menu(console, title)
 }
 
-/// The game a figure id came out with. The sidekicks of the first two games
-/// share ids with the minis of Trap Team, so they count from the first.
+/// The game a figure id came out with. All eight sidekicks came out with
+/// Giants, whose Collection screen shows them; Spyro's Adventure has no
+/// pictures of them and doesn't take them. Four share ids with the minis of
+/// Trap Team, so they count from Giants.
 fn id_game(id: u16) -> Game {
     match id {
-        505 | 514 | 519 | 526 => Game::Spyro,
-        540..=543 => Game::Giants,
+        505 | 514 | 519 | 526 | 540..=543 => Game::Giants,
         0..=99 | 200..=207 | 300..=304 | 400..=449 => Game::Spyro,
         100..=199 | 208..=209 => Game::Giants,
         // Imaginators' Senseis start at 600 (King Pen), so Trap Team stops before.
@@ -494,8 +495,10 @@ mod tests {
         assert!(reads(swap, 0, 0x2805)); // Horn Blast Whirlwind
         assert!(!reads(swap, 0, 0x3810)); // Eon's Elite Whirlwind, from Trap Team
         assert!(reads(swap, 3000, 0x2000)); // Scratch
-        assert!(reads(swap, 505, 0x0000)); // Terrabite, a sidekick of the first game
+        assert!(reads(swap, 505, 0x0000)); // Terrabite, a sidekick of Giants
         assert!(!reads(swap, 505, 0x3000)); // Terrabite, the Trap Team mini
+        assert!(!reads(Game::Spyro, 505, 0x0000)); // Spyro's Adventure takes no sidekicks
+        assert!(reads(Game::Giants, 505, 0x0000));
         assert!(!reads(swap, 450, 0x3000)); // Gusto
         assert!(!reads(swap, 230, 0x3000)); // Hand of Fate
         assert!(!reads(Game::Giants, 3000, 0x2000));
