@@ -71,13 +71,15 @@ pub fn game_from_title(title: &str) -> Option<Game> {
 }
 
 /// Whether the portal menu works in this game on this console: the games it
-/// has been played through with on each, which the README names.
+/// has been played through with on each, which the README names, and
+/// SuperChargers on the Wii U, where it comes first. Its PS3 version follows
+/// once it has been played there.
 pub fn has_portal_menu(console: Console, title: &str) -> bool {
     is_skylanders(title)
         && matches!(
             (console, game_from_title(title)),
             (Console::Ps3, Some(Game::Giants | Game::SwapForce | Game::TrapTeam))
-                | (Console::WiiU, Some(Game::SwapForce | Game::TrapTeam))
+                | (Console::WiiU, Some(Game::SwapForce | Game::TrapTeam | Game::SuperChargers))
         )
 }
 
@@ -676,19 +678,21 @@ mod tests {
         assert!(has_portal_menu(Console::Ps3, "Skylanders Trap Team"));
         assert!(has_portal_menu(Console::WiiU, "Skylanders: Swap Force"));
         assert!(has_portal_menu(Console::WiiU, "Skylanders - Trap Team"));
+        assert!(has_portal_menu(Console::WiiU, "Skylanders SuperChargers"));
+        assert!(has_portal_menu(Console::WiiU, "Skylanders: SuperChargers"));
 
         assert!(!has_portal_menu(Console::WiiU, "Skylanders: Giants"));
-        assert!(!has_portal_menu(Console::WiiU, "Skylanders: SuperChargers"));
         assert!(!has_portal_menu(Console::Ps3, "Giants: Citizen Kabuto"), "not a Skylanders game");
     }
 
     #[test]
     fn the_other_skylanders_games_have_no_portal_menu_yet() {
         // Spyro's Adventure is next, on the PS3. Its Wii U release was sold
-        // in Japan only.
+        // in Japan only. SuperChargers has it on the Wii U only so far.
         assert!(!has_portal_menu(Console::Ps3, "Skylanders: Spyro's Adventure"));
         assert!(!has_portal_menu(Console::WiiU, "Skylanders Spyro's Adventure"));
         assert!(!has_portal_menu(Console::Ps3, "Skylanders SuperChargers"));
+        assert!(!has_portal_menu(Console::Ps3, "Skylanders: SuperChargers"));
         assert!(!has_portal_menu(Console::Ps3, "Skylanders Imaginators"));
         assert!(!has_portal_menu(Console::WiiU, "Skylanders Imaginators"));
     }

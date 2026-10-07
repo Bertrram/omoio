@@ -293,7 +293,10 @@ mod tests {
         assert_eq!(superchargers.title, "Skylanders SuperChargers™");
         assert_eq!(superchargers.console_name, "PS3");
         assert_eq!(superchargers.rating, "RPCS3 rates it Ingame: it starts, but you may hit problems before the end.");
-        assert_eq!(superchargers.better, "The Wii U version is rated Perfect in Cemu.");
+        assert_eq!(
+            superchargers.better,
+            "The Wii U version is rated Perfect in Cemu, and the portal menu works in it."
+        );
     }
 
     #[test]
