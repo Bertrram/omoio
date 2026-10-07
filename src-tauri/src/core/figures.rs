@@ -419,6 +419,9 @@ pub struct Offer {
     pub terrain: Option<Terrain>,
     /// A vehicle's own SuperCharger, or a SuperCharger's own vehicle.
     pub partner: Option<u16>,
+    /// What a SuperChargers trophy unlocks, left out for every other figure.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unlocks: Option<&'static vehicles::Trophy>,
 }
 
 /// The characters `game` reads on `console`, each with its element and
@@ -442,6 +445,7 @@ pub fn offers(characters: Vec<Character>, game: Option<Game>, console: Console) 
                 class: class(character.id),
                 terrain: vehicles::terrain(character.id),
                 partner: vehicles::partner(character.id),
+                unlocks: vehicles::trophy(character.id),
                 character: Character { name, id: character.id, variant },
             }
         })
@@ -792,6 +796,9 @@ mod tests {
         assert_eq!(json[1]["partner"], 3224);
         assert_eq!(json[2]["terrain"], "sea");
         assert!(json[2]["partner"].is_null());
+        assert_eq!(json[2]["unlocks"]["villains"][0], "Golden Queen");
+        assert_eq!(json[2]["unlocks"]["tracks"][1], "The Golden Temple");
         assert!(json[3]["terrain"].is_null() && json[3]["partner"].is_null());
+        assert!(json[0].get("unlocks").is_none() && json[3].get("unlocks").is_none(), "only a trophy has it");
     }
 }

@@ -2,9 +2,14 @@
 //! the ids Cemu 2.6's figure list gives them (`Skylander.cpp`, read 7
 //! October 2026). Each vehicle goes on land, on the sea or in the sky, and
 //! has one SuperCharger of its own: with both on the portal, the game calls
-//! the vehicle SuperCharged. A pair goes by the character, whatever the
-//! variant: Dark Hot Streak is Spitfire's vehicle too. Terrains and pairs
-//! are from the Skylanders wiki's page for each vehicle, read 7 October 2026.
+//! the vehicle SuperCharged, which is Activision's word too ("SuperCharged
+//! combinations", its SuperChargers FAQ). A pair goes by the character,
+//! whatever the variant: Dark Hot Streak is Spitfire's vehicle too.
+//!
+//! Terrains and pairs are from the Skylanders wiki's "Vehicles" list and each
+//! vehicle's own page, read 7 October 2026. Activision's own skylanders.com
+//! names its banner pictures by the same pairs (`Spitfire_HotStreak.jpg`,
+//! archived 18 September 2018), all twenty of them.
 
 use crate::core::console::Console;
 use serde::{Deserialize, Serialize};
@@ -57,8 +62,11 @@ pub const VEHICLES: [Vehicle; 20] = [
 ];
 
 /// Clown Cruiser, Barrel Blaster, Turbo Charge Donkey Kong and Hammer Slam
-/// Bowser, which work in the Wii U version only. Cemu's list ends their
-/// names with "(Nintendo Only)".
+/// Bowser, which work on Nintendo's consoles only: in the Wii U version, and
+/// never on a PlayStation (Activision's "Bowser and Donkey Kong FAQ" and its
+/// toy compatibility table, read through the Wayback Machine 7 October
+/// 2026). Cemu's list ends their names with "(Nintendo Only)"; RPCS3's has
+/// them, so named, commented out (`skylander_dialog.cpp`, c05832b7).
 pub const NINTENDO_ONLY: [u16; 4] = [3233, 3240, 3423, 3424];
 
 pub fn nintendo_only(id: u16) -> bool {
@@ -75,15 +83,44 @@ pub fn plays_on(console: Console, id: u16) -> bool {
 pub struct Trophy {
     pub id: u16,
     pub terrain: Option<Terrain>,
+    /// The villains it lets the player race as.
+    pub villains: &'static [&'static str],
+    /// The race tracks it opens.
+    pub tracks: &'static [&'static str],
 }
 
-/// The trophies, by the ids Cemu gives them. The Kaos trophy has no terrain.
+/// The racing trophies, by the ids Cemu gives them, with what each unlocks
+/// (the Skylanders wiki's page for each trophy, read 7 October 2026). A
+/// Land, Sea or Sky trophy opens two tracks and four villains, caught in its
+/// Boss Pursuit and kept on the trophy, the way a trap keeps its villain
+/// (Activision's "Racing in Skylanders SuperChargers FAQ"). It also opens
+/// the Mirror Cup, the SuperVillain Cup and Boss Pursuit for its terrain.
+/// The Kaos Trophy has no terrain, and lets Kaos race in Sky races at once.
 pub const TROPHIES: [Trophy; 4] = [
-    Trophy { id: 3500, terrain: Some(Sky) },
-    Trophy { id: 3501, terrain: Some(Land) },
-    Trophy { id: 3502, terrain: Some(Sea) },
-    Trophy { id: 3503, terrain: None },
+    Trophy {
+        id: 3500,
+        terrain: Some(Sky),
+        villains: &["Wolfgang", "Chef Pepper Jack", "Cluck", "Lord Stratosfear"],
+        tracks: &["Cluck's Cuckoo Nest", "The Clock Rock"],
+    },
+    Trophy {
+        id: 3501,
+        terrain: Some(Land),
+        villains: &["Count Moneybone", "Chompy Mage", "Glumshanks", "Dragon Hunter"],
+        tracks: &["Temple of Arkus", "The After Party"],
+    },
+    Trophy {
+        id: 3502,
+        terrain: Some(Sea),
+        villains: &["Golden Queen", "Captain Frightbeard", "Mesmeralda", "Spellslamzer"],
+        tracks: &["Tropic Plunder", "The Golden Temple"],
+    },
+    Trophy { id: 3503, terrain: None, villains: &["Kaos"], tracks: &[] },
 ];
+
+pub fn trophy(id: u16) -> Option<&'static Trophy> {
+    TROPHIES.iter().find(|trophy| trophy.id == id)
+}
 
 /// A vehicle's terrain, or a trophy's. A SuperCharger has none of its own;
 /// the menu finds it through its partner.
@@ -92,7 +129,7 @@ pub fn terrain(id: u16) -> Option<Terrain> {
         .iter()
         .find(|vehicle| vehicle.id == id)
         .map(|vehicle| vehicle.terrain)
-        .or_else(|| TROPHIES.iter().find(|trophy| trophy.id == id).and_then(|trophy| trophy.terrain))
+        .or_else(|| trophy(id).and_then(|trophy| trophy.terrain))
 }
 
 /// A vehicle's own SuperCharger, or a SuperCharger's own vehicle.
@@ -191,6 +228,24 @@ mod tests {
         assert_eq!(terrain(3502), Some(Sea));
         assert_eq!(terrain(3503), None); // Kaos Trophy
         assert_eq!(terrain(3504), None);
+    }
+
+    #[test]
+    fn each_terrain_trophy_opens_four_villains_and_two_tracks() {
+        // Twelve villains in all, four to a pack (Activision's racing FAQ),
+        // none in two packs, and Kaos alone on his own trophy.
+        let terrains: Vec<&Trophy> = TROPHIES.iter().filter(|trophy| trophy.terrain.is_some()).collect();
+        assert_eq!(terrains.len(), 3);
+        for each in &terrains {
+            assert_eq!((each.villains.len(), each.tracks.len()), (4, 2), "{}", each.id);
+        }
+        let mut villains: Vec<&str> = terrains.iter().flat_map(|trophy| trophy.villains.iter().copied()).collect();
+        villains.sort_unstable();
+        villains.dedup();
+        assert_eq!(villains.len(), 12);
+        assert_eq!(trophy(3503).map(|kaos| kaos.villains), Some(&["Kaos"][..]));
+        assert_eq!(trophy(3501).map(|land| land.villains[2]), Some("Glumshanks"));
+        assert!(trophy(3224).is_none()); // Hot Streak
     }
 
     #[test]
