@@ -95,11 +95,11 @@ pub fn detect_version(app: &AppHandle) -> Option<String> {
     Some(version)
 }
 
-/// Whether Omoio's RPCS3 is running. It allows one copy of itself at a time:
-/// a second, even one asked only for `--version`, puts up a "Fatal Error"
-/// window over the game and waits there until someone presses OK, and the
-/// portal menu waited with it.
-fn running(exe: &Path) -> bool {
+/// The processes running Omoio's RPCS3. It allows one copy of itself at a
+/// time: a second, even one asked only for `--version`, puts up a "Fatal
+/// Error" window over the game and waits there until someone presses OK, and
+/// whatever started it waits with it.
+fn copies(exe: &Path) -> (sysinfo::System, Vec<sysinfo::Pid>) {
     use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
     let mut system = System::new();
     system.refresh_processes_specifics(
@@ -107,10 +107,43 @@ fn running(exe: &Path) -> bool {
         true,
         ProcessRefreshKind::nothing().with_exe(UpdateKind::OnlyIfNotSet),
     );
-    system
+    let ours = system
         .processes()
-        .values()
-        .any(|process| process.exe().is_some_and(|own| own.as_os_str().eq_ignore_ascii_case(exe.as_os_str())))
+        .iter()
+        .filter(|(_, process)| process.exe().is_some_and(|own| own.as_os_str().eq_ignore_ascii_case(exe.as_os_str())))
+        .map(|(&pid, _)| pid)
+        .collect();
+    (system, ours)
+}
+
+fn running(exe: &Path) -> bool {
+    !copies(exe).1.is_empty()
+}
+
+/// For anything that starts RPCS3 to do one job and waits for it, such as
+/// installing firmware or a package.
+pub fn refuse_while_running(app: &AppHandle) -> Result<(), String> {
+    if running(&exe_path(app)?) {
+        return Err("Close the game first. RPCS3 can only do one thing at a time.".to_string());
+    }
+    Ok(())
+}
+
+/// Ends every copy of RPCS3 still running before a game starts: the game
+/// before, still on its way out, or one whose window Omoio lost, hidden with
+/// nothing to close it by. The new game would otherwise meet RPCS3's "Fatal
+/// Error" window. Starting a game ends the one before it anyway.
+fn end_running(exe: &Path) {
+    let (system, ours) = copies(exe);
+    for pid in &ours {
+        if let Some(process) = system.process(*pid) {
+            process.kill();
+        }
+    }
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while !ours.is_empty() && running(exe) && std::time::Instant::now() < until {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
 }
 
 /// The version a running RPCS3 gives on its log's first line, "RPCS3
@@ -239,6 +272,9 @@ pub async fn install(app: AppHandle, cancel: Arc<AtomicBool>) -> Result<String, 
     }
 
     emit(&app, "extracting", 0, 1);
+    // Its files are held open while it runs, and an update that met one part
+    // way through would leave RPCS3 half old, half new.
+    refuse_while_running(&app)?;
     INSTALLING.store(true, Ordering::Relaxed);
     let _installing = Installing;
     let extract_dir = dest_dir.clone();

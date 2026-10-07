@@ -63,6 +63,7 @@ pub fn install(app: &AppHandle, pup: &Path) -> Result<String, String> {
     if !looks_like_pup(pup) {
         return Err("That file isn't PS3 firmware. Look for one named PS3UPDAT.PUP.".to_string());
     }
+    super::refuse_while_running(app)?;
 
     let before = detect_version(app);
 

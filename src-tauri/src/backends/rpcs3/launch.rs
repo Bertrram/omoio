@@ -143,6 +143,9 @@ pub fn launch(app: &AppHandle, game: &Game) -> Result<u32, String> {
     let eboot = eboot_path(&game.path)
         .ok_or("Couldn't find the game's program file. This folder may be incomplete.")?;
 
+    // Before RPCS3's files are written, so one on its way out doesn't save
+    // its own over them.
+    super::end_running(&exe);
     register(app, game)?;
     disable_welcome_screen(app)?;
     keep_pad_to_the_game(app);
@@ -320,6 +323,7 @@ pub fn install_package(app: &AppHandle, package: &std::path::Path) -> Result<(),
     if !exe.exists() {
         return Err("Install RPCS3 first, then packages can be installed.".to_string());
     }
+    super::refuse_while_running(app)?;
 
     let log = super::install_dir(app)?.join("log").join("RPCS3.log");
     let started = std::time::SystemTime::now();
