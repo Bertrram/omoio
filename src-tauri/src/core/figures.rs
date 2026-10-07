@@ -5,6 +5,7 @@
 //! which has them for every figure; the table here is Omoio's own.
 
 use crate::core::console::{Console, Features};
+use crate::core::vehicles;
 use serde::{Deserialize, Serialize};
 
 /// The element a figure belongs to.
@@ -337,18 +338,23 @@ pub enum Class {
     /// The small ones: Trap Team's Minis, and the Sidekicks of Giants they
     /// came back as.
     Mini,
+    /// SuperChargers' own Skylanders, each with a vehicle of its own.
+    #[serde(rename = "supercharger")]
+    SuperCharger,
 }
 
 /// Which marked kind a figure is, from its id, variants included (Cemu
 /// 2.6's list). Giants' new figures alternate between a core figure and a
 /// Giant from 100; Trap Masters are the first two of each element's four
-/// from 450, then Knight Light and Knight Mare.
+/// from 450, then Knight Light and Knight Mare. SuperChargers are the
+/// vehicles' drivers, whose ids from 3400 have gaps.
 pub fn class(id: u16) -> Option<Class> {
     match id {
         101 | 102 | 104 | 107 | 109 | 110 | 112 | 114 => Some(Class::Giant),
         450..=481 if (id - 450) % 4 < 2 => Some(Class::TrapMaster),
         482 | 484 => Some(Class::TrapMaster),
         502..=510 | 514 | 519 | 526 | 540..=543 => Some(Class::Mini),
+        _ if vehicles::VEHICLES.iter().any(|vehicle| vehicle.driver == id) => Some(Class::SuperCharger),
         _ => None,
     }
 }
@@ -538,10 +544,11 @@ mod tests {
     }
 
     #[test]
-    fn giants_trap_masters_and_minis_are_told_by_their_id() {
+    fn giants_trap_masters_minis_and_superchargers_are_told_by_their_id() {
         let giant = Some(Class::Giant);
         let master = Some(Class::TrapMaster);
         let mini = Some(Class::Mini);
+        let supercharger = Some(Class::SuperCharger);
         assert_eq!(class(112), giant); // Tree Rex, and Gnarly Tree Rex
         assert_eq!(class(101), giant); // Swarm
         assert_eq!(class(114), giant); // Eye Brawl
@@ -559,6 +566,16 @@ mod tests {
         assert_eq!(class(503), mini); // Spry
         assert_eq!(class(542), mini); // Mini Jini
         assert_eq!(class(108), None); // Pop Fizz
+        assert_eq!(class(3400), supercharger); // Fiesta, and Frightful Fiesta
+        assert_eq!(class(3406), supercharger); // Stormblade
+        assert_eq!(class(3424), supercharger); // Hammer Slam Bowser
+        assert_eq!(class(3428), supercharger); // Thrillipede
+        assert_eq!(class(3403), None); // no figure
+        assert_eq!(class(3220), None); // Jet Stream, a vehicle
+        assert_eq!(class(3500), None); // Sky Trophy
+        assert_eq!((3400..3500).filter(|&id| class(id) == supercharger).count(), 20);
+        assert_eq!(serde_json::to_value(Class::SuperCharger).unwrap(), "supercharger");
+        assert_eq!(serde_json::to_value(Class::TrapMaster).unwrap(), "trap_master");
     }
 
     #[test]
