@@ -1273,7 +1273,7 @@ function renderVehicle(entry: Entry | undefined): HTMLElement {
   }
   if (pair && !pairOn(entry)) {
     const both = node("button", "portal-card-action");
-    both.append(node("kbd", "", nameOf(family, "North")), `Put on with ${pair.other.name}`);
+    both.append(node("kbd", "", nameOf(family, "North")), pairWords(entry, pair.other));
     both.onclick = () => {
       zone = "grid";
       void act(pairUp);
@@ -1318,6 +1318,12 @@ function pairOf(entry: Entry | undefined): { driver: Pick; vehicle: Pick; other:
   return vehicle ? { driver: other, vehicle: own, other } : { driver: own, vehicle: other, other };
 }
 
+/// What the top face button does on a tile: puts its pair on, or adds the
+/// other one when the tile's own figure is on already.
+function pairWords(entry: Entry, other: Pick): string {
+  return isOn(entry) ? `Add ${other.name}` : `Put on with ${other.name}`;
+}
+
 /// Whether both of a tile's pair are on the portal, whichever variants.
 function pairOn(entry: Entry | undefined): boolean {
   const pair = pairOf(entry);
@@ -1338,7 +1344,7 @@ function renderFoot(): HTMLElement {
     hints.push(["South", entry?.swap ? (pickedTop ? "Pick bottom" : "Pick top") : "Put on"]);
     if (entry && isOn(entry)) hints.push(["West", "Take off"]);
     const pair = pairOf(entry);
-    if (pair && !pairOn(entry)) hints.push(["North", entry && isOn(entry) ? `Add ${pair.other.name}` : `Put on with ${pair.other.name}`]);
+    if (entry && pair && !pairOn(entry)) hints.push(["North", pairWords(entry, pair.other)]);
   }
   hints.push(["East", pickedTop ? "Back" : "Close"]);
   const row = node("div", "portal-hints");
