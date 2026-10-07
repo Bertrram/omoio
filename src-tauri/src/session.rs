@@ -263,6 +263,9 @@ pub fn watch(app: AppHandle, pid: u32) {
             }
 
             if attached {
+                if let Some(game) = session.window().filter(|&game| overlay::exists(game)) {
+                    overlay::keep(game, host);
+                }
                 place(&window, &session);
                 let backend = session.playing().and_then(|playing| crate::backends::for_console(playing.console));
                 if let (Some(backend), Some(game)) = (backend, session.window()) {

@@ -13,10 +13,10 @@
 use windows::core::BOOL;
 use windows::Win32::Foundation::{HWND, LPARAM};
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetForegroundWindow, GetWindow, GetWindowLongPtrW, GetWindowThreadProcessId, IsWindowVisible,
-    SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, ShowWindow, GWLP_HWNDPARENT, GWL_STYLE, GW_OWNER,
-    SWP_NOACTIVATE, SWP_NOZORDER, SW_HIDE, SW_SHOW, SW_SHOWNA, WS_CAPTION, WS_POPUP, WS_SYSMENU,
-    WS_THICKFRAME, WS_VISIBLE,
+    EnumWindows, GetForegroundWindow, GetWindow, GetWindowLongPtrW, GetWindowThreadProcessId, IsWindow,
+    IsWindowVisible, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, ShowWindow, GWLP_HWNDPARENT, GWL_STYLE,
+    GW_OWNER, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_SHOW, SW_SHOWNA,
+    WS_CAPTION, WS_POPUP, WS_SYSMENU, WS_THICKFRAME, WS_VISIBLE,
 };
 
 struct Search<'a> {
@@ -70,6 +70,37 @@ pub fn attach(game: isize, host: isize) {
         SetWindowLongPtrW(game, GWL_STYLE, stripped);
         SetWindowLongPtrW(game, GWLP_HWNDPARENT, host);
     }
+}
+
+/// Takes the game window back if it slipped out of Omoio's: RPCS3 puts its
+/// frame back when the game leaves RPCS3's own fullscreen, and the game then
+/// sat in a window of its own over Omoio. Left as it is when it is still in.
+pub fn keep(game: isize, host: isize) {
+    let window = HWND(game as *mut _);
+    let frame = (WS_CAPTION.0 | WS_THICKFRAME.0 | WS_SYSMENU.0) as isize;
+    unsafe {
+        let style = GetWindowLongPtrW(window, GWL_STYLE);
+        if style & frame != 0 {
+            SetWindowLongPtrW(window, GWL_STYLE, style & !frame | WS_POPUP.0 as isize);
+            let _ = SetWindowPos(
+                window,
+                None,
+                0,
+                0,
+                0,
+                0,
+                SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+            );
+        }
+        if GetWindowLongPtrW(window, GWLP_HWNDPARENT) != host {
+            SetWindowLongPtrW(window, GWLP_HWNDPARENT, host);
+        }
+    }
+}
+
+/// Whether the window is still there.
+pub fn exists(game: isize) -> bool {
+    unsafe { IsWindow(Some(HWND(game as *mut _))) }.as_bool()
 }
 
 /// Asks whether F11 went down since the last time we asked, which is the low

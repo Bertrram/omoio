@@ -115,7 +115,19 @@ fn disable_welcome_screen(app: &AppHandle) -> Result<(), String> {
 /// waiting behind Big Picture doesn't take the presses meant for Omoio. A
 /// value chosen for one game in its own settings still wins over this one.
 fn keep_pad_to_the_game(app: &AppHandle) {
-    const KEY: &str = "Background input enabled";
+    switch_off(app, "Background input enabled");
+}
+
+/// Omoio sizes and places the game window itself. Started in RPCS3's own
+/// fullscreen, the window left it at a press of Esc in the game and came back
+/// with its frame, out of Omoio's window.
+fn leave_fullscreen_to_omoio(app: &AppHandle) {
+    switch_off(app, "Start games in fullscreen mode");
+}
+
+/// One of RPCS3's settings in its config.yml, switched off before a game
+/// starts.
+fn switch_off(app: &AppHandle, key: &str) {
     let Ok(dir) = super::install_dir(app) else {
         return;
     };
@@ -123,7 +135,7 @@ fn keep_pad_to_the_game(app: &AppHandle) {
     let Ok(config) = std::fs::read_to_string(&path) else {
         return;
     };
-    let updated = super::account::replace_setting(&config, KEY, "false");
+    let updated = super::account::replace_setting(&config, key, "false");
     if updated != config {
         let _ = std::fs::write(&path, updated);
     }
@@ -149,6 +161,7 @@ pub fn launch(app: &AppHandle, game: &Game) -> Result<u32, String> {
     register(app, game)?;
     disable_welcome_screen(app)?;
     keep_pad_to_the_game(app);
+    leave_fullscreen_to_omoio(app);
 
     // --no-gui keeps RPCS3's own window out of the way: the user asked to play
     // a game, not to meet the emulator. A Skylanders game needs that window
