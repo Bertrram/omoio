@@ -29,9 +29,9 @@ really appreciated, so open an issue.
   updated to the newest version Omoio has been tested with.
 - One controller layout for every emulator, set by pressing the buttons, for up
   to four players.
-- A Skylanders portal menu that puts figures and traps on the portal from your
-  controller, in Giants, SWAP Force and Trap Team on PS3 and in SWAP Force and
-  Trap Team on Wii U.
+- A Skylanders portal menu that puts figures, traps and vehicles on the portal
+  from your controller, in Giants, SWAP Force and Trap Team on PS3 and in SWAP
+  Force, Trap Team and SuperChargers on Wii U.
 - Community packs for every game, downloaded with one press: RPCS3's patches
   for PS3 games and Cemu's graphic packs for Wii U games, like 60 fps for
   Skylanders SWAP Force.
@@ -65,13 +65,15 @@ game instead, and these games have it so far:
 - Skylanders Giants on PS3, through RPCS3
 - Skylanders SWAP Force on PS3 and Wii U, through RPCS3 and Cemu
 - Skylanders Trap Team on PS3 and Wii U, through RPCS3 and Cemu
+- Skylanders SuperChargers on Wii U, through Cemu
 
 During the game, press your controller's home button (Guide, PS or Home) and
 the menu opens. You can pick another button in the game's panel. Choose a
 character and it goes on the portal, and the same menu takes it off again. The
 first time, the emulator's own figure maker makes the figure, and Omoio saves it
 so the figure keeps what it has earned. Giants and Trap Masters come first in
-each element and Minis last. Trap Masters and Minis carry a mark, and Giants
+each element and Minis last, and in SuperChargers its own SuperChargers come
+before them. Trap Masters, SuperChargers and Minis carry a mark, and Giants
 show the game's own Giant badge once the pictures are read. In
 SWAP Force, swappers can be mixed: pick a top, then a bottom, and each one shows
 how it moves.
@@ -83,6 +85,18 @@ shows all 46 villains, which ones you've caught and which of your traps holds
 each, and picking a villain puts its trap on. Omoio reads the villain from what
 the game saved in the trap. It only reads, and never writes to your figures.
 
+<!-- A screenshot of the garage in SuperChargers goes here, once it has been
+     played: design/screenshots/portal-garage.jpg -->
+
+In SuperChargers, the Vehicles tab is a garage with a column each for land, sea
+and sky vehicles, your saved ones first. The game uses one vehicle at a time, so
+a vehicle you put on takes the place of the one on the portal. Each vehicle
+shows the SuperCharger made for it, and the top face button (Y on an Xbox pad)
+puts the two on together, which SuperCharges the vehicle. A saved vehicle keeps
+the mods you bought for it. Trophies have a tab of their own, and traps, items
+and adventure packs from the earlier games come last, each saying what it does
+in this game.
+
 Omoio doesn't come with the figures' pictures. It reads them from your own copy
 of the game when you press Get pictures once in the game's panel. A Wii U game
 imported as an unpacked folder or a .wua file is read as it is, and for a disc
@@ -91,7 +105,8 @@ reads the game's folder. A small separate program,
 [omoio-portraits](https://github.com/Bertrram/omoio-portraits), does the reading.
 Omoio downloads it only when you ask and checks it before it runs. The pictures
 stay on your computer, and the screenshots above show them as they look once
-read.
+read. It can't read SuperChargers' pictures yet, so that game's menu shows
+Omoio's own marks for now.
 
 The other Skylanders games aren't supported yet.
 
