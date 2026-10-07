@@ -483,12 +483,6 @@ function buildTabs() {
     mark: kind === "vehicle" || kind === "trophy" ? kind : undefined,
     entries: offers.filter((offer) => offer.kind === kind).map(entry).sort(byName),
   });
-  // The game decides the order. SuperChargers asks for a vehicle whenever
-  // the road, the sea or the sky changes, so its garage sits next to Saved,
-  // and the pieces from the games before, which do smaller things in it,
-  // come last. In every other game traps go on and off all through a Trap
-  // Team game, so they sit next to Saved, and the villains they hold right
-  // after.
   // SuperChargers' trophies in the order of the terrains, and Kaos's last.
   const trophies = kindTab("trophy");
   const races = (each: Entry) => {
@@ -496,6 +490,12 @@ function buildTabs() {
     return at < 0 ? TERRAINS.length : at;
   };
   trophies.entries.sort((a, b) => races(a) - races(b));
+  // The game decides the order. SuperChargers wants a vehicle at every Land,
+  // Sea and Sky gate (Game Informer, "21 Things You Need To Know", 3 June
+  // 2015), so its garage sits next to Saved, and the pieces from the games
+  // before, which do smaller things in it, come last. Everywhere else traps
+  // sit next to Saved, since they go on and off all through a Trap Team
+  // game, with the villains they hold right after.
   const order: (Tab | null)[] =
     game === "superchargers"
       ? [garage(offers.filter((offer) => offer.kind === "vehicle").map(entry)), ...elementTabs, otherTab, swapperTab, trophies, trapTab, kindTab("item"), kindTab("adventure")]
@@ -609,9 +609,9 @@ function terrainPart(terrain: Terrain, words = TERRAIN_NAMES.get(terrain) ?? "")
   return part;
 }
 
-/// A face in the bottom corner of a picture: a vehicle's driver, or the
-/// vehicle a SuperCharger drives, as a villain's tile has its trap. The
-/// figure's own picture when Omoio has it, its element's drawing when not.
+/// A vehicle's driver in the bottom corner of its picture, as a villain's
+/// tile has its trap: the driver's own picture when Omoio has it, its
+/// element's drawing when not.
 function cornerFace(id: number, className: string): HTMLElement {
   const offer = offers.find((each) => each.id === id);
   const corner = node("span", `${className} ${tintOf(offer?.element ?? null, offer?.kind ?? null)}`);
@@ -756,25 +756,48 @@ function drivesLine(entry: Entry): HTMLElement | null {
   return line;
 }
 
+/// "A, B and C".
+function listed(names: string[]): string {
+  return names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}` : (names[0] ?? "");
+}
+
 /// What a trophy unlocks in SuperChargers, and what a piece from an earlier
-/// game does in it.
+/// game does in it. A saved trap that holds a villain names it.
 function doesInSuperChargers(entry: Entry): string | null {
   const kind = entry.offer?.kind ?? entry.figure?.kind;
+  const id = entry.offer?.id ?? entry.figure?.id;
   if (kind === "trophy") {
-    const id = entry.offer?.id ?? entry.figure?.id;
-    const unlocks = entry.offer?.unlocks ?? offers.find((offer) => offer.id === id)?.unlocks ?? [];
-    return unlocks.length > 0 ? `Unlocks ${unlocks.join(", ")}` : null;
+    const unlocks = entry.offer?.unlocks ?? offers.find((offer) => offer.id === id)?.unlocks;
+    if (!unlocks) return null;
+    if (unlocks.tracks.length === 0) return `Race as ${listed(unlocks.villains)} in Sky races`;
+    return `Race as ${listed(unlocks.villains)}, once caught in Boss Pursuit. Opens ${listed(unlocks.tracks)}, and the Mirror and SuperVillain Cups`;
+  }
+  if (kind === "trap") {
+    const held = villainList.find((villain) => villain.id === entry.figure?.holds?.villain);
+    return held ? `Opens ${held.name}'s Skystones card, and gives a special attack` : (OLDER_PIECES.trap ?? null);
   }
   return kind ? (OLDER_PIECES[kind] ?? null) : null;
 }
 
-/// What an older piece does in SuperChargers.
-const OLDER_PIECES: Partial<Record<FigureKind, string>> = {};
+/// What a piece from an earlier game does in SuperChargers. A magic item and
+/// an adventure pack's pieces each add a Legendary Treasure to Skylanders
+/// Academy (Activision's "Characters and Magic Items Issues FAQ", question
+/// 6, and the Skylanders wiki's "Magic Item" and "Adventure Pack", read 7
+/// October 2026). A trap gives the Skylander or the vehicle a special attack
+/// of its element, and a villain in it opens the villain's Skystones
+/// Overdrive card, since SuperChargers catches no villains (Activision's
+/// Characters FAQ, question 1, and the wiki's "Trap").
+const OLDER_PIECES: Partial<Record<FigureKind, string>> = {
+  item: "Adds a Legendary Treasure to the Academy",
+  adventure: "Adds a Legendary Treasure to the Academy",
+  trap: "Gives a special attack. A villain in it opens its Skystones card",
+};
 
 /// What an older piece or a trophy does in SuperChargers, under its name.
 function noteLine(entry: Entry): HTMLElement | null {
   const words = game === "superchargers" ? doesInSuperChargers(entry) : null;
-  return words ? node("span", "portal-note", words) : null;
+  const kind = entry.offer?.kind ?? entry.figure?.kind;
+  return words ? node("span", kind === "trophy" ? "portal-note full" : "portal-note", words) : null;
 }
 
 function renderHead(): HTMLElement {
@@ -1284,9 +1307,8 @@ function renderVehicle(entry: Entry | undefined): HTMLElement {
   return card;
 }
 
-/// Which pieces a tile pairs: a SuperCharger and its own vehicle, the tile's
-/// own figure as one of them, and the other one too, which is the saved
-/// figure of it when there is one.
+/// One of a SuperCharger and its vehicle: the character, and its saved
+/// figure when there is one, otherwise what the emulator makes it from.
 interface Pick {
   id: number;
   name: string;
@@ -1306,6 +1328,8 @@ function pickFor(id: number): Pick | null {
   return offer ? { id, name: offer.name, offer } : null;
 }
 
+/// The pair a tile stands in: a SuperCharger and its own vehicle, the tile's
+/// own figure as one of them and `other` as the one to go with it.
 function pairOf(entry: Entry | undefined): { driver: Pick; vehicle: Pick; other: Pick } | null {
   if (!entry || entry.swap) return null;
   const id = entry.offer?.id ?? entry.figure?.id;

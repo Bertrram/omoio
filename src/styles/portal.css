@@ -990,15 +990,20 @@ body {
   height: 16px;
 }
 
-/* What an older piece or a trophy does in SuperChargers. */
+/* What an older piece or a trophy does in SuperChargers. A trophy has a
+   row of its own, so its note is said in full. */
 .portal-note {
   display: -webkit-box;
   overflow: hidden;
   color: var(--mute);
   font-size: 14px;
   line-height: 1.3;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
+}
+
+.portal-note.full {
+  display: block;
 }
 
 /* A vehicle's driver in the bottom corner of its picture, as a villain has

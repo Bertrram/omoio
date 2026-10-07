@@ -880,8 +880,9 @@ export interface Offer extends Character {
   /// A vehicle's own SuperCharger, or a SuperCharger's own vehicle, by id,
   /// whatever the variant.
   partner: number | null;
-  /// What a SuperChargers trophy unlocks; left out for any other figure.
-  unlocks?: string[];
+  /// What a SuperChargers trophy unlocks: the villains to race as and the
+  /// tracks it opens. Left out for any other figure.
+  unlocks?: { villains: string[]; tracks: string[] };
 }
 
 /// The kinds of Skylander the games' checklists mark apart: the Giants,
