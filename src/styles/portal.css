@@ -137,13 +137,6 @@ body {
   border-bottom-color: var(--brand);
 }
 
-.portal-dot {
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  background: var(--tint);
-}
-
 .portal-bumper {
   flex: none;
   padding: 3px 8px;
@@ -470,6 +463,7 @@ body {
   flex: none;
   width: 18px;
   height: 18px;
+  color: var(--tint, currentColor);
 }
 
 .portal-tab-mark.trap {
@@ -1078,6 +1072,9 @@ body {
 }
 
 .portal-chip-alone {
+  display: flex;
+  align-items: center;
+  gap: 4px;
   margin-left: 2px;
   padding: 2px 9px;
   border-radius: 99px;
@@ -1408,6 +1405,11 @@ body {
 
 .portal-car-kept.new {
   color: var(--mute);
+}
+
+.portal-chip-alone svg {
+  width: 12px;
+  height: 12px;
 }
 
 .portal-car-kept.on {

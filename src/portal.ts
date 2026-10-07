@@ -189,6 +189,7 @@ const BADGES = {
   on: ["On the portal", `<path d="m5 12.5 4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>`],
   saved: ["Saved", `<path d="M6 3h12v18l-6-4.5L6 21z" fill="currentColor"/>`],
   picked: ["Top picked", `<path d="M12 3.5 20 13h-5v7.5H9V13H4z" fill="currentColor"/>`],
+  new: ["New", `<path d="M12 2.5 14 10l7.5 2-7.5 2-2 7.5-2-7.5L2.5 12 10 10z" fill="currentColor"/>`],
 } as const;
 
 /// One tile: a saved figure, a character the emulator can make, or both when
@@ -730,6 +731,7 @@ function kindLine(entry: Entry): HTMLElement {
   } else if (entry.kind) {
     const own = kindIcon(entry.kind);
     if (own) line.appendChild(icon(own));
+    else if (entry.kind in MARKS) line.insertAdjacentHTML("beforeend", svg(MARKS[entry.kind]));
     line.append(KIND_NAMES[entry.kind] ?? "");
   }
   const kind = classOf(entry);
@@ -829,7 +831,12 @@ function renderHead(): HTMLElement {
       mark(known?.element ?? null, known?.kind ?? null, pictureOf(known?.id, known?.variant)),
       node("span", "", figure.name)
     );
-    if (unmanned && holds(figure.slot, "vehicle")) button.appendChild(node("span", "portal-chip-alone", "Needs a driver"));
+    if (unmanned && holds(figure.slot, "vehicle")) {
+      const alone = node("span", "portal-chip-alone");
+      alone.innerHTML = svg(MARKS.figure);
+      alone.append("Needs a driver");
+      button.appendChild(alone);
+    }
     // A trap says which villain it brings with it.
     const villain = heldIn(figure.slot);
     if (villain) {
@@ -874,8 +881,13 @@ function renderTabs(): HTMLElement {
     const button = node("button", index === tab ? "portal-tab sel" : "portal-tab");
     button.setAttribute("role", "tab");
     button.setAttribute("aria-selected", String(index === tab));
-    if (each.element) button.appendChild(symbol(each.element) ?? node("span", `portal-dot tint-${each.element}`));
-    else if (each.icon) button.appendChild(icon(each.icon));
+    // An element without the game's own symbol yet gets Omoio's drawing of
+    // it, as its figures' tiles do, so every tab has a shape to go by.
+    if (each.element) {
+      const own = symbol(each.element);
+      if (own) button.appendChild(own);
+      else button.insertAdjacentHTML("beforeend", `<svg class="portal-tab-mark tint-${each.element}" viewBox="0 0 24 24" aria-hidden="true">${MARKS[each.element]}</svg>`);
+    } else if (each.icon) button.appendChild(icon(each.icon));
     else if (each.mark) button.insertAdjacentHTML("beforeend", `<svg class="portal-tab-mark ${each.mark}" viewBox="0 0 24 24" aria-hidden="true">${MARKS[each.mark]}</svg>`);
     button.append(each.label);
     button.onclick = () => showTab(index);
@@ -1199,6 +1211,7 @@ function vehicleTile(entry: Entry, index: number, variant: boolean): HTMLElement
   if (charged) line.innerHTML = svg(MARKS.supercharged);
   else if (on) line.innerHTML = svg(BADGES.on[1]);
   else if (entry.figure) line.innerHTML = svg(BADGES.saved[1]);
+  else line.innerHTML = svg(BADGES.new[1]);
   line.append(charged ? "SuperCharged" : on ? "On the portal" : entry.figure ? "Saved" : "New");
   const words = node("span", "portal-car-words");
   words.append(node("span", "portal-car-name", entry.name), line);
@@ -1294,7 +1307,7 @@ function renderVehicle(entry: Entry | undefined): HTMLElement {
   }
   card.appendChild(node("div", "portal-label", "This figure"));
   const kept = node("div", `portal-car-kept ${entry.figure ? "saved" : "new"}`);
-  if (entry.figure) kept.innerHTML = svg(BADGES.saved[1]);
+  kept.innerHTML = svg(entry.figure ? BADGES.saved[1] : BADGES.new[1]);
   kept.append(entry.figure ? "Saved, keeps its mods" : "New, made the first time it goes on");
   card.appendChild(kept);
   if (on) {
