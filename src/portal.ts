@@ -105,8 +105,10 @@ const ICONS = { item: itemIcon, adventure: adventureIcon, swapper: swapperIcon }
 
 type Icon = keyof typeof ICONS;
 
-/// SuperChargers' three terrains, in the order the game lists them. A
-/// vehicle goes on one, and a trophy is for its races.
+/// SuperChargers' three terrains, Land first, since the game's own path
+/// needs only a Land vehicle (Game Informer and the Skylanders wiki's
+/// "Vehicles", read 7 October 2026). A vehicle goes on one, and a trophy is
+/// for its races.
 const TERRAINS: [Terrain, string][] = [
   ["land", "Land"],
   ["sea", "Sea"],
@@ -491,9 +493,9 @@ function buildTabs() {
   };
   trophies.entries.sort((a, b) => races(a) - races(b));
   // The game decides the order. SuperChargers wants a vehicle at every Land,
-  // Sea and Sky gate (Game Informer, "21 Things You Need To Know", 3 June
-  // 2015), so its garage sits next to Saved, and the pieces from the games
-  // before, which do smaller things in it, come last. Everywhere else traps
+  // Sea and Sky gate (Game Informer, "21 Things You Need To Know", read 7
+  // October 2026), so its garage sits next to Saved, and the pieces from the
+  // games before, which do smaller things in it, come last. Everywhere else traps
   // sit next to Saved, since they go on and off all through a Trap Team
   // game, with the villains they hold right after.
   const order: (Tab | null)[] =
@@ -610,15 +612,20 @@ function terrainPart(terrain: Terrain, words = TERRAIN_NAMES.get(terrain) ?? "")
 }
 
 /// A vehicle's driver in the bottom corner of its picture, as a villain's
-/// tile has its trap: the driver's own picture when Omoio has it, its
-/// element's drawing when not.
+/// tile has its trap: the driver's own picture when Omoio has it, otherwise
+/// a figure in the driver's colour. The element's own shape would repeat
+/// the vehicle's, which nearly every driver shares.
 function cornerFace(id: number, className: string): HTMLElement {
   const offer = offers.find((each) => each.id === id);
   const corner = node("span", `${className} ${tintOf(offer?.element ?? null, offer?.kind ?? null)}`);
   const face = pictureOf(id, 0);
   if (face) corner.appendChild(image(face));
-  else emblem(corner, offer?.element ?? null, offer?.kind ?? "character");
+  else corner.innerHTML = svg(MARKS.figure);
   return corner;
+}
+
+function svg(shape: string): string {
+  return `<svg viewBox="0 0 24 24" aria-hidden="true">${shape}</svg>`;
 }
 
 function image(source: string): HTMLImageElement {
@@ -762,21 +769,26 @@ function listed(names: string[]): string {
 }
 
 /// What a trophy unlocks in SuperChargers, and what a piece from an earlier
-/// game does in it. A saved trap that holds a villain names it.
-function doesInSuperChargers(entry: Entry): string | null {
+/// game does in it, a line to each thing. A saved trap that holds a villain
+/// names it.
+function doesInSuperChargers(entry: Entry): string[] {
   const kind = entry.offer?.kind ?? entry.figure?.kind;
   const id = entry.offer?.id ?? entry.figure?.id;
   if (kind === "trophy") {
     const unlocks = entry.offer?.unlocks ?? offers.find((offer) => offer.id === id)?.unlocks;
-    if (!unlocks) return null;
-    if (unlocks.tracks.length === 0) return `Race as ${listed(unlocks.villains)} in Sky races`;
-    return `Race as ${listed(unlocks.villains)}, once caught in Boss Pursuit. Opens ${listed(unlocks.tracks)}, and the Mirror and SuperVillain Cups`;
+    if (!unlocks) return [];
+    if (unlocks.tracks.length === 0) return [`Race as ${listed(unlocks.villains)} in Sky races`];
+    return [
+      `Race as ${listed(unlocks.villains)}, once caught in Boss Pursuit`,
+      `Opens ${listed(unlocks.tracks)}, and the Mirror and SuperVillain Cups`,
+    ];
   }
   if (kind === "trap") {
     const held = villainList.find((villain) => villain.id === entry.figure?.holds?.villain);
-    return held ? `Opens ${held.name}'s Skystones card, and gives a special attack` : (OLDER_PIECES.trap ?? null);
+    if (held) return [`Opens ${held.name}'s Skystones card, and gives a special attack`];
   }
-  return kind ? (OLDER_PIECES[kind] ?? null) : null;
+  const words = kind ? OLDER_PIECES[kind] : undefined;
+  return words ? [words] : [];
 }
 
 /// What a piece from an earlier game does in SuperChargers. A magic item and
@@ -786,7 +798,7 @@ function doesInSuperChargers(entry: Entry): string | null {
 /// October 2026). A trap gives the Skylander or the vehicle a special attack
 /// of its element, and a villain in it opens the villain's Skystones
 /// Overdrive card, since SuperChargers catches no villains (Activision's
-/// Characters FAQ, question 1, and the wiki's "Trap").
+/// Characters FAQ, question 1, and the wiki's "Trap", read the same day).
 const OLDER_PIECES: Partial<Record<FigureKind, string>> = {
   item: "Adds a Legendary Treasure to the Academy",
   adventure: "Adds a Legendary Treasure to the Academy",
@@ -794,10 +806,9 @@ const OLDER_PIECES: Partial<Record<FigureKind, string>> = {
 };
 
 /// What an older piece or a trophy does in SuperChargers, under its name.
-function noteLine(entry: Entry): HTMLElement | null {
-  const words = game === "superchargers" ? doesInSuperChargers(entry) : null;
-  const kind = entry.offer?.kind ?? entry.figure?.kind;
-  return words ? node("span", kind === "trophy" ? "portal-note full" : "portal-note", words) : null;
+function noteLines(entry: Entry): HTMLElement[] {
+  const lines = game === "superchargers" ? doesInSuperChargers(entry) : [];
+  return lines.map((words) => node("span", "portal-note", words));
 }
 
 function renderHead(): HTMLElement {
@@ -840,7 +851,7 @@ function renderHead(): HTMLElement {
       frame.setAttribute("role", "group");
       frame.setAttribute("aria-label", "SuperCharged");
       const label = node("span", "portal-pair-mark");
-      label.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${MARKS.supercharged}</svg>`;
+      label.innerHTML = svg(MARKS.supercharged);
       label.append("SuperCharged");
       frame.append(label, button);
       row.appendChild(frame);
@@ -901,7 +912,9 @@ function renderBody(): HTMLElement {
     );
     const badge = chosen ? "picked" : on ? "on" : entry.offer && entry.figure ? "saved" : null;
     tile.append(picture(entry, badge), node("span", "portal-name", entry.name), kindLine(entry));
-    for (const line of [drivesLine(entry), noteLine(entry)]) if (line) tile.appendChild(line);
+    const drives = drivesLine(entry);
+    if (drives) tile.appendChild(drives);
+    tile.append(...noteLines(entry));
     tile.onclick = () => {
       zone = "grid";
       at = index;
@@ -1116,10 +1129,6 @@ function renderTray(): HTMLElement {
 }
 
 // ---- the garage ----
-
-function svg(shape: string): string {
-  return `<svg viewBox="0 0 24 24" aria-hidden="true">${shape}</svg>`;
-}
 
 /// SuperChargers' vehicles as a garage: a column to each terrain, so Land,
 /// Sea and Sky tell apart at a glance as the tray's elements do, what drives
@@ -1343,9 +1352,10 @@ function pairOf(entry: Entry | undefined): { driver: Pick; vehicle: Pick; other:
 }
 
 /// What the top face button does on a tile: puts its pair on, or adds the
-/// other one when the tile's own figure is on already.
+/// other one when the tile's character, in any variant, is on already.
 function pairWords(entry: Entry, other: Pick): string {
-  return isOn(entry) ? `Add ${other.name}` : `Put on with ${other.name}`;
+  const own = entry.offer?.id ?? entry.figure?.id;
+  return own != null && slotWith(own) >= 0 ? `Add ${other.name}` : `Put on with ${other.name}`;
 }
 
 /// Whether both of a tile's pair are on the portal, whichever variants.
@@ -1665,8 +1675,12 @@ async function takeOff() {
 /// there is one, otherwise a new one the emulator makes. The real portal has
 /// one place for a trap, so a trap already on comes off first, as it would
 /// by hand; how a game takes two at once is unknown. SuperChargers uses one
-/// vehicle at a time, also with two players, so a vehicle already on comes
-/// off first too, and the notice says so. Says whether the figure is on now.
+/// vehicle at a time, also with two players, one driving and one firing
+/// (Wikipedia, Activision's SuperChargers FAQ, question 12, and Co-Optimus'
+/// co-op review, read 7 October 2026), and two vehicles on a portal can
+/// leave it showing the figure going on for ever (Activision's Gameplay FAQ,
+/// question 1). So a vehicle already on comes off first too, and the notice
+/// says so. Says whether the figure is on now.
 async function putOn(name: string, figure: Figure | undefined, offer: Offer | undefined): Promise<boolean> {
   const kind = offer?.kind ?? figure?.kind;
   if (kind === "trap") {
@@ -1707,11 +1721,14 @@ function cameOff(names: string[]): string | undefined {
   return names.length > 0 ? `${names.join(" and ")} came off. The game uses one vehicle at a time.` : undefined;
 }
 
-/// Once a vehicle or a SuperCharger has gone on: cheers when a vehicle is
-/// SuperCharged, and says when a vehicle has nobody on the portal to drive
-/// it, which the top face button fixes from its tile.
-function tellDriving(leaving: string[]) {
-  const pair = superCharged()[0];
+/// Once the vehicle or SuperCharger `id` has gone on: cheers when that makes
+/// a vehicle SuperCharged, and says when the vehicle has nobody on the
+/// portal to drive it, which the top face button fixes from its tile. Any
+/// other pair on the portal, such as another player's, leaves the notice
+/// about this figure as it is.
+function tellDriving(id: number, leaving: string[]) {
+  const ours = (slot: number) => characterIn(slot)?.id === id;
+  const pair = superCharged().find((each) => ours(each.driver) || ours(each.vehicle));
   if (pair) {
     const vehicle = onPortal[pair.vehicle];
     return notify({
@@ -1722,16 +1739,19 @@ function tellDriving(leaving: string[]) {
       picture: pictureNamed(vehicle),
     });
   }
-  const vehicle = vehiclesOn()[0];
+  const vehicle = vehiclesOn().find((each) => ours(each.slot));
   if (!vehicle || driverOn()) return;
   const partner = characterIn(vehicle.slot)?.partner;
-  const driver = partner == null ? null : nameOfId(partner);
+  const driver = partner == null ? null : pickFor(partner)?.name;
+  const words = [
+    leaving.length > 0 ? `${leaving.join(" and ")} came off.` : "",
+    "Put a Skylander on with it.",
+    driver ? `${nameOf(family, "North")} puts ${driver} on.` : "",
+  ];
   notify({
     kind: "hint",
     title: `${vehicle.name} needs a driver`,
-    detail: driver
-      ? `Put a Skylander on with it. ${nameOf(family, "North")} puts ${driver} on.`
-      : "Put a Skylander on with it.",
+    detail: words.filter(Boolean).join(" "),
     picture: pictureNamed(vehicle.name),
   });
 }
@@ -1747,7 +1767,7 @@ async function pairUp() {
   if (!pair) return;
   const driverIn = slotWith(pair.driver.id) >= 0;
   const vehicleIn = slotWith(pair.vehicle.id) >= 0;
-  if (driverIn && vehicleIn) return tellDriving([]);
+  if (driverIn && vehicleIn) return tellDriving(pair.vehicle.id, []);
   const leaving = vehicleIn ? [] : vehiclesOn().map((each) => each.name);
   const needed = Number(!driverIn) + Number(!vehicleIn);
   const free = onPortal.length === 0 ? needed : onPortal.filter((name) => !name).length + leaving.length;
@@ -1760,7 +1780,7 @@ async function pairUp() {
   }
   if (!driverIn && !(await putOn(pair.driver.name, pair.driver.figure, pair.driver.offer))) return;
   if (!vehicleIn && !(await putOn(pair.vehicle.name, pair.vehicle.figure, pair.vehicle.offer))) return;
-  tellDriving(leaving);
+  tellDriving(pair.vehicle.id, leaving);
 }
 
 /// Both halves of a swapper, one after the other, each the saved figure when
@@ -1828,9 +1848,11 @@ async function choose() {
   }
   const slot = slotOf(entry);
   if (slot >= 0) return already(slot);
-  const drives = (entry.offer?.kind ?? entry.figure?.kind) === "vehicle" || classOf(entry) === "supercharger";
-  const leaving = (entry.offer?.kind ?? entry.figure?.kind) === "vehicle" ? vehiclesOn().map((each) => each.name) : [];
-  if ((await putOn(entry.name, entry.figure, entry.offer)) && drives) tellDriving(leaving);
+  const id = entry.offer?.id ?? entry.figure?.id;
+  const vehicle = (entry.offer?.kind ?? entry.figure?.kind) === "vehicle";
+  const leaving = vehicle ? vehiclesOn().map((each) => each.name) : [];
+  const done = await putOn(entry.name, entry.figure, entry.offer);
+  if (done && id != null && (vehicle || classOf(entry) === "supercharger")) tellDriving(id, leaving);
 }
 
 /// The characters come from the emulator's own figure maker the first time
@@ -1851,8 +1873,9 @@ async function loadOffers() {
     asking = false;
     buildTabs();
     // With nothing saved yet, open on the first element, not an empty tab.
-    // SuperChargers asks for a Skylander before a vehicle, so its garage,
-    // the second tab there, waits.
+    // In SuperChargers that isn't the garage, the second tab there: a
+    // vehicle needs a Skylander on the portal to drive it (Stevivor's review
+    // of the game, read 7 October 2026), so a Skylander comes first.
     const firstElement = tabs.findIndex((each) => each.element);
     if (mine.length === 0 && tab === 0 && tabs.length > 1) tab = game === "superchargers" && firstElement > 0 ? firstElement : 1;
     render();

@@ -3,8 +3,9 @@
 //! October 2026). Each vehicle goes on land, on the sea or in the sky, and
 //! has one SuperCharger of its own: with both on the portal, the game calls
 //! the vehicle SuperCharged, which is Activision's word too ("SuperCharged
-//! combinations", its SuperChargers FAQ). A pair goes by the character,
-//! whatever the variant: Dark Hot Streak is Spitfire's vehicle too.
+//! combinations", its SuperChargers FAQ, question 14, read 7 October 2026).
+//! A pair goes by the character, whatever the variant: Dark Hot Streak is
+//! Spitfire's vehicle too.
 //!
 //! Terrains and pairs are from the Skylanders wiki's "Vehicles" list and each
 //! vehicle's own page, read 7 October 2026. Activision's own skylanders.com
@@ -12,10 +13,10 @@
 //! archived 18 September 2018), all twenty of them.
 
 use crate::core::console::Console;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 /// Where a vehicle goes. The Sky, Land and Sea trophies have one each too.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Terrain {
     Land,
@@ -23,7 +24,7 @@ pub enum Terrain {
     Sky,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Vehicle {
     pub id: u16,
     pub name: &'static str,
@@ -93,8 +94,9 @@ pub struct Trophy {
 /// (the Skylanders wiki's page for each trophy, read 7 October 2026). A
 /// Land, Sea or Sky trophy opens two tracks and four villains, caught in its
 /// Boss Pursuit and kept on the trophy, the way a trap keeps its villain
-/// (Activision's "Racing in Skylanders SuperChargers FAQ"). It also opens
-/// the Mirror Cup, the SuperVillain Cup and Boss Pursuit for its terrain.
+/// (Activision's "Racing in Skylanders SuperChargers FAQ", question 8, read
+/// the same day). It also opens the Mirror Cup, the SuperVillain Cup and
+/// Boss Pursuit for its terrain.
 /// The Kaos Trophy has no terrain, and lets Kaos race in Sky races at once.
 pub const TROPHIES: [Trophy; 4] = [
     Trophy {

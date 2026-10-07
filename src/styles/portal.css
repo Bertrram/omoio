@@ -990,8 +990,8 @@ body {
   height: 16px;
 }
 
-/* What an older piece or a trophy does in SuperChargers. A trophy has a
-   row of its own, so its note is said in full. */
+/* What an older piece or a trophy does in SuperChargers, a line to each
+   thing. */
 .portal-note {
   display: -webkit-box;
   overflow: hidden;
@@ -1002,8 +1002,8 @@ body {
   -webkit-box-orient: vertical;
 }
 
-.portal-note.full {
-  display: block;
+.portal-note + .portal-note {
+  margin-top: 4px;
 }
 
 /* A vehicle's driver in the bottom corner of its picture, as a villain has
@@ -1371,14 +1371,14 @@ body {
   color: var(--tint);
 }
 
-.portal-held-art {
+.portal-car-card .portal-held-art {
   display: grid;
   place-items: center;
   color: var(--tint);
 }
 
-.portal-held-art svg,
-.portal-held-art .portal-symbol {
+.portal-car-card .portal-held-art svg,
+.portal-car-card .portal-held-art .portal-symbol {
   width: 50%;
   height: 50%;
 }
@@ -1725,7 +1725,6 @@ body {
 .tint-item { --tint: var(--kind-item); }
 .tint-adventure { --tint: var(--kind-adventure); }
 .tint-swapper { --tint: var(--kind-swapper); }
-.tint-vehicle { --tint: var(--kind-vehicle); }
 .tint-land { --tint: var(--terrain-land); }
 .tint-sea { --tint: var(--terrain-sea); }
 .tint-sky { --tint: var(--terrain-sky); }
