@@ -113,6 +113,28 @@ pub trait EmulatorBackend: Sync {
         None
     }
 
+    /// The room a readable copy of the game would take, when there may be
+    /// none and the emulator can make one: about the size of the game.
+    /// `None` when the game's own files are read as they are, or the
+    /// emulator can't make a copy.
+    fn copy_size(&self, _game: &Game) -> Option<u64> {
+        None
+    }
+
+    /// Has the emulator make a readable copy of the game at `into`, for the
+    /// figures' pictures. `progress` hears how far it is, out of 100, and
+    /// `cancel` stops it.
+    fn make_copy(
+        &self,
+        _app: &AppHandle,
+        _game: &Game,
+        _into: &Path,
+        _progress: &dyn Fn(u32),
+        _cancel: &AtomicBool,
+    ) -> Result<(), String> {
+        Err("This emulator can't make a copy of the game.".to_string())
+    }
+
     /// What this console calls each place on a pad, for the Controller
     /// screen. A place the emulator cannot use is left out.
     fn button_names(&self) -> &'static [(&'static str, &'static str)];

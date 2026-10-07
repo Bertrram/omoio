@@ -111,7 +111,7 @@ fn command_when_ready(pid: u32, label: &str) -> Option<u32> {
 
 /// Waits up to `limit` for Cemu's window titled `wanted` and puts it out of
 /// sight. Looked for often, so it is gone before it can be seen over the game.
-fn arrives(pid: u32, wanted: &str, limit: Duration) -> Option<HWND> {
+pub(super) fn arrives(pid: u32, wanted: &str, limit: Duration) -> Option<HWND> {
     let until = Instant::now() + limit;
     while Instant::now() < until {
         if let Some(window) = windows_of(pid).into_iter().find(|&w| title(w) == wanted) {
@@ -123,7 +123,7 @@ fn arrives(pid: u32, wanted: &str, limit: Duration) -> Option<HWND> {
     None
 }
 
-fn text(window: HWND) -> String {
+pub(super) fn text(window: HWND) -> String {
     let mut buffer = [0u16; 512];
     let mut copied = 0usize;
     // Windows carries the text across to Cemu's process and back. A window
@@ -145,7 +145,7 @@ fn text(window: HWND) -> String {
 /// A window's title as Windows keeps it, asked without sending Cemu
 /// anything, so a busy Cemu never holds up a look at its windows. Only for
 /// Cemu's windows themselves; a box or button inside one answers `text`.
-fn title(window: HWND) -> String {
+pub(super) fn title(window: HWND) -> String {
     let mut buffer = [0u16; 256];
     let length = unsafe { GetWindowTextW(window, &mut buffer) };
     String::from_utf16_lossy(&buffer[..length.max(0) as usize])
@@ -216,7 +216,7 @@ fn type_into(field: HWND, value: &str) {
     }
 }
 
-fn class(window: HWND) -> String {
+pub(super) fn class(window: HWND) -> String {
     let mut buffer = [0u16; 128];
     let length = unsafe { GetClassNameW(window, &mut buffer) };
     String::from_utf16_lossy(&buffer[..length.max(0) as usize])
@@ -226,7 +226,7 @@ fn class(window: HWND) -> String {
 /// what the button itself does after a real click. A simulated mouse click
 /// (`BM_CLICK`) only counts in the window in front, and Cemu's windows are
 /// kept out of sight behind the game: in the figure maker it did nothing.
-fn press(button: HWND) {
+pub(super) fn press(button: HWND) {
     let Ok(parent) = (unsafe { GetParent(button) }) else {
         return;
     };
@@ -236,12 +236,12 @@ fn press(button: HWND) {
     let _ = unsafe { PostMessageW(Some(parent), WM_COMMAND, WPARAM((BN_CLICKED << 16) | id), LPARAM(button.0 as isize)) };
 }
 
-fn close(window: HWND) {
+pub(super) fn close(window: HWND) {
     let _ = unsafe { PostMessageW(Some(window), WM_CLOSE, WPARAM(0), LPARAM(0)) };
 }
 
 /// Far off the screen, where it still works but nobody sees it.
-fn out_of_sight(window: HWND) {
+pub(super) fn out_of_sight(window: HWND) {
     let _ = unsafe {
         SetWindowPos(
             window,
@@ -261,14 +261,14 @@ unsafe extern "system" fn collect(window: HWND, list: LPARAM) -> BOOL {
     BOOL(1)
 }
 
-fn children(window: HWND) -> Vec<HWND> {
+pub(super) fn children(window: HWND) -> Vec<HWND> {
     let mut list: Vec<HWND> = Vec::new();
     let _ = unsafe { EnumChildWindows(Some(window), Some(collect), LPARAM(&mut list as *mut Vec<HWND> as isize)) };
     list
 }
 
 /// Cemu's windows that are showing, in the order Windows keeps them.
-fn windows_of(pid: u32) -> Vec<HWND> {
+pub(super) fn windows_of(pid: u32) -> Vec<HWND> {
     let mut all: Vec<HWND> = Vec::new();
     let _ = unsafe { EnumWindows(Some(collect), LPARAM(&mut all as *mut Vec<HWND> as isize)) };
     all.into_iter()
@@ -280,7 +280,7 @@ fn windows_of(pid: u32) -> Vec<HWND> {
         .collect()
 }
 
-fn wait_up_to(limit: Duration, pid: u32, found: impl Fn(HWND) -> bool) -> Option<HWND> {
+pub(super) fn wait_up_to(limit: Duration, pid: u32, found: impl Fn(HWND) -> bool) -> Option<HWND> {
     let until = Instant::now() + limit;
     while Instant::now() < until {
         if let Some(window) = windows_of(pid).into_iter().find(|&w| found(w)) {
@@ -293,7 +293,7 @@ fn wait_up_to(limit: Duration, pid: u32, found: impl Fn(HWND) -> bool) -> Option
 
 /// Asks `done` every 20 ms until it says yes or `limit` is up, so a step
 /// takes as long as Cemu needs for it rather than a fixed pause.
-fn until(limit: Duration, mut done: impl FnMut() -> bool) {
+pub(super) fn until(limit: Duration, mut done: impl FnMut() -> bool) {
     let end = Instant::now() + limit;
     while !done() && Instant::now() < end {
         std::thread::sleep(Duration::from_millis(20));
@@ -312,7 +312,7 @@ fn slot_now(window: HWND, slot: usize) -> String {
 
 /// The command a menu item sends, found by its text so it does not matter
 /// what number wxWidgets gave it this time.
-fn menu_command(menu: HMENU, wanted: &str) -> Option<u32> {
+pub(super) fn menu_command(menu: HMENU, wanted: &str) -> Option<u32> {
     let count = unsafe { GetMenuItemCount(Some(menu)) };
     for at in 0..count.max(0) {
         let sub = unsafe { GetSubMenu(menu, at) };
@@ -350,7 +350,7 @@ fn command(pid: u32, label: &str) -> Option<u32> {
 
 /// Cemu's main window, found whether or not it is showing: Big Picture hides
 /// the game's window while it is up.
-fn main_window(pid: u32) -> Option<HWND> {
+pub(super) fn main_window(pid: u32) -> Option<HWND> {
     let mut all: Vec<HWND> = Vec::new();
     let _ = unsafe { EnumWindows(Some(collect), LPARAM(&mut all as *mut Vec<HWND> as isize)) };
     all.into_iter().find(|&window| {
@@ -460,7 +460,7 @@ pub fn ready(pid: u32) {
 /// Controls of one class and text, in the order Cemu made them. The
 /// Skylanders page is made first, so its sixteen rows come before the other
 /// toys' pages.
-fn controls(window: HWND, class_has: &str, label: Option<&str>) -> Vec<HWND> {
+pub(super) fn controls(window: HWND, class_has: &str, label: Option<&str>) -> Vec<HWND> {
     children(window)
         .into_iter()
         .filter(|&c| class(c).contains(class_has) && label.map_or(true, |l| text(c) == l))
@@ -516,14 +516,14 @@ fn check(slot: usize) -> Result<(), String> {
 /// on purpose. The input settings window is a dialog of the same kind, and
 /// while a menu is over the game it is Omoio's: taken for a message, it made
 /// every figure look as if it had failed.
-fn is_message(window: HWND, expected: &[&str]) -> bool {
+pub(super) fn is_message(window: HWND, expected: &[&str]) -> bool {
     let name = title(window);
     class(window) == "#32770" && name != INPUT_SETTINGS && !expected.contains(&name.as_str())
 }
 
 /// Clicks OK on a message Cemu put up, so it does not sit over the game, and
 /// hands on what it said.
-fn dismiss_message(pid: u32, expected: &[&str]) -> Option<String> {
+pub(super) fn dismiss_message(pid: u32, expected: &[&str]) -> Option<String> {
     let message = windows_of(pid).into_iter().find(|&w| is_message(w, expected))?;
     let said = children(message)
         .into_iter()
@@ -590,7 +590,7 @@ pub fn clear(pid: u32, slot: usize) -> Result<Vec<String>, String> {
 /// Open or Save button, and waits for it to close. The button is pressed
 /// once the name box shows the whole name, which the typed characters take
 /// a moment to fill in.
-fn finish_file_window(pid: u32, picker: HWND, file: &Path) -> Result<(), String> {
+pub(super) fn finish_file_window(pid: u32, picker: HWND, file: &Path) -> Result<(), String> {
     const DIFFERENT: &str = "Cemu's file window looks different from what Omoio knows.";
     out_of_sight(picker);
     let name_box = children(picker)
