@@ -12,6 +12,7 @@ import {
   portalCreate,
   portalFigures,
   portalLoad,
+  portalGame,
   portalMenuFamily,
   villains as listVillains,
   type Figure,
@@ -21,6 +22,8 @@ import {
   type Movement,
   type Offer,
   type PadFamily,
+  type SkylandersGame,
+  type Terrain,
   type Villain,
 } from "./api";
 import { nameOf } from "./components/padNames";
@@ -29,16 +32,19 @@ import itemIcon from "./icons/items.svg";
 import swapperIcon from "./icons/swappers.svg";
 
 /// The Skylanders menu, drawn by Omoio over the running game and used with
-/// the pad alone. The shoulder buttons go through the tabs: Saved, traps and
-/// the villains they hold, then one tab to each element, then swappers, items
-/// such as the treasure chest and the swords, and adventure packs. The d-pad
-/// or left stick moves, the bottom face button puts a figure on the portal,
-/// the left one takes it off, the right one closes. Mouse and keyboard work
-/// as well.
+/// the pad alone. The shoulder buttons go through the tabs, in the order the
+/// game wants them: Saved, traps and the villains they hold, then one tab to
+/// each element, then swappers, items such as the treasure chest and the
+/// swords, and adventure packs. SuperChargers puts its garage of vehicles
+/// next to Saved instead, and the older pieces last. The d-pad or left stick
+/// moves, the bottom face button puts a figure on the portal, the left one
+/// takes it off, the right one closes, and in SuperChargers the top one puts
+/// a SuperCharger and its vehicle on together. Mouse and keyboard work as
+/// well.
 ///
 /// A character is made by the emulator's own figure maker the first time it
 /// is chosen, and saved. After that the saved figure goes on, so it keeps
-/// what it has earned.
+/// what it has earned, and a vehicle the mods bought for it.
 
 /// How many tiles sit side by side, which is also how far up or down moves.
 const COLUMNS = 5;
@@ -99,6 +105,16 @@ const ICONS = { item: itemIcon, adventure: adventureIcon, swapper: swapperIcon }
 
 type Icon = keyof typeof ICONS;
 
+/// SuperChargers' three terrains, in the order the game lists them. A
+/// vehicle goes on one, and a trophy is for its races.
+const TERRAINS: [Terrain, string][] = [
+  ["land", "Land"],
+  ["sea", "Sea"],
+  ["sky", "Sky"],
+];
+
+const TERRAIN_NAMES = new Map(TERRAINS);
+
 const MOVEMENT_NAMES: Record<Movement, string> = {
   bounce: "Bounce",
   climb: "Climb",
@@ -110,10 +126,11 @@ const MOVEMENT_NAMES: Record<Movement, string> = {
   teleport: "Teleport",
 };
 
-/// Omoio's own drawing for each element, and for the kinds that have no
-/// icon. Used until Omoio has read the game's own symbols out of the game,
-/// and for an element that game doesn't have. A child who can't read yet
-/// goes by the element's shape and colour, which the games use too.
+/// Omoio's own drawing for each element, for the kinds that have no icon,
+/// and for SuperChargers' terrains: a tyre, waves and a plane. Used until
+/// Omoio has read the game's own symbols out of the game, and for an element
+/// that game doesn't have. A child who can't read yet goes by the shape and
+/// colour, which the games use too.
 const MARKS: Record<string, string> = {
   air: `<path d="M3 8h11a3 3 0 1 0-3-3M3 12h15a3 3 0 1 1-3 3M3 16h8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>`,
   earth: `<path d="M2 20 9 8l4 6 3-4 6 10z" fill="currentColor"/>`,
@@ -127,16 +144,26 @@ const MARKS: Record<string, string> = {
   dark: `<path d="M14.6 2.4A10 10 0 1 0 21.8 16.6A8.3 8.3 0 0 1 14.6 2.4Z" fill="currentColor"/>`,
   trap: `<path d="M12 2.5 17.5 9 12 17 6.5 9z" fill="currentColor"/><path d="M8 19.5h8M12 17v2.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>`,
   villain: `<path d="M12 2.5 20.5 7.3v9.4L12 21.5 3.5 16.7V7.3z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>`,
-  vehicle: `<circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="2.5" fill="currentColor"/>`,
+  vehicle: `<circle cx="12" cy="12" r="8.6" fill="none" stroke="currentColor" stroke-width="2.4"/><circle cx="12" cy="12" r="2.4" fill="currentColor"/><path d="m3.8 10.8 5.9.8m10.5-.8-5.9.8M12 14.4v6" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/>`,
+  land: `<circle cx="12" cy="12" r="7.64" fill="none" stroke="currentColor" stroke-width="4.4" stroke-dasharray="3.1 0.9"/><circle cx="12" cy="12" r="2.2" fill="currentColor"/>`,
+  sea: `<path d="M2.5 9.5q2.4-3 4.8 0t4.7 0 4.8 0 4.7 0M2.5 15.5q2.4-3 4.8 0t4.7 0 4.8 0 4.7 0" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>`,
+  sky: `<path d="M12 2.2c.9 0 1.6 1.1 1.6 2.6v4.6l7.6 4.6v2.2l-7.6-2.4v4.1l2.3 1.8V22L12 21l-3.9 1v-2.3l2.3-1.8v-4.1l-7.6 2.4v-2.2l7.6-4.6V4.8c0-1.5.7-2.6 1.6-2.6z" fill="currentColor"/>`,
+  supercharged: `<path d="M13.6 2 4.8 13.4h6.1L9.6 22l9.6-12.2h-6.3z" fill="currentColor"/>`,
   trophy: `<path d="M7 3h10v5a5 5 0 0 1-10 0zM7 5H4a3 3 0 0 0 3.3 4M17 5h3a3 3 0 0 1-3.3 4M12 13v4M9 21h6" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`,
   figure: `<circle cx="12" cy="8" r="4" fill="currentColor"/><path d="M4 21a8 8 0 0 1 16 0z" fill="currentColor"/>`,
 };
 
 /// The kinds the games' checklists mark apart, with their names, where they
-/// sort in an element, and Omoio's own mark where it has one: Giants and
-/// Trap Masters first, with a crown with a Traptanium crystal at its heart
-/// for a Trap Master, and Minis last, with a small figure in a ring.
+/// sort in an element, and Omoio's own mark where it has one: SuperChargers
+/// first, with a bolt, then Giants and Trap Masters, with a crown with a
+/// Traptanium crystal at its heart for a Trap Master, and Minis last, with a
+/// small figure in a ring.
 const CLASSES: Record<FigureClass, { words: string; order: number; shape: string | null }> = {
+  supercharger: {
+    words: "SuperCharger",
+    order: -1,
+    shape: MARKS.supercharged,
+  },
   giant: {
     words: "Giant",
     order: 0,
@@ -183,6 +210,9 @@ interface Tab {
   entries: Entry[];
   /// The villains tab, laid out as a collector's tray rather than a grid.
   tray?: true;
+  /// SuperChargers' vehicles, laid out as a garage with a column to each
+  /// terrain.
+  garage?: true;
 }
 
 /// The tray's columns, one to each element, as the villains fit the traps,
@@ -191,6 +221,8 @@ const TRAY: [FigureElement | null, string][] = [...ELEMENTS, [null, "Kaos"]];
 
 const root = document.getElementById("portal")!;
 
+/// The game running, which decides the order of the tabs.
+let game: SkylandersGame | null = null;
 let family: PadFamily = "generic";
 let shown = false;
 let asking = false;
@@ -258,8 +290,21 @@ function fileOf(name: string): string | null {
   return elsewhere ? convertFileSrc(elsewhere) : null;
 }
 
-function placed(): { name: string; slot: number }[] {
+function filled(): { name: string; slot: number }[] {
   return onPortal.map((name, slot) => ({ name, slot })).filter((figure) => figure.name);
+}
+
+/// The figures on the portal in the order the row shows them: by slot,
+/// except that a SuperCharged vehicle sits right after its driver, so the
+/// two show together.
+function placed(): { name: string; slot: number }[] {
+  const on = filled();
+  for (const pair of superCharged()) {
+    const vehicle = on.findIndex((figure) => figure.slot === pair.vehicle);
+    const [moved] = on.splice(vehicle, 1);
+    on.splice(on.findIndex((figure) => figure.slot === pair.driver) + 1, 0, moved);
+  }
+  return on;
 }
 
 /// Takes in the portal as just read. A slot that has emptied, or holds
@@ -308,13 +353,61 @@ function isOn(entry: Entry): boolean {
   return slotOf(entry) >= 0;
 }
 
-/// Whether the figure in `slot` is a trap: by its file when Omoio put it
-/// there, otherwise by the name the portal gives it.
-function holdsTrap(slot: number): boolean {
+/// Whether the figure in `slot` is of a kind, such as a trap or a vehicle:
+/// by its file when Omoio put it there, otherwise by the name the portal
+/// gives it.
+function holds(slot: number, kind: FigureKind): boolean {
   const file = slotFiles[slot];
   const figure = file ? mine.find((each) => each.path === file.path) : undefined;
-  if (figure?.kind) return figure.kind === "trap";
-  return offers.some((offer) => offer.kind === "trap" && offer.name === onPortal[slot]);
+  if (figure?.kind) return figure.kind === kind;
+  return offers.some((offer) => offer.kind === kind && offer.name === onPortal[slot]);
+}
+
+/// The character in `slot`, the same way: by its file when Omoio put it
+/// there and knows it, otherwise by the name the portal gives it.
+function characterIn(slot: number): { id: number; kind: FigureKind; partner: number | null } | null {
+  const file = slotFiles[slot];
+  const figure = file ? mine.find((each) => each.path === file.path) : undefined;
+  if (figure?.id != null && figure.kind) return { id: figure.id, kind: figure.kind, partner: figure.partner };
+  const offer = offers.find((each) => each.name === onPortal[slot]);
+  return offer ? { id: offer.id, kind: offer.kind, partner: offer.partner } : null;
+}
+
+/// The slot of a figure of the character `id`, whichever variant, or -1.
+function slotWith(id: number): number {
+  return filled().find((figure) => characterIn(figure.slot)?.id === id)?.slot ?? -1;
+}
+
+function vehiclesOn(): { name: string; slot: number }[] {
+  return filled().filter((figure) => holds(figure.slot, "vehicle"));
+}
+
+/// Whether a Skylander is on the portal to drive a vehicle. Any of them can.
+function driverOn(): boolean {
+  return filled().some((figure) => holds(figure.slot, "character"));
+}
+
+/// Each vehicle on the portal with its own SuperCharger on too, which the
+/// game calls SuperCharged, by slot.
+function superCharged(): { driver: number; vehicle: number }[] {
+  return vehiclesOn().flatMap((vehicle) => {
+    const partner = characterIn(vehicle.slot)?.partner;
+    const driver = partner == null ? -1 : slotWith(partner);
+    return driver >= 0 ? [{ driver, vehicle: vehicle.slot }] : [];
+  });
+}
+
+function terrainOf(entry: Entry): Terrain | null {
+  return entry.offer?.terrain ?? entry.figure?.terrain ?? null;
+}
+
+function partnerOf(entry: Entry): number | null {
+  return entry.offer?.partner ?? entry.figure?.partner ?? null;
+}
+
+/// The emulator's name for a character, by id: its plain version's.
+function nameOfId(id: number): string | null {
+  return offers.filter((offer) => offer.id === id).sort((a, b) => a.variant - b.variant)[0]?.name ?? null;
 }
 
 /// The marked kind a tile's figure is, if any.
@@ -334,15 +427,24 @@ function classMark(kind: FigureClass): HTMLElement | null {
   return drawn;
 }
 
-/// Where a tile sorts among its element: Trap Masters first and Minis last,
-/// as on the game's own checklist.
+/// Where a tile sorts among its element: Giants and Trap Masters first and
+/// Minis last, as on the game's own checklist. SuperChargers come before
+/// them all, as the Skylanders their game was made for.
 function rank(entry: Entry): number {
   const kind = classOf(entry);
   return kind ? CLASSES[kind].order : 1;
 }
 
+/// What a tile stands for, to find it again once the lists are made anew.
+function keyOf(entry: Entry | undefined): string | null {
+  return entry?.offer ? `${entry.offer.id}-${entry.offer.variant}` : null;
+}
+
 function buildTabs() {
   const kept = tabs[tab]?.label;
+  // The garage puts saved vehicles first, so a vehicle made moves up its
+  // column, and the selection goes with it.
+  const picked = zone === "grid" && tabs[tab]?.garage ? keyOf(tabs[tab]?.entries[at]) : null;
   const byName = (a: Entry, b: Entry) => rank(a) - rank(b) || a.name.localeCompare(b.name);
   const entry = (offer: Offer): Entry => ({
     name: offer.name,
@@ -352,23 +454,20 @@ function buildTabs() {
     figure: savedFor(offer),
   });
   const characters = offers.filter((offer) => offer.kind === "character" && !offer.half);
-  const next: Tab[] = [
-    {
-      label: "Saved",
-      entries: mine.map((figure) => ({ name: figure.name, element: figure.element, kind: figure.kind, figure })),
-    },
-  ];
-  // Traps go on and off all through a Trap Team game, so they sit next to
-  // Saved, and the villains they hold right after.
+  const saved: Tab = {
+    label: "Saved",
+    entries: mine.map((figure) => ({ name: figure.name, element: figure.element, kind: figure.kind, figure })),
+  };
   const traps = offers.filter((offer) => offer.kind === "trap").map(entry).sort(byName);
-  if (traps.length > 0) next.push({ label: "Traps", mark: "trap", entries: traps });
-  if (traps.length > 0 && villainList.length > 0) next.push({ label: "Villains", mark: "villain", entries: [], tray: true });
-  for (const [element, label] of ELEMENTS) {
-    const entries = characters.filter((offer) => offer.element === element).map(entry).sort(byName);
-    if (entries.length > 0) next.push({ label, element, entries });
-  }
-  const others = characters.filter((offer) => !offer.element).map(entry).sort(byName);
-  if (others.length > 0) next.push({ label: "Other", entries: others });
+  const trapTab: Tab = { label: "Traps", mark: "trap", entries: traps };
+  const villainTab: Tab | null =
+    traps.length > 0 && villainList.length > 0 ? { label: "Villains", mark: "villain", entries: [], tray: true } : null;
+  const elementTabs: Tab[] = ELEMENTS.map(([element, label]) => ({
+    label,
+    element,
+    entries: characters.filter((offer) => offer.element === element).map(entry).sort(byName),
+  }));
+  const otherTab: Tab = { label: "Other", entries: characters.filter((offer) => !offer.element).map(entry).sort(byName) };
   const halves = offers.filter((offer) => offer.half);
   const swappers: Entry[] = halves
     .filter((offer) => offer.half === "top")
@@ -377,14 +476,67 @@ function buildTabs() {
       return bottom ? [{ name: baseName(top.name), element: top.element, kind: top.kind, swap: { top, bottom } }] : [];
     })
     .sort(byName);
-  if (swappers.length > 0) next.push({ label: "Swappers", icon: "swapper", entries: swappers });
-  for (const [kind, label] of KINDS.filter(([kind]) => kind !== "trap")) {
-    const entries = offers.filter((offer) => offer.kind === kind).map(entry).sort(byName);
-    if (entries.length > 0) next.push({ label, icon: kindIcon(kind) ?? undefined, entries });
-  }
-  tabs = next;
+  const swapperTab: Tab = { label: "Swappers", icon: "swapper", entries: swappers };
+  const kindTab = (kind: FigureKind): Tab => ({
+    label: KINDS.find(([each]) => each === kind)?.[1] ?? "",
+    icon: kindIcon(kind) ?? undefined,
+    mark: kind === "vehicle" || kind === "trophy" ? kind : undefined,
+    entries: offers.filter((offer) => offer.kind === kind).map(entry).sort(byName),
+  });
+  // The game decides the order. SuperChargers asks for a vehicle whenever
+  // the road, the sea or the sky changes, so its garage sits next to Saved,
+  // and the pieces from the games before, which do smaller things in it,
+  // come last. In every other game traps go on and off all through a Trap
+  // Team game, so they sit next to Saved, and the villains they hold right
+  // after.
+  // SuperChargers' trophies in the order of the terrains, and Kaos's last.
+  const trophies = kindTab("trophy");
+  const races = (each: Entry) => {
+    const at = TERRAINS.findIndex(([terrain]) => terrain === terrainOf(each));
+    return at < 0 ? TERRAINS.length : at;
+  };
+  trophies.entries.sort((a, b) => races(a) - races(b));
+  const order: (Tab | null)[] =
+    game === "superchargers"
+      ? [garage(offers.filter((offer) => offer.kind === "vehicle").map(entry)), ...elementTabs, otherTab, swapperTab, trophies, trapTab, kindTab("item"), kindTab("adventure")]
+      : [trapTab, villainTab, ...elementTabs, otherTab, swapperTab, kindTab("item"), kindTab("adventure"), kindTab("vehicle"), kindTab("trophy")];
+  tabs = [saved, ...order.filter((each): each is Tab => Boolean(each && (each.tray || each.entries.length > 0)))];
   const again = tabs.findIndex((each) => each.label === kept);
   tab = again >= 0 ? again : Math.min(tab, tabs.length - 1);
+  const found = again >= 0 && picked ? tabs[tab].entries.findIndex((entry) => keyOf(entry) === picked) : -1;
+  if (found >= 0) at = found;
+}
+
+/// The vehicles tab: a column to each terrain, and in each, the vehicles
+/// with a saved figure first, each followed by its variants. The plain one
+/// leads its variants, unless only a variant is saved.
+function garage(vehicles: Entry[]): Tab {
+  const plain = (group: Entry[]) => group.reduce((first, each) => (variantOf(each) < variantOf(first) ? each : first));
+  const kept = (group: Entry[]) => group.some((each) => each.figure);
+  const byId = new Map<number, Entry[]>();
+  for (const each of vehicles) byId.set(each.offer?.id ?? -1, [...(byId.get(each.offer?.id ?? -1) ?? []), each]);
+  const groups = [...byId.values()].map((group) =>
+    group.sort((a, b) => Number(Boolean(b.figure)) - Number(Boolean(a.figure)) || variantOf(a) - variantOf(b))
+  );
+  groups.sort((a, b) => Number(kept(b)) - Number(kept(a)) || plain(a).name.localeCompare(plain(b).name));
+  const entries = garageColumns(groups.flat()).flatMap((column) => column.entries);
+  return { label: "Vehicles", mark: "vehicle", entries, garage: true };
+}
+
+function variantOf(entry: Entry): number {
+  return entry.offer?.variant ?? entry.figure?.variant ?? 0;
+}
+
+/// The garage's columns, one to each terrain in the game's order, keeping
+/// the order the vehicles come in. A vehicle Omoio has no terrain for gets
+/// a column of its own rather than going missing.
+function garageColumns(entries: Entry[]): { terrain: Terrain | null; label: string; entries: Entry[] }[] {
+  const columns = [...TERRAINS, [null, "Other"] as const].map(([terrain, label]) => ({
+    terrain,
+    label,
+    entries: entries.filter((entry) => terrainOf(entry) === terrain),
+  }));
+  return columns.filter((column) => column.entries.length > 0);
 }
 
 /// The tray's columns with the villains in each, in the game's order.
@@ -429,9 +581,44 @@ function kindIcon(kind: FigureKind | null): Icon | null {
   return kind === "item" || kind === "adventure" ? kind : null;
 }
 
-/// The colour a figure is shown in: its element's, or its kind's icon's.
-function tintOf(element: FigureElement | null, kind: FigureKind | null): string {
+/// The colour a figure is shown in: its element's, or its kind's icon's. A
+/// trophy has the colour of the races it is for, and the Kaos Trophy Kaos's.
+function tintOf(element: FigureElement | null, kind: FigureKind | null, terrain: Terrain | null = null): string {
+  if (!element && kind === "trophy") return `tint-${terrain ?? "kaos"}`;
   return `tint-${element ?? kindIcon(kind) ?? "none"}`;
+}
+
+/// Omoio's drawing of a terrain, in the terrain's colour.
+function terrainMark(terrain: Terrain): string {
+  return `<svg class="portal-terrain-mark tint-${terrain}" viewBox="0 0 24 24" aria-hidden="true">${MARKS[terrain]}</svg>`;
+}
+
+/// A terrain's own symbol from the game when Omoio has read it, Omoio's
+/// drawing when not.
+function terrainShape(into: HTMLElement, terrain: Terrain) {
+  const source = fileOf(`terrain-${terrain}`);
+  if (source) into.appendChild(painted(source, `tint-${terrain}`));
+  else into.insertAdjacentHTML("beforeend", terrainMark(terrain));
+}
+
+/// A terrain with its name, in its colour: "Land".
+function terrainPart(terrain: Terrain, words = TERRAIN_NAMES.get(terrain) ?? ""): HTMLElement {
+  const part = node("span", `portal-terrain tint-${terrain}`);
+  terrainShape(part, terrain);
+  part.append(words);
+  return part;
+}
+
+/// A face in the bottom corner of a picture: a vehicle's driver, or the
+/// vehicle a SuperCharger drives, as a villain's tile has its trap. The
+/// figure's own picture when Omoio has it, its element's drawing when not.
+function cornerFace(id: number, className: string): HTMLElement {
+  const offer = offers.find((each) => each.id === id);
+  const corner = node("span", `${className} ${tintOf(offer?.element ?? null, offer?.kind ?? null)}`);
+  const face = pictureOf(id, 0);
+  if (face) corner.appendChild(image(face));
+  else emblem(corner, offer?.element ?? null, offer?.kind ?? "character");
+  return corner;
 }
 
 function image(source: string): HTMLImageElement {
@@ -494,7 +681,7 @@ function movement(moves: Movement): HTMLElement {
 /// drawing when not. A swapper is its bottom with a top laid over it: its
 /// own, or while a top is picked, that one, so each bottom shows the mix.
 function picture(entry: Entry, badge: keyof typeof BADGES | null): HTMLElement {
-  const spot = node("span", `portal-art ${tintOf(entry.element, entry.kind)}`);
+  const spot = node("span", `portal-art ${tintOf(entry.element, entry.kind, terrainOf(entry))}`);
   const sources = entry.swap
     ? [entry.swap.bottom, pickedTop?.top ?? entry.swap.top].map((half) => pictureOf(half.id, half.variant))
     : [pictureOf(entry.offer?.id ?? entry.figure?.id, entry.offer?.variant ?? entry.figure?.variant)];
@@ -517,14 +704,19 @@ function picture(entry: Entry, badge: keyof typeof BADGES | null): HTMLElement {
     corner.append(words);
     spot.appendChild(corner);
   }
+  const partner = partnerOf(entry);
+  if (partner != null && (entry.offer?.kind ?? entry.figure?.kind) === "vehicle") {
+    spot.appendChild(cornerFace(partner, "portal-art-face"));
+  }
   return spot;
 }
 
 /// The line under a tile's name: the element in its colour and shape, or
 /// the kind of figure when it has no element, the series where the name
-/// doesn't give it, and how a swapper moves, which its bottom decides.
+/// doesn't give it, how a swapper moves, which its bottom decides, and
+/// where a vehicle goes or what races a trophy is for.
 function kindLine(entry: Entry): HTMLElement {
-  const line = node("span", `portal-kind ${tintOf(entry.element, entry.kind)}`);
+  const line = node("span", `portal-kind ${tintOf(entry.element, entry.kind, terrainOf(entry))}`);
   if (entry.element) {
     emblem(line, entry.element, null);
     line.append(ELEMENT_NAMES.get(entry.element) ?? "");
@@ -545,7 +737,44 @@ function kindLine(entry: Entry): HTMLElement {
   if (series) line.appendChild(node("span", "portal-series", `Series ${series}`));
   const moves = entry.swap ? entry.swap.bottom.movement : (entry.offer?.movement ?? entry.figure?.movement);
   if (moves) line.appendChild(movement(moves));
+  const terrain = terrainOf(entry);
+  if (terrain) line.appendChild(terrainPart(terrain));
   return line;
+}
+
+/// What a SuperCharger drives, under its name, the way a swapper's tile
+/// says how it moves: its vehicle's name with the vehicle's terrain.
+function drivesLine(entry: Entry): HTMLElement | null {
+  const partner = partnerOf(entry);
+  if (classOf(entry) !== "supercharger" || partner == null) return null;
+  const vehicle = offers.find((offer) => offer.id === partner);
+  const name = nameOfId(partner);
+  if (!name) return null;
+  const line = node("span", "portal-drives");
+  if (vehicle?.terrain) terrainShape(line, vehicle.terrain);
+  line.append(`Drives ${name}`);
+  return line;
+}
+
+/// What a trophy unlocks in SuperChargers, and what a piece from an earlier
+/// game does in it.
+function doesInSuperChargers(entry: Entry): string | null {
+  const kind = entry.offer?.kind ?? entry.figure?.kind;
+  if (kind === "trophy") {
+    const id = entry.offer?.id ?? entry.figure?.id;
+    const unlocks = entry.offer?.unlocks ?? offers.find((offer) => offer.id === id)?.unlocks ?? [];
+    return unlocks.length > 0 ? `Unlocks ${unlocks.join(", ")}` : null;
+  }
+  return kind ? (OLDER_PIECES[kind] ?? null) : null;
+}
+
+/// What an older piece does in SuperChargers.
+const OLDER_PIECES: Partial<Record<FigureKind, string>> = {};
+
+/// What an older piece or a trophy does in SuperChargers, under its name.
+function noteLine(entry: Entry): HTMLElement | null {
+  const words = game === "superchargers" ? doesInSuperChargers(entry) : null;
+  return words ? node("span", "portal-note", words) : null;
 }
 
 function renderHead(): HTMLElement {
@@ -554,6 +783,11 @@ function renderHead(): HTMLElement {
   const row = node("div", "portal-on");
   const on = placed();
   if (on.length === 0) row.appendChild(node("span", "portal-quiet", "Nothing on the portal."));
+  const pairs = superCharged();
+  const unmanned = !driverOn();
+  // A SuperCharged pair sits in one frame, its driver first, with the mark
+  // the game's lightning stands for.
+  let frame: HTMLElement | null = null;
   on.forEach((figure, index) => {
     const known = offers.find((offer) => offer.name === figure.name);
     const button = node("button", zone === "portal" && index === chip ? "portal-chip sel" : "portal-chip");
@@ -561,6 +795,7 @@ function renderHead(): HTMLElement {
       mark(known?.element ?? null, known?.kind ?? null, pictureOf(known?.id, known?.variant)),
       node("span", "", figure.name)
     );
+    if (unmanned && holds(figure.slot, "vehicle")) button.appendChild(node("span", "portal-chip-alone", "Needs a driver"));
     // A trap says which villain it brings with it.
     const villain = heldIn(figure.slot);
     if (villain) {
@@ -577,7 +812,21 @@ function renderHead(): HTMLElement {
       chip = index;
       void act(takeOff);
     };
-    row.appendChild(button);
+    if (pairs.some((pair) => pair.driver === figure.slot)) {
+      frame = node("span", "portal-pair");
+      frame.setAttribute("role", "group");
+      frame.setAttribute("aria-label", "SuperCharged");
+      const label = node("span", "portal-pair-mark");
+      label.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${MARKS.supercharged}</svg>`;
+      label.append("SuperCharged");
+      frame.append(label, button);
+      row.appendChild(frame);
+    } else if (frame && pairs.some((pair) => pair.vehicle === figure.slot)) {
+      frame.appendChild(button);
+      frame = null;
+    } else {
+      row.appendChild(button);
+    }
   });
   head.appendChild(row);
   return head;
@@ -604,6 +853,7 @@ function renderTabs(): HTMLElement {
 
 function renderBody(): HTMLElement {
   if (tabs[tab]?.tray) return renderTray();
+  if (tabs[tab]?.garage) return renderGarage();
   const body = node("div", "portal-body");
   const current = tabs[tab];
   if (!current || current.entries.length === 0) {
@@ -628,6 +878,7 @@ function renderBody(): HTMLElement {
     );
     const badge = chosen ? "picked" : on ? "on" : entry.offer && entry.figure ? "saved" : null;
     tile.append(picture(entry, badge), node("span", "portal-name", entry.name), kindLine(entry));
+    for (const line of [drivesLine(entry), noteLine(entry)]) if (line) tile.appendChild(line);
     tile.onclick = () => {
       zone = "grid";
       at = index;
@@ -841,6 +1092,238 @@ function renderTray(): HTMLElement {
   return body;
 }
 
+// ---- the garage ----
+
+function svg(shape: string): string {
+  return `<svg viewBox="0 0 24 24" aria-hidden="true">${shape}</svg>`;
+}
+
+/// SuperChargers' vehicles as a garage: a column to each terrain, so Land,
+/// Sea and Sky tell apart at a glance as the tray's elements do, what drives
+/// now above them, and the vehicle picked beside. Each column scrolls on its
+/// own, so the other two stay in view.
+function renderGarage(): HTMLElement {
+  const body = node("div", "portal-body portal-tray portal-garage");
+  const entries = tabs[tab]?.entries ?? [];
+  const main = node("div", "portal-garage-main");
+  const columns = node("div", "portal-garage-columns");
+  let index = 0;
+  for (const column of garageColumns(entries)) {
+    const shown = node("div", `portal-garage-column tint-${column.terrain ?? "none"}`);
+    shown.dataset.scroll = column.label;
+    const head = node("div", "portal-garage-column-head");
+    const name = node("div", "portal-tray-column-name");
+    if (column.terrain) terrainShape(name, column.terrain);
+    name.append(column.label);
+    const saved = column.entries.filter((entry) => entry.figure).length;
+    const all = column.entries.length;
+    head.append(name, node("div", saved === all ? "portal-tray-column-n full" : "portal-tray-column-n", `${saved} of ${all} saved`));
+    shown.appendChild(head);
+    // A vehicle's variants follow it in one group, set in under it.
+    let group: HTMLElement | null = null;
+    let groupOf: number | null = null;
+    for (const entry of column.entries) {
+      const id = entry.offer?.id ?? null;
+      if (!group || id !== groupOf) {
+        group = node("div", "portal-car-group");
+        shown.appendChild(group);
+        groupOf = id;
+      }
+      group.appendChild(vehicleTile(entry, index, group.childElementCount > 0));
+      index += 1;
+    }
+    columns.appendChild(shown);
+  }
+  main.append(renderGarageStatus(), columns);
+  body.append(main, renderVehicle(entries[at]));
+  return body;
+}
+
+/// One vehicle in its column: its picture with its driver's face in the
+/// corner, its name, and whether it is on the portal, saved or new.
+function vehicleTile(entry: Entry, index: number, variant: boolean): HTMLElement {
+  const on = isOn(entry);
+  const charged = on && superCharged().some((pair) => pair.vehicle === slotOf(entry));
+  const tile = node(
+    "button",
+    `portal-car${zone === "grid" && index === at ? " sel" : ""}${on ? " on" : ""}${variant ? " variant" : ""}`
+  );
+  const driver = partnerOf(entry);
+  const driverName = driver == null ? null : nameOfId(driver);
+  const terrain = terrainOf(entry);
+  const state = charged ? "SuperCharged" : on ? "on the portal" : entry.figure ? "saved" : "new";
+  tile.setAttribute(
+    "aria-label",
+    [entry.name, terrain && `${TERRAIN_NAMES.get(terrain)} vehicle`, driverName && `${driverName} SuperCharges it`, state]
+      .filter(Boolean)
+      .join(", ")
+  );
+  const art = node("span", `portal-car-art ${tintOf(entry.element, entry.kind)}`);
+  const source = pictureOf(entry.offer?.id ?? entry.figure?.id, variantOf(entry));
+  if (source) art.appendChild(image(source));
+  else emblem(art, entry.element, entry.kind);
+  if (driver != null) art.appendChild(cornerFace(driver, "portal-car-face"));
+  const line = node("span", `portal-car-state ${charged ? "charged" : on ? "on" : entry.figure ? "saved" : "new"}`);
+  if (charged) line.innerHTML = svg(MARKS.supercharged);
+  else if (on) line.innerHTML = svg(BADGES.on[1]);
+  else if (entry.figure) line.innerHTML = svg(BADGES.saved[1]);
+  line.append(charged ? "SuperCharged" : on ? "On the portal" : entry.figure ? "Saved" : "New");
+  const words = node("span", "portal-car-words");
+  words.append(node("span", "portal-car-name", entry.name), line);
+  tile.append(art, words);
+  tile.onclick = () => {
+    zone = "grid";
+    at = index;
+    void act(choose);
+  };
+  return tile;
+}
+
+/// What drives now, above the garage: the vehicle on the portal and who is
+/// at its wheel, or that none is on.
+function renderGarageStatus(): HTMLElement {
+  const status = node("div", "portal-garage-status");
+  const art = node("span", "portal-garage-status-art");
+  const words = node("div", "portal-garage-status-words");
+  const vehicle = vehiclesOn()[0];
+  if (!vehicle) {
+    art.innerHTML = svg(MARKS.vehicle);
+    words.append(node("b", "", "No vehicle on the portal"), node("span", "", "The game uses one vehicle at a time."));
+  } else {
+    const face = pictureNamed(vehicle.name)[0];
+    if (face) art.appendChild(image(face));
+    else art.innerHTML = svg(MARKS.vehicle);
+    const pair = superCharged().find((each) => each.vehicle === vehicle.slot);
+    const partner = characterIn(vehicle.slot)?.partner;
+    const partnerName = partner == null ? null : nameOfId(partner);
+    if (pair) {
+      status.classList.add("charged");
+      words.append(node("b", "", `${vehicle.name} is SuperCharged`), node("span", "", `${onPortal[pair.driver]} is driving it.`));
+    } else if (!driverOn()) {
+      status.classList.add("alone");
+      words.append(
+        node("b", "", `${vehicle.name} needs a driver`),
+        node("span", "", partnerName ? `Put a Skylander on. ${partnerName} would SuperCharge it.` : "Put a Skylander on to drive it.")
+      );
+    } else {
+      words.append(
+        node("b", "", `${vehicle.name} is on the portal`),
+        node("span", "", partnerName ? `${partnerName} would SuperCharge it.` : "A Skylander on the portal drives it.")
+      );
+    }
+  }
+  status.append(art, words);
+  return status;
+}
+
+/// The vehicle picked in the garage: its picture, where it goes, its
+/// element, the SuperCharger it was made for, and whether its figure is
+/// saved and on the portal. A button puts it on with its SuperCharger, for
+/// the mouse; the pad has the top face button for that.
+function renderVehicle(entry: Entry | undefined): HTMLElement {
+  const card = node("div", `portal-villain-card portal-car-card ${tintOf(entry?.element ?? null, "vehicle")}`);
+  if (!entry) return card;
+  const art = node("div", "portal-villain-card-art");
+  const source = pictureOf(entry.offer?.id ?? entry.figure?.id, variantOf(entry));
+  if (source) art.appendChild(image(source));
+  else emblem(art, entry.element, entry.kind);
+  const line = node("div", "portal-kind");
+  const terrain = terrainOf(entry);
+  if (terrain) line.appendChild(terrainPart(terrain, `${TERRAIN_NAMES.get(terrain)} vehicle`));
+  if (entry.element) {
+    const element = node("span", `portal-card-element tint-${entry.element}`);
+    emblem(element, entry.element, null);
+    element.append(ELEMENT_NAMES.get(entry.element) ?? "");
+    line.appendChild(element);
+  }
+  card.append(art, node("div", "portal-villain-card-name", entry.name), line);
+  const pair = pairOf(entry);
+  const on = isOn(entry);
+  if (pair) {
+    const driver = pair.driver;
+    const driverOnNow = slotWith(driver.id) >= 0;
+    const charged = on && driverOnNow;
+    card.appendChild(node("div", "portal-label", "Its SuperCharger"));
+    const held = node("div", `portal-held${charged ? " charged" : ""}`);
+    const face = node("span", `portal-held-art ${tintOf(driver.offer?.element ?? null, "character")}`);
+    const picture = pictureOf(driver.id, driver.offer?.variant ?? driver.figure?.variant);
+    if (picture) face.appendChild(image(picture));
+    else emblem(face, driver.offer?.element ?? null, "character");
+    const words = node("div", "portal-held-words");
+    words.append(node("b", "", driver.name), node("span", "", driver.figure ? "Saved" : "New, made the first time it goes on"));
+    if (driverOnNow) {
+      const state = node("span", charged ? "portal-held-on charged" : "portal-held-on");
+      state.innerHTML = svg(charged ? MARKS.supercharged : BADGES.on[1]);
+      state.append(charged ? "SuperCharged" : BADGES.on[0]);
+      words.appendChild(state);
+    }
+    held.append(face, words);
+    card.appendChild(held);
+  }
+  card.appendChild(node("div", "portal-label", "This figure"));
+  const kept = node("div", `portal-car-kept ${entry.figure ? "saved" : "new"}`);
+  if (entry.figure) kept.innerHTML = svg(BADGES.saved[1]);
+  kept.append(entry.figure ? "Saved, keeps its mods" : "New, made the first time it goes on");
+  card.appendChild(kept);
+  if (on) {
+    const state = node("div", "portal-car-kept on");
+    state.innerHTML = svg(BADGES.on[1]);
+    state.append(BADGES.on[0]);
+    card.appendChild(state);
+  }
+  if (pair && !pairOn(entry)) {
+    const both = node("button", "portal-card-action");
+    both.append(node("kbd", "", nameOf(family, "North")), `Put on with ${pair.other.name}`);
+    both.onclick = () => {
+      zone = "grid";
+      void act(pairUp);
+    };
+    card.appendChild(both);
+  }
+  card.appendChild(node("p", "portal-villain-note", "Any Skylander can drive it."));
+  return card;
+}
+
+/// Which pieces a tile pairs: a SuperCharger and its own vehicle, the tile's
+/// own figure as one of them, and the other one too, which is the saved
+/// figure of it when there is one.
+interface Pick {
+  id: number;
+  name: string;
+  figure?: Figure;
+  offer?: Offer;
+}
+
+/// The figure to put on for a character: its saved figure when there is
+/// one, the one used last first, otherwise the emulator's plain version.
+function pickFor(id: number): Pick | null {
+  const figure = mine.find((each) => each.id === id);
+  if (figure) {
+    const offer = offers.find((each) => each.id === id && each.variant === figure.variant);
+    return { id, name: offer?.name ?? figure.name, figure, offer };
+  }
+  const offer = offers.filter((each) => each.id === id).sort((a, b) => a.variant - b.variant)[0];
+  return offer ? { id, name: offer.name, offer } : null;
+}
+
+function pairOf(entry: Entry | undefined): { driver: Pick; vehicle: Pick; other: Pick } | null {
+  if (!entry || entry.swap) return null;
+  const id = entry.offer?.id ?? entry.figure?.id;
+  const partner = partnerOf(entry);
+  if (id == null || partner == null) return null;
+  const own: Pick = { id, name: entry.name, figure: entry.figure, offer: entry.offer };
+  const other = pickFor(partner);
+  if (!other) return null;
+  const vehicle = (entry.offer?.kind ?? entry.figure?.kind) === "vehicle";
+  return vehicle ? { driver: other, vehicle: own, other } : { driver: own, vehicle: other, other };
+}
+
+/// Whether both of a tile's pair are on the portal, whichever variants.
+function pairOn(entry: Entry | undefined): boolean {
+  const pair = pairOf(entry);
+  return Boolean(pair && slotWith(pair.driver.id) >= 0 && slotWith(pair.vehicle.id) >= 0);
+}
+
 function renderFoot(): HTMLElement {
   const foot = node("div", "portal-foot");
   const entry = tabs[tab]?.entries[at];
@@ -854,6 +1337,8 @@ function renderFoot(): HTMLElement {
   } else {
     hints.push(["South", entry?.swap ? (pickedTop ? "Pick bottom" : "Pick top") : "Put on"]);
     if (entry && isOn(entry)) hints.push(["West", "Take off"]);
+    const pair = pairOf(entry);
+    if (pair && !pairOn(entry)) hints.push(["North", entry && isOn(entry) ? `Add ${pair.other.name}` : `Put on with ${pair.other.name}`]);
   }
   hints.push(["East", pickedTop ? "Back" : "Close"]);
   const row = node("div", "portal-hints");
@@ -873,6 +1358,10 @@ function render() {
   settle();
   const scrolled = root.querySelector(".portal-body")?.scrollTop ?? 0;
   const tabsScrolled = root.querySelector(".portal-tabs")?.scrollLeft ?? 0;
+  // The garage's columns scroll on their own, each kept by its name.
+  const columnsScrolled = new Map(
+    [...root.querySelectorAll<HTMLElement>("[data-scroll]")].map((column) => [column.dataset.scroll, column.scrollTop])
+  );
   const panel = node("div", "portal-panel");
   panel.setAttribute("role", "dialog");
   panel.setAttribute("aria-label", "Portal");
@@ -880,7 +1369,10 @@ function render() {
   root.replaceChildren(panel);
   panel.querySelector<HTMLElement>(".portal-body")!.scrollTop = scrolled;
   panel.querySelector<HTMLElement>(".portal-tabs")!.scrollLeft = tabsScrolled;
-  panel.querySelector(".portal-item.sel, .portal-villain.sel")?.scrollIntoView({ block: "nearest" });
+  for (const column of panel.querySelectorAll<HTMLElement>("[data-scroll]")) {
+    column.scrollTop = columnsScrolled.get(column.dataset.scroll) ?? 0;
+  }
+  panel.querySelector(".portal-item.sel, .portal-villain.sel, .portal-car.sel")?.scrollIntoView({ block: "nearest" });
   panel.querySelector(".portal-tab.sel")?.scrollIntoView({ block: "nearest", inline: "nearest" });
 }
 
@@ -897,6 +1389,8 @@ interface Notice {
   /// The figure it is about, its picture's layers bottom first: a swapper
   /// is two. Left out when Omoio has no picture of a layer.
   picture?: (string | null)[];
+  /// A vehicle SuperCharged: done, with the lightning for its mark.
+  cheer?: true;
 }
 
 const NOTICE_LASTS: Partial<Record<Notice["kind"], number>> = { done: 3500, problem: 8000, info: 5000 };
@@ -915,10 +1409,10 @@ let notice: Notice | null = null;
 let noticeTimer = 0;
 
 /// The kind's mark: a spinner while working, a shape otherwise.
-function noticeMark(kind: Notice["kind"]): HTMLElement {
+function noticeMark(kind: Notice["kind"], cheer = false): HTMLElement {
   if (kind === "working") return node("span", "portal-spinner");
   const mark = node("span", "portal-notice-shape");
-  mark.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${NOTICE_SHAPES[kind]}</svg>`;
+  mark.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${cheer ? MARKS.supercharged : NOTICE_SHAPES[kind]}</svg>`;
   return mark;
 }
 
@@ -934,15 +1428,15 @@ function notify(next: Notice | null) {
   const layers = next.picture ?? [];
   if (layers.length > 0 && layers.every(Boolean)) {
     for (const source of layers) art.appendChild(image(source!));
-    art.appendChild(node("span", "portal-notice-corner")).appendChild(noticeMark(next.kind));
+    art.appendChild(node("span", "portal-notice-corner")).appendChild(noticeMark(next.kind, next.cheer));
   } else {
-    art.appendChild(noticeMark(next.kind));
+    art.appendChild(noticeMark(next.kind, next.cheer));
   }
   const words = node("span", "portal-notice-words");
   words.append(node("strong", "", next.title));
   if (next.detail) words.append(node("span", "", next.detail));
   card.replaceChildren(art, words);
-  card.className = `portal-notice ${next.kind} shown`;
+  card.className = `portal-notice ${next.kind}${next.cheer ? " cheer" : ""} shown`;
   const lasts = NOTICE_LASTS[next.kind];
   if (lasts) noticeTimer = window.setTimeout(() => notify(null), lasts);
 }
@@ -986,7 +1480,23 @@ function moveGrid(move: Move) {
 /// Up and down a column of the tray, across to the next column at the same
 /// height or its last villain, and up off the top to the portal row.
 function moveTray(move: Move) {
-  const sizes = trayColumns().map((column) => column.villains.length);
+  moveColumns(
+    move,
+    trayColumns().map((column) => column.villains.length)
+  );
+}
+
+/// The same through the garage: across goes straight to the next terrain,
+/// so a Sea vehicle is one press from a Land one.
+function moveGarage(move: Move) {
+  moveColumns(
+    move,
+    garageColumns(tabs[tab]?.entries ?? []).map((column) => column.entries.length)
+  );
+}
+
+/// Moves through columns of `sizes` things each, counted as one list.
+function moveColumns(move: Move, sizes: number[]) {
   let column = 0;
   let row = at;
   while (column < sizes.length - 1 && row >= sizes[column]) row -= sizes[column++];
@@ -1124,13 +1634,19 @@ async function takeOff() {
 /// Puts one figure on the portal in the first free slot: the saved one when
 /// there is one, otherwise a new one the emulator makes. The real portal has
 /// one place for a trap, so a trap already on comes off first, as it would
-/// by hand; how a game takes two at once is unknown. Says whether the
-/// figure is on now.
+/// by hand; how a game takes two at once is unknown. SuperChargers uses one
+/// vehicle at a time, also with two players, so a vehicle already on comes
+/// off first too, and the notice says so. Says whether the figure is on now.
 async function putOn(name: string, figure: Figure | undefined, offer: Offer | undefined): Promise<boolean> {
-  if ((offer?.kind ?? figure?.kind) === "trap") {
-    for (const other of placed().filter((each) => holdsTrap(each.slot))) {
+  const kind = offer?.kind ?? figure?.kind;
+  if (kind === "trap") {
+    for (const other of placed().filter((each) => holds(each.slot, "trap"))) {
       if (!(await takeOffSlot(other.slot, other.name))) return false;
     }
+  }
+  const leaving = kind === "vehicle" ? vehiclesOn() : [];
+  for (const other of leaving) {
+    if (!(await takeOffSlot(other.slot, other.name))) return false;
   }
   const slot = freeSlot();
   if (slot < 0) {
@@ -1138,21 +1654,83 @@ async function putOn(name: string, figure: Figure | undefined, offer: Offer | un
     return false;
   }
   const picture = [pictureOf(offer?.id ?? figure?.id, offer?.variant ?? figure?.variant)];
+  const detail = cameOff(leaving.map((each) => each.name));
   let done = false;
   if (figure) {
     done = await change(
       { kind: "working", title: `Putting ${name} on the portal…`, picture },
       async () => ({ names: await portalLoad(slot, figure.path), slot, path: figure.path }),
-      (names) => ({ kind: "done", title: `${names[slot] || name} is on the portal`, picture })
+      (names) => ({ kind: "done", title: `${names[slot] || name} is on the portal`, detail, picture })
     );
   } else if (offer) {
     done = await change(
       { kind: "working", title: `Making ${offer.name}…`, detail: "A new figure, kept for next time.", picture },
       async () => ({ ...(await portalCreate(slot, offer)), slot }),
-      (names) => ({ kind: "done", title: `${names[slot] || offer.name} is on the portal`, picture })
+      (names) => ({ kind: "done", title: `${names[slot] || offer.name} is on the portal`, detail, picture })
     );
   }
   return done && Boolean(onPortal[slot]);
+}
+
+/// Says which vehicles came off to make way for another.
+function cameOff(names: string[]): string | undefined {
+  return names.length > 0 ? `${names.join(" and ")} came off. The game uses one vehicle at a time.` : undefined;
+}
+
+/// Once a vehicle or a SuperCharger has gone on: cheers when a vehicle is
+/// SuperCharged, and says when a vehicle has nobody on the portal to drive
+/// it, which the top face button fixes from its tile.
+function tellDriving(leaving: string[]) {
+  const pair = superCharged()[0];
+  if (pair) {
+    const vehicle = onPortal[pair.vehicle];
+    return notify({
+      kind: "done",
+      cheer: true,
+      title: `${vehicle} is SuperCharged with ${onPortal[pair.driver]}`,
+      detail: cameOff(leaving),
+      picture: pictureNamed(vehicle),
+    });
+  }
+  const vehicle = vehiclesOn()[0];
+  if (!vehicle || driverOn()) return;
+  const partner = characterIn(vehicle.slot)?.partner;
+  const driver = partner == null ? null : nameOfId(partner);
+  notify({
+    kind: "hint",
+    title: `${vehicle.name} needs a driver`,
+    detail: driver
+      ? `Put a Skylander on with it. ${nameOf(family, "North")} puts ${driver} on.`
+      : "Put a Skylander on with it.",
+    picture: pictureNamed(vehicle.name),
+  });
+}
+
+/// Puts a SuperCharger and its own vehicle on together, so the vehicle is
+/// SuperCharged: the driver first, then the vehicle, taking off the vehicle
+/// already on. Each is the saved figure when there is one, so a vehicle
+/// keeps its mods; one of either already on, whatever its variant, stays.
+async function pairUp() {
+  settle();
+  if (zone !== "grid" || tabs[tab]?.tray) return;
+  const pair = pairOf(tabs[tab]?.entries[at]);
+  if (!pair) return;
+  const driverIn = slotWith(pair.driver.id) >= 0;
+  const vehicleIn = slotWith(pair.vehicle.id) >= 0;
+  if (driverIn && vehicleIn) return tellDriving([]);
+  const leaving = vehicleIn ? [] : vehiclesOn().map((each) => each.name);
+  const needed = Number(!driverIn) + Number(!vehicleIn);
+  const free = onPortal.length === 0 ? needed : onPortal.filter((name) => !name).length + leaving.length;
+  if (free < needed) {
+    return notify({
+      kind: "problem",
+      title: "The portal is full",
+      detail: needed > 1 ? `${pair.driver.name} and ${pair.vehicle.name} need two places. Take a figure off first.` : "Take a figure off first.",
+    });
+  }
+  if (!driverIn && !(await putOn(pair.driver.name, pair.driver.figure, pair.driver.offer))) return;
+  if (!vehicleIn && !(await putOn(pair.vehicle.name, pair.vehicle.figure, pair.vehicle.offer))) return;
+  tellDriving(leaving);
 }
 
 /// Both halves of a swapper, one after the other, each the saved figure when
@@ -1220,7 +1798,9 @@ async function choose() {
   }
   const slot = slotOf(entry);
   if (slot >= 0) return already(slot);
-  await putOn(entry.name, entry.figure, entry.offer);
+  const drives = (entry.offer?.kind ?? entry.figure?.kind) === "vehicle" || classOf(entry) === "supercharger";
+  const leaving = (entry.offer?.kind ?? entry.figure?.kind) === "vehicle" ? vehiclesOn().map((each) => each.name) : [];
+  if ((await putOn(entry.name, entry.figure, entry.offer)) && drives) tellDriving(leaving);
 }
 
 /// The characters come from the emulator's own figure maker the first time
@@ -1241,7 +1821,10 @@ async function loadOffers() {
     asking = false;
     buildTabs();
     // With nothing saved yet, open on the first element, not an empty tab.
-    if (mine.length === 0 && tab === 0 && tabs.length > 1) tab = 1;
+    // SuperChargers asks for a Skylander before a vehicle, so its garage,
+    // the second tab there, waits.
+    const firstElement = tabs.findIndex((each) => each.element);
+    if (mine.length === 0 && tab === 0 && tabs.length > 1) tab = game === "superchargers" && firstElement > 0 ? firstElement : 1;
     render();
   }
 }
@@ -1299,7 +1882,10 @@ async function readPads(): Promise<Set<string>> {
 
 function press(input: string) {
   const move = MOVES[input];
-  if (move) return zone === "portal" ? movePortal(move) : tabs[tab]?.tray ? moveTray(move) : moveGrid(move);
+  if (move) {
+    if (zone === "portal") return movePortal(move);
+    return tabs[tab]?.tray ? moveTray(move) : tabs[tab]?.garage ? moveGarage(move) : moveGrid(move);
+  }
   if (input === "LB") return showTab(tab - 1);
   if (input === "RB") return showTab(tab + 1);
   if (input === "East") {
@@ -1310,6 +1896,7 @@ function press(input: string) {
   }
   if (input === "South") void act(choose);
   else if (input === "West") void act(takeOff);
+  else if (input === "North") void act(pairUp);
 }
 
 window.setInterval(async () => {
@@ -1349,6 +1936,9 @@ document.addEventListener("keydown", (event) => {
     Delete: () => press("West"),
     Backspace: () => press("West"),
     Escape: () => press("East"),
+    // P for pair: a SuperCharger and its vehicle together.
+    p: () => press("North"),
+    P: () => press("North"),
   };
   const act = keys[event.key];
   if (act) {
@@ -1363,6 +1953,7 @@ async function show() {
   notify(working);
   try {
     family = (await portalMenuFamily()) as PadFamily;
+    game = await portalGame().catch(() => null);
     held = await readPads();
     zone = "grid";
     shown = true;

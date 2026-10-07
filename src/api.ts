@@ -769,6 +769,9 @@ export type FigureKind = "character" | "item" | "trap" | "adventure" | "vehicle"
 /// How a Swap Force swapper gets about, which its bottom half decides.
 export type Movement = "bounce" | "climb" | "dig" | "rocket" | "sneak" | "speed" | "spin" | "teleport";
 
+/// Where a SuperChargers vehicle goes, which is also what a trophy is for.
+export type Terrain = "land" | "sea" | "sky";
+
 export interface Figure {
   name: string;
   path: string;
@@ -782,6 +785,10 @@ export interface Figure {
   series: number | null;
   movement: Movement | null;
   class: FigureClass | null;
+  /// A vehicle's terrain, or the races a trophy is for.
+  terrain: Terrain | null;
+  /// A vehicle's own SuperCharger, or a SuperCharger's own vehicle, by id.
+  partner: number | null;
   /// The villain a Trap Team trap holds, read from the trap's own data.
   holds: Trapped | null;
 }
@@ -868,14 +875,29 @@ export interface Offer extends Character {
   /// Set on a bottom half.
   movement: Movement | null;
   class: FigureClass | null;
+  /// A vehicle's terrain, or the races a trophy is for.
+  terrain: Terrain | null;
+  /// A vehicle's own SuperCharger, or a SuperCharger's own vehicle, by id,
+  /// whatever the variant.
+  partner: number | null;
+  /// What a SuperChargers trophy unlocks; left out for any other figure.
+  unlocks?: string[];
 }
 
 /// The kinds of Skylander the games' checklists mark apart: the Giants,
-/// Trap Team's Trap Masters, and the Minis.
-export type FigureClass = "giant" | "trap_master" | "mini";
+/// Trap Team's Trap Masters, the Minis, and SuperChargers' own Skylanders.
+export type FigureClass = "giant" | "trap_master" | "mini" | "supercharger";
 
 export function figureCharacters(): Promise<Offer[]> {
   return invoke("figure_characters");
+}
+
+export type SkylandersGame = "spyro" | "giants" | "swapforce" | "trapteam" | "superchargers" | "imaginators";
+
+/// The Skylanders game running now, which decides how the portal menu is
+/// laid out. `null` for one Omoio can't tell.
+export function portalGame(): Promise<SkylandersGame | null> {
+  return invoke("portal_game");
 }
 
 /// Makes a new figure of `character` and puts it on the portal in `slot`,

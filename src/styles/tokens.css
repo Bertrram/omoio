@@ -63,6 +63,17 @@
   --kind-trap: #7fd8e6;
   /* "Giant" under a Giant's name, in a warm stone colour. */
   --kind-giant: #e3a36a;
+  /* SuperChargers. Each terrain has a colour of its own for the garage's
+     columns and a trophy's races: dusty orange for Land, sea green for Sea
+     and a pale periwinkle for Sky, apart from the elements' water and air
+     blues. The SuperCharged lightning is a bright yellow, lighter than Tech's
+     amber. */
+  --terrain-land: #e0954f;
+  --terrain-sea: #2ec4b6;
+  --terrain-sky: #a9b8ff;
+  --kind-vehicle: #f08a5d;
+  --kind-trophy: #f2cb5c;
+  --kind-supercharged: #ffd84a;
 
   /* Each console's tag on a library tile, two colours far apart, so the same
      game owned on both consoles tells apart at a glance: silver for the PS3,

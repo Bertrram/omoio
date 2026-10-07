@@ -327,6 +327,11 @@ body {
   color: var(--ink);
 }
 
+.portal-class-corner.supercharger,
+.portal-class.supercharger {
+  color: var(--kind-supercharged);
+}
+
 .portal-name {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -938,6 +943,530 @@ body {
   }
 }
 
+/* ---- SuperChargers: terrains, the garage and SuperCharged pairs ---- */
+
+.portal-tab-mark.vehicle {
+  color: var(--kind-vehicle);
+}
+
+.portal-tab-mark.trophy {
+  color: var(--kind-trophy);
+}
+
+.portal-terrain-mark {
+  flex: none;
+  color: var(--tint);
+}
+
+/* Where a vehicle goes, after its element and in its terrain's colour. */
+.portal-terrain {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 10px;
+  color: var(--tint);
+}
+
+.portal-kind .portal-terrain svg,
+.portal-kind .portal-terrain .portal-symbol {
+  width: 17px;
+  height: 17px;
+}
+
+/* What a SuperCharger drives, under its element, the way a swapper's tile
+   says how it moves. */
+.portal-drives {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--mute);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.portal-drives svg,
+.portal-drives .portal-symbol {
+  width: 16px;
+  height: 16px;
+}
+
+/* What an older piece or a trophy does in SuperChargers. */
+.portal-note {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--mute);
+  font-size: 14px;
+  line-height: 1.3;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+/* A vehicle's driver in the bottom corner of its picture, as a villain has
+   its trap. */
+.portal-art-face,
+.portal-car-face {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 50%;
+  background: var(--panel);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--tint) 70%, transparent);
+  color: var(--tint);
+}
+
+.portal-art-face {
+  right: 10px;
+  bottom: 10px;
+  width: 46px;
+  height: 46px;
+}
+
+.portal-car-face {
+  right: -6px;
+  bottom: -5px;
+  width: 32px;
+  height: 32px;
+}
+
+.portal-art-face img,
+.portal-car-face img {
+  width: 150%;
+  height: 150%;
+  object-fit: cover;
+  object-position: 50% 30%;
+}
+
+.portal-art-face svg,
+.portal-car-face svg,
+.portal-art-face .portal-symbol,
+.portal-car-face .portal-symbol {
+  width: 56%;
+  height: 56%;
+}
+
+/* A SuperCharger and its own vehicle on the portal together, in one frame
+   with the lightning. */
+.portal-pair {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px;
+  border-radius: calc(var(--r) + 3px);
+  background: color-mix(in srgb, var(--kind-supercharged) 10%, transparent);
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--kind-supercharged) 55%, transparent);
+}
+
+.portal-pair-mark {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 6px 0 7px;
+  color: var(--kind-supercharged);
+  font-size: 14px;
+  font-weight: 750;
+}
+
+.portal-pair-mark svg {
+  width: 18px;
+  height: 18px;
+}
+
+.portal-chip-alone {
+  margin-left: 2px;
+  padding: 2px 9px;
+  border-radius: 99px;
+  background: color-mix(in srgb, var(--warn) 16%, transparent);
+  color: var(--warn);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+/* The garage: what drives now, then a column to each terrain beside the
+   vehicle picked. Each column scrolls on its own under its name. */
+.portal-garage-main {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  min-height: 0;
+}
+
+.portal-garage-status {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 16px 10px 10px;
+  border-radius: var(--r);
+  background: var(--raise);
+}
+
+.portal-garage-status-art {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  overflow: hidden;
+  border-radius: 6px;
+  background: var(--raise2);
+  color: var(--kind-vehicle);
+}
+
+.portal-garage-status-art img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.portal-garage-status-art svg {
+  width: 58%;
+  height: 58%;
+}
+
+.portal-garage-status-words {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.portal-garage-status-words b {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.portal-garage-status-words span {
+  color: var(--mute);
+  font-size: 15px;
+}
+
+.portal-garage-status.charged {
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--kind-supercharged) 50%, transparent);
+}
+
+.portal-garage-status.charged b {
+  color: var(--kind-supercharged);
+}
+
+.portal-garage-status.alone b {
+  color: var(--warn);
+}
+
+.portal-garage-columns {
+  display: grid;
+  flex: 1;
+  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-flow: column;
+  gap: 10px;
+  min-height: 0;
+}
+
+.portal-garage-column {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 8px 10px;
+  border-radius: var(--r);
+  background: linear-gradient(
+    to bottom,
+    color-mix(in srgb, var(--tint) 14%, var(--panel)),
+    color-mix(in srgb, var(--tint) 3%, var(--panel)) 45%,
+    var(--panel)
+  );
+  scrollbar-width: thin;
+}
+
+.portal-garage-column-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 10px 0 4px;
+  background: color-mix(in srgb, var(--tint) 14%, var(--panel));
+}
+
+.portal-garage-column-head .portal-tray-column-name {
+  gap: 7px;
+  font-size: 18px;
+}
+
+.portal-garage-column-head .portal-tray-column-name svg,
+.portal-garage-column-head .portal-tray-column-name .portal-symbol {
+  width: 20px;
+  height: 20px;
+}
+
+.portal-garage-column-head .portal-tray-column-n {
+  font-size: 13px;
+}
+
+.portal-car-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.portal-car {
+  position: relative;
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  align-items: center;
+  gap: 14px;
+  padding: 6px;
+  background: none;
+  border: 0;
+  border-radius: var(--r);
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  scroll-margin: 64px 0 10px;
+}
+
+/* A variant hangs off its vehicle, set in and joined to it by a line. */
+.portal-car.variant {
+  grid-template-columns: 78px minmax(0, 1fr);
+  margin-left: 20px;
+}
+
+.portal-car.variant::before {
+  content: "";
+  position: absolute;
+  top: -4px;
+  bottom: 50%;
+  left: -12px;
+  width: 9px;
+  border-bottom: 2px solid color-mix(in srgb, var(--tint) 40%, transparent);
+  border-left: 2px solid color-mix(in srgb, var(--tint) 40%, transparent);
+  border-bottom-left-radius: 6px;
+}
+
+.portal-car-art {
+  position: relative;
+  display: grid;
+  place-items: center;
+  aspect-ratio: 4 / 3;
+  border-radius: 6px;
+  background:
+    radial-gradient(circle at 50% 45%, color-mix(in srgb, var(--tint) 30%, transparent), transparent 70%),
+    var(--raise);
+  color: var(--tint);
+}
+
+.portal-car-art > img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.portal-car-art > svg,
+.portal-car-art > .portal-symbol {
+  width: 44%;
+  height: 44%;
+}
+
+.portal-car-art::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+.portal-car.on .portal-car-art::after {
+  box-shadow: inset 0 0 0 3px var(--go);
+}
+
+.portal-car-words {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.portal-car-name {
+  display: -webkit-box;
+  overflow: hidden;
+  font-size: 16px;
+  font-weight: 650;
+  line-height: 1.2;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.portal-car-state {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--dim);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.portal-car-state svg {
+  flex: none;
+  width: 14px;
+  height: 14px;
+}
+
+.portal-car-state.saved {
+  color: var(--mute);
+}
+
+.portal-car-state.on {
+  color: var(--go);
+}
+
+.portal-car-state.charged {
+  color: var(--kind-supercharged);
+}
+
+.portal-car.sel {
+  background: var(--raise2);
+  box-shadow: 0 0 0 2px var(--ink);
+}
+
+/* The card of the vehicle picked. */
+.portal-car-card .portal-kind {
+  flex-wrap: wrap;
+  row-gap: 4px;
+}
+
+.portal-car-card .portal-terrain {
+  margin-left: 0;
+}
+
+/* Without the vehicle's own picture, its element's shape stands in. */
+.portal-car-card .portal-villain-card-art {
+  color: var(--tint);
+}
+
+.portal-car-card .portal-villain-card-art > svg,
+.portal-car-card .portal-villain-card-art > .portal-symbol {
+  width: 112px;
+  height: 112px;
+  filter: drop-shadow(0 10px 26px color-mix(in srgb, var(--tint) 45%, transparent));
+}
+
+.portal-car-card .portal-villain-card-art > img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.portal-card-element {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 12px;
+  color: var(--tint);
+}
+
+.portal-held-art {
+  display: grid;
+  place-items: center;
+  color: var(--tint);
+}
+
+.portal-held-art svg,
+.portal-held-art .portal-symbol {
+  width: 50%;
+  height: 50%;
+}
+
+.portal-held.charged {
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--kind-supercharged) 50%, transparent);
+}
+
+.portal-held-words .portal-held-on.charged {
+  color: var(--kind-supercharged);
+}
+
+.portal-car-kept {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.portal-car-kept svg {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  color: var(--mute);
+}
+
+.portal-car-kept.new {
+  color: var(--mute);
+}
+
+.portal-car-kept.on {
+  margin-top: 8px;
+  color: var(--go);
+}
+
+.portal-car-kept.on svg {
+  color: inherit;
+}
+
+.portal-card-action {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 20px;
+  padding: 12px 14px;
+  border: 0;
+  border-radius: var(--r);
+  background: color-mix(in srgb, var(--kind-supercharged) 14%, var(--raise2));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--kind-supercharged) 40%, transparent);
+  color: var(--ink);
+  font: inherit;
+  font-size: 16px;
+  font-weight: 650;
+  text-align: left;
+  cursor: pointer;
+}
+
+.portal-card-action kbd {
+  padding: 2px 8px;
+  border: 1px solid var(--line2);
+  border-radius: 5px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.portal-car:focus-visible,
+.portal-card-action:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .portal-car:hover:not(.sel) {
+    background: color-mix(in srgb, var(--raise2) 60%, transparent);
+  }
+}
+
+/* Pressing a row or the card's button gives way under the pointer. Moving
+   through the garage never animates, as in the tray. */
+@media (prefers-reduced-motion: no-preference) {
+  .portal-car,
+  .portal-card-action {
+    transition: transform 160ms var(--ease-out);
+  }
+
+  .portal-car:active,
+  .portal-card-action:active {
+    transform: scale(0.97);
+  }
+}
+
 /* ---- buttons ---- */
 
 /* The buttons sit on the left, so the corner is free for notices. */
@@ -1135,6 +1664,29 @@ body {
   color: var(--brand-text);
 }
 
+/* A vehicle SuperCharged: the lightning for the tick, and a strike of it
+   as the card arrives. It happens a few times a game, so it may show off. */
+.portal-notice.cheer {
+  border-color: color-mix(in srgb, var(--kind-supercharged) 50%, var(--line2));
+}
+
+.portal-notice.cheer .portal-notice-shape {
+  color: var(--kind-supercharged);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .portal-notice.cheer .portal-notice-shape svg {
+    animation: portal-strike 300ms var(--ease-out) 120ms both;
+  }
+}
+
+@keyframes portal-strike {
+  from {
+    opacity: 0;
+    transform: scale(0.8) rotate(-10deg);
+  }
+}
+
 .portal-notice-words {
   display: grid;
   gap: 4px;
@@ -1168,4 +1720,8 @@ body {
 .tint-item { --tint: var(--kind-item); }
 .tint-adventure { --tint: var(--kind-adventure); }
 .tint-swapper { --tint: var(--kind-swapper); }
+.tint-vehicle { --tint: var(--kind-vehicle); }
+.tint-land { --tint: var(--terrain-land); }
+.tint-sea { --tint: var(--terrain-sea); }
+.tint-sky { --tint: var(--terrain-sky); }
 .tint-none { --tint: var(--mute); }
