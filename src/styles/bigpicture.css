@@ -314,6 +314,16 @@ body.bp-on .bp {
 .bp-badge.warn {
   color: var(--warn);
 }
+/* The desktop library's console tag and colours, sized for the TV. */
+.bp-art .console-tag {
+  top: 0.6em;
+  right: 0.6em;
+  padding: 0.25em 0.6em;
+  border-radius: calc(var(--bp-r) * 0.6);
+  font-size: 0.7em;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+}
 
 /* ---------- Home: one row of games, the highlighted one told about below ---------- */
 

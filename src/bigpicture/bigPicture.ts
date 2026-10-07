@@ -798,9 +798,15 @@ function tile(game: Game, group: string, withMeta: boolean): HTMLButtonElement {
           ? ["Offline", "warn"]
           : null;
   if (badge) art.append(h("span", `bp-badge ${badge[1]}`, badge[0]));
+  // The same tag as the desktop library's, so a game owned on two consoles
+  // tells apart from the sofa too.
+  const mixed = consoles().length > 1;
+  if (mixed) art.append(h("span", `console-tag ${game.console}`, CONSOLE_SHORT[game.console]));
   card.append(art, h("span", "bp-tile-name", game.title));
   if (withMeta) {
-    const meta = [CONSOLE_SHORT[game.console], game.set_up ? formatSize(game.size_bytes) : ""].filter(Boolean).join(" · ");
+    const meta = [mixed ? "" : CONSOLE_SHORT[game.console], game.set_up ? formatSize(game.size_bytes) : ""]
+      .filter(Boolean)
+      .join(" · ");
     card.append(h("span", "bp-tile-meta", meta));
   }
   return card;
