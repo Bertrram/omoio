@@ -30,6 +30,13 @@ pub const TESTED: &[Tested] = &[
         title: "Skylanders Trap Team",
         reason: "Tested by Bertram on 6 October 2026, with the portal menu and its villains.",
     },
+    Tested {
+        console: Console::Ps3,
+        title: "Skylanders Trap Team",
+        reason: "Tested by Bertram on 7 October 2026: figures and traps went on at once, and a \
+                 villain he trapped showed in the Villains tab. RPCS3's list rates it Ingame \
+                 from 2020.",
+    },
 ];
 
 /// The entry for this game on this console, if it has been played in Omoio.

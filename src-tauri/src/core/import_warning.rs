@@ -289,16 +289,10 @@ mod tests {
 
     #[test]
     fn a_game_with_a_better_version_elsewhere_is_told_about_it() {
-        let trap_team = warning(&ps3_game("BLES02055", "Skylanders Trap Team™"), &lists()).unwrap();
-        assert_eq!(trap_team.title, "Skylanders Trap Team™");
-        assert_eq!(trap_team.console_name, "PS3");
-        assert_eq!(trap_team.rating, "RPCS3 rates it Ingame: it starts, but you may hit problems before the end.");
-        assert_eq!(
-            trap_team.better,
-            "The Wii U version is rated Playable in Cemu, and the portal menu works in it."
-        );
-
-        let superchargers = warning(&ps3_game("BLUS31545", "Skylanders SuperChargers"), &lists()).unwrap();
+        let superchargers = warning(&ps3_game("BLUS31545", "Skylanders SuperChargers™"), &lists()).unwrap();
+        assert_eq!(superchargers.title, "Skylanders SuperChargers™");
+        assert_eq!(superchargers.console_name, "PS3");
+        assert_eq!(superchargers.rating, "RPCS3 rates it Ingame: it starts, but you may hit problems before the end.");
         assert_eq!(superchargers.better, "The Wii U version is rated Perfect in Cemu.");
     }
 
@@ -337,6 +331,7 @@ mod tests {
     fn a_tested_game_gets_no_warning_and_is_offered_for_the_other_console() {
         assert_eq!(warning(&wii_u_game("Skylanders - Swap Force"), &lists()), None);
         assert_eq!(warning(&wii_u_game("Skylanders - Trap Team"), &lists()), None);
+        assert_eq!(warning(&ps3_game("BLES02055", "Skylanders Trap Team"), &lists()), None);
 
         let swap_force = warning(&ps3_game("BLES01860", "Skylanders SWAP Force"), &lists()).unwrap();
         assert_eq!(
@@ -373,7 +368,7 @@ mod tests {
 
     #[test]
     fn a_release_the_list_lacks_is_rated_like_the_rest_of_its_game() {
-        let warning = warning(&ps3_game("BLUS31442", "Skylanders Trap Team"), &lists()).unwrap();
+        let warning = warning(&ps3_game("BLUS31600", "Skylanders Imaginators"), &lists()).unwrap();
         assert!(warning.rating.starts_with("RPCS3 rates it Ingame"));
     }
 

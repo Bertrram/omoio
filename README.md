@@ -30,7 +30,8 @@ really appreciated, so open an issue.
 - One controller layout for every emulator, set by pressing the buttons, for up
   to four players.
 - A Skylanders portal menu that puts figures and traps on the portal from your
-  controller, in Giants on PS3 and in SWAP Force and Trap Team on Wii U.
+  controller, in Giants and Trap Team on PS3 and in SWAP Force and Trap Team
+  on Wii U.
 - Community packs for every game, downloaded with one press: RPCS3's patches
   for PS3 games and Cemu's graphic packs for Wii U games, like 60 fps for
   Skylanders SWAP Force.
@@ -59,11 +60,12 @@ two buttons take you back into the game.
 ![The portal menu over Skylanders SWAP Force, with a swapper going on the portal](design/screenshots/portal-menu.jpg)
 
 Skylanders games need figures on a portal. Omoio opens a portal menu over the
-game instead, and three games have it so far:
+game instead, and these games have it so far:
 
 - Skylanders Giants, the PS3 version, through RPCS3
 - Skylanders SWAP Force, the Wii U version, through Cemu
 - Skylanders Trap Team, the Wii U version, through Cemu
+- Skylanders Trap Team, the PS3 version, through RPCS3
 
 During the game, press your controller's home button (Guide, PS or Home) and
 the menu opens. You can pick another button in the game's panel. Choose a
@@ -85,7 +87,7 @@ the game saved in the trap. It only reads, and never writes to your figures.
 Omoio doesn't come with the figures' pictures. It reads them from your own copy
 of the game when you press Get pictures once in the game's panel. A Wii U game
 imported as an unpacked folder or a .wua file is read as it is, and for a disc
-image Omoio reads a .wua file that Cemu packed beside it. For Giants on PS3 it
+image Omoio reads a .wua file that Cemu packed beside it. For a PS3 game it
 reads the game's folder. A small separate program,
 [omoio-portraits](https://github.com/Bertrram/omoio-portraits), does the reading.
 Omoio downloads it only when you ask and checks it before it runs. The pictures
