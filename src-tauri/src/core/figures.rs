@@ -253,6 +253,15 @@ pub fn repaired(name: &str) -> String {
     bytes.and_then(|bytes| String::from_utf8(bytes).ok()).unwrap_or_else(|| name.to_string())
 }
 
+/// The name the menu and the portal show for a name in an emulator's list:
+/// `repaired`, and without the " (Nintendo Only)" Cemu puts after Nintendo's
+/// SuperChargers figures. Which figures those are is kept by id in
+/// `vehicles::NINTENDO_ONLY`, not read from the name.
+pub fn named(name: &str) -> String {
+    let name = repaired(name);
+    name.strip_suffix(" (Nintendo Only)").unwrap_or(&name).to_string()
+}
+
 /// A character an emulator can make a figure of: the name it shows, and the
 /// id and variant the figure carries.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -417,7 +426,7 @@ pub fn offers(characters: Vec<Character>, game: Option<Game>) -> Vec<Offer> {
         .into_iter()
         .filter(|c| game.is_none_or(|game| reads(game, c.id, c.variant)))
         .map(|character| {
-            let name = repaired(&character.name);
+            let name = named(&character.name);
             let variant = game_variant(&name, character.id, character.variant);
             Offer {
                 element: element(character.id),
@@ -526,6 +535,16 @@ mod tests {
         assert_eq!(repaired("Spyro"), "Spyro");
         assert_eq!(repaired("Pokémon"), "Pokémon");
         assert_eq!(repaired("Eon's Elite Spyro"), "Eon's Elite Spyro");
+    }
+
+    #[test]
+    fn nintendos_figures_are_named_without_cemus_note() {
+        assert_eq!(named("Hammer Slam Bowser (Nintendo Only)"), "Hammer Slam Bowser");
+        assert_eq!(named("Dark Turbo Charge Donkey Kong (Nintendo Only)"), "Dark Turbo Charge Donkey Kong");
+        assert_eq!(named("Clown Cruiser (Nintendo Only)"), "Clown Cruiser");
+        assert_eq!(named("Dragonâ€™s Peak"), "Dragon’s Peak");
+        assert_eq!(named("Spitfire"), "Spitfire");
+        assert_eq!(named("(Nintendo Only) Spitfire"), "(Nintendo Only) Spitfire");
     }
 
     #[test]

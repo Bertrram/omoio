@@ -489,13 +489,14 @@ fn read(window: HWND) -> Result<Vec<String>, String> {
     }
 }
 
-/// A slot's name as the menu lists the character. Cemu calls a figure its
-/// list doesn't have "Unknown (212 12302)" (`FindSkylander`, v2.6), which is
-/// how each of the seven traps made with Trap Team's own variant shows.
+/// A slot's name as the menu lists the character, through the same
+/// `figures::named`, so the two match. Cemu calls a figure its list doesn't
+/// have "Unknown (212 12302)" (`FindSkylander`, v2.6), which is how each of
+/// the seven traps made with Trap Team's own variant shows.
 fn shown(name: &str) -> String {
     unknown(name)
         .and_then(|(id, variant)| figures::trap_named(id, variant))
-        .map_or_else(|| figures::repaired(name), str::to_string)
+        .map_or_else(|| figures::named(name), str::to_string)
 }
 
 fn unknown(name: &str) -> Option<(u16, u16)> {
@@ -755,6 +756,8 @@ mod tests {
     fn a_slot_reads_as_the_menu_names_it() {
         assert_eq!(shown("Spyro"), "Spyro");
         assert_eq!(shown("Dragonâ€™s Peak"), "Dragon’s Peak");
+        assert_eq!(shown("Hammer Slam Bowser (Nintendo Only)"), "Hammer Slam Bowser");
+        assert_eq!(shown("Dark Clown Cruiser (Nintendo Only)"), "Dark Clown Cruiser");
         // Tempest Timer made with Trap Team's own variant, 0x300E.
         assert_eq!(shown("Unknown (212 12302)"), "Tempest Timer");
         assert_eq!(shown("Unknown (219 12309)"), "Shining Ship");
