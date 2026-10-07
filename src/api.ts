@@ -769,6 +769,9 @@ export type FigureKind = "character" | "item" | "trap" | "adventure" | "vehicle"
 /// How a Swap Force swapper gets about, which its bottom half decides.
 export type Movement = "bounce" | "climb" | "dig" | "rocket" | "sneak" | "speed" | "spin" | "teleport";
 
+/// Where a SuperChargers vehicle goes, which is also what a trophy is for.
+export type Terrain = "land" | "sea" | "sky";
+
 export interface Figure {
   name: string;
   path: string;
@@ -782,6 +785,10 @@ export interface Figure {
   series: number | null;
   movement: Movement | null;
   class: FigureClass | null;
+  /// A vehicle's terrain, or the races a trophy is for.
+  terrain: Terrain | null;
+  /// A vehicle's own SuperCharger, or a SuperCharger's own vehicle, by id.
+  partner: number | null;
   /// The villain a Trap Team trap holds, read from the trap's own data.
   holds: Trapped | null;
 }
@@ -868,14 +875,30 @@ export interface Offer extends Character {
   /// Set on a bottom half.
   movement: Movement | null;
   class: FigureClass | null;
+  /// A vehicle's terrain, or the races a trophy is for.
+  terrain: Terrain | null;
+  /// A vehicle's own SuperCharger, or a SuperCharger's own vehicle, by id,
+  /// whatever the variant.
+  partner: number | null;
+  /// What a SuperChargers trophy unlocks: the villains to race as and the
+  /// tracks it opens. Left out for any other figure.
+  unlocks?: { villains: string[]; tracks: string[] };
 }
 
 /// The kinds of Skylander the games' checklists mark apart: the Giants,
-/// Trap Team's Trap Masters, and the Minis.
-export type FigureClass = "giant" | "trap_master" | "mini";
+/// Trap Team's Trap Masters, the Minis, and SuperChargers' own Skylanders.
+export type FigureClass = "giant" | "trap_master" | "mini" | "supercharger";
 
 export function figureCharacters(): Promise<Offer[]> {
   return invoke("figure_characters");
+}
+
+export type SkylandersGame = "spyro" | "giants" | "swapforce" | "trapteam" | "superchargers" | "imaginators";
+
+/// The Skylanders game running now, which decides how the portal menu is
+/// laid out. `null` for one Omoio can't tell.
+export function portalGame(): Promise<SkylandersGame | null> {
+  return invoke("portal_game");
 }
 
 /// Makes a new figure of `character` and puts it on the portal in `slot`,
@@ -916,20 +939,31 @@ export function figurePictures(titleId?: string): Promise<FigurePictures> {
   return invoke("figure_pictures", { titleId: titleId ?? null });
 }
 
-/// Reads the figures' pictures out of the user's own copy of the game.
-/// Resolves to how many were kept.
-export function getFigurePictures(titleId: string): Promise<number> {
-  return invoke("get_figure_pictures", { titleId });
+/// What asking for the pictures came to: how many were kept, or, for a game
+/// whose own files can't be read, the room in bytes that a temporary copy
+/// of it needs, and the room free, to ask the user about first.
+export type GotPictures = { pictures: number } | { copy: { need: number; free: number } };
+
+/// Reads the figures' pictures out of the user's own copy of the game. With
+/// `copy`, the user has agreed to a temporary copy being made first.
+export function getFigurePictures(titleId: string, copy = false): Promise<GotPictures> {
+  return invoke("get_figure_pictures", { titleId, copy });
 }
 
 export function stopFigurePictures(): Promise<void> {
   return invoke("stop_figure_pictures");
 }
 
-export function onFigurePictures(
-  handler: (progress: { title_id: string; done: number; of: number }) => void
-): Promise<UnlistenFn> {
-  return listen<{ title_id: string; done: number; of: number }>("figure-pictures", (event) => handler(event.payload));
+/// How far getting the pictures is: making the copy, then reading.
+export interface PicturesProgress {
+  title_id: string;
+  step: "copy" | "read";
+  done: number;
+  of: number;
+}
+
+export function onFigurePictures(handler: (progress: PicturesProgress) => void): Promise<UnlistenFn> {
+  return listen<PicturesProgress>("figure-pictures", (event) => handler(event.payload));
 }
 
 export function setCovers(on: boolean): Promise<void> {

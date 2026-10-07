@@ -496,14 +496,14 @@ fn check(slot: usize) -> Result<(), String> {
 }
 
 /// A slot's name as the menu knows it: empty for none, and for one of the
-/// seven traps whose variant RPCS3's list has wrong, the trap's name where
+/// figures whose variant RPCS3's list has wrong, the figure's name where
 /// RPCS3 says "Unknown (Id:212 Var:12302)".
 fn shown(name: &str) -> String {
     if name == "None" {
         return String::new();
     }
     unknown(name)
-        .and_then(|(id, variant)| figures::trap_named(id, variant))
+        .and_then(|(id, variant)| figures::fixed_name(id, variant))
         .map_or_else(|| name.to_string(), str::to_string)
 }
 

@@ -569,6 +569,11 @@ pub fn launch_game(app: AppHandle, title_id: String) -> Result<(), String> {
         return Err(format!("{name} is being updated. Try again in a minute."));
     }
 
+    // Cemu may be busy making a copy of a game to read figure pictures from.
+    if game.console == crate::core::console::Console::WiiU && crate::figure_pictures::copying() {
+        return Err("Cemu is busy getting figure pictures. Try again when that is done, or stop it.".to_string());
+    }
+
     // One game at a time: starting another stops the one already running.
     app.state::<Session>().stop();
     let backend = crate::backends::for_console(game.console)
@@ -1631,21 +1636,22 @@ pub async fn portal_load(app: AppHandle, slot: usize, figure: String) -> Result<
 
 /// The user's figure files, the ones used lately first. With `playable`, only
 /// those the running game reads, for the portal menu: a figure from a later
-/// game does nothing in an earlier one. A file the user brought is kept, since
+/// game does nothing in an earlier one, and Nintendo's SuperChargers figures
+/// do nothing away from the Wii U. A file the user brought is kept, since
 /// Omoio can't tell which character it is.
 #[tauri::command]
 pub fn figures(app: AppHandle, playable: Option<bool>) -> Vec<crate::portal_menu::Figure> {
     use crate::core::figures::{game_from_title, reads};
-    let game = playable
-        .unwrap_or(false)
-        .then(|| app.state::<Session>().playing())
-        .flatten()
-        .and_then(|playing| game_from_title(&playing.title));
+    use crate::core::vehicles::plays_on;
+    let playing = playable.unwrap_or(false).then(|| app.state::<Session>().playing()).flatten();
+    let game = playing.as_ref().and_then(|playing| game_from_title(&playing.title));
+    let console = playing.map(|playing| playing.console);
     crate::portal_menu::list(&app)
         .into_iter()
         .filter(|figure| {
             let character = figure.id.zip(figure.variant);
             game.is_none_or(|game| character.is_none_or(|(id, variant)| reads(game, id, variant)))
+                && console.is_none_or(|console| figure.id.is_none_or(|id| plays_on(console, id)))
         })
         .collect()
 }
@@ -1673,6 +1679,14 @@ pub fn portal_menu_family() -> String {
     crate::portal_menu::family()
 }
 
+/// The Skylanders game running now, so the menu lays itself out for it.
+/// `None` when nothing runs or the title doesn't say which game it is.
+#[tauri::command]
+pub fn portal_game(app: AppHandle) -> Option<crate::core::figures::Game> {
+    let playing = app.state::<Session>().playing()?;
+    crate::core::figures::game_from_title(&playing.title)
+}
+
 /// Everything held on any pad, for a menu any player may use. Nothing while
 /// another program is in front, so Omoio's menus never act on presses meant
 /// for it. Asked of Windows rather than of the page's focus: the page loses
@@ -1692,7 +1706,7 @@ pub fn pads_held(app: AppHandle) -> Vec<&'static str> {
 }
 
 /// Every character the running game's emulator can make a figure of that
-/// the game reads, each with its element and kind.
+/// the game reads on its console, each with its element and kind.
 #[tauri::command]
 pub async fn figure_characters(app: AppHandle) -> Result<Vec<crate::core::figures::Offer>, String> {
     let (backend, pid) = running_emulator(&app)?;
@@ -1705,7 +1719,7 @@ pub async fn figure_characters(app: AppHandle) -> Result<Vec<crate::core::figure
     .await
     .map_err(|e| e.to_string())?;
     crate::portal_menu::take_front(&app);
-    Ok(crate::core::figures::offers(characters?, game))
+    Ok(crate::core::figures::offers(characters?, game, playing.console))
 }
 
 /// A new figure on the portal: what the portal holds now, and the figure's
@@ -1776,11 +1790,16 @@ pub fn figure_pictures(app: AppHandle, title_id: Option<String>) -> Result<crate
 }
 
 /// Reads the figures' pictures out of the user's own copy of the game.
-/// Resolves to how many were kept.
+/// Resolves to how many were kept, or, for a copy that can't be read as it
+/// is, to what a temporary copy would take until `copy` says to make one.
 #[tauri::command]
-pub async fn get_figure_pictures(app: AppHandle, title_id: String) -> Result<usize, String> {
+pub async fn get_figure_pictures(
+    app: AppHandle,
+    title_id: String,
+    copy: Option<bool>,
+) -> Result<crate::figure_pictures::Got, String> {
     let (backend, game) = game_and_emulator(&app, &title_id)?;
-    crate::figure_pictures::get(app, backend, game).await
+    crate::figure_pictures::get(app, backend, game, copy.unwrap_or(false)).await
 }
 
 #[tauri::command]

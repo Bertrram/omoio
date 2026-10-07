@@ -1428,6 +1428,11 @@ body:has(.emu-updating) .omoio-update {
   margin-top: 8px;
   line-height: 1.5;
 }
+/* A size or a count in a note is a machine fact. */
+.note .n {
+  color: var(--mute);
+  font-family: var(--mono);
+}
 .note:empty {
   display: none;
 }

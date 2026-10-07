@@ -5,6 +5,7 @@
 
 pub mod compat;
 pub mod controllers;
+pub mod convert;
 pub mod game_profile;
 pub mod keys;
 pub mod own_cemu;
@@ -892,6 +893,30 @@ impl super::EmulatorBackend for Cemu {
 
     fn readable_copy(&self, app: &AppHandle, game: &Game, title_of: &dyn Fn(&Path) -> Option<String>) -> Option<PathBuf> {
         readable_copy(app, game, title_of)
+    }
+
+    fn copy_size(&self, game: &Game) -> Option<u64> {
+        is_disc_image(&game.path.to_string_lossy())
+            .then(|| std::fs::metadata(&game.path).ok())
+            .flatten()
+            .map(|file| file.len())
+    }
+
+    fn make_copy(
+        &self,
+        app: &AppHandle,
+        game: &Game,
+        into: &Path,
+        progress: &dyn Fn(u32),
+        cancel: &AtomicBool,
+    ) -> Result<(), String> {
+        let exe = exe_path(app)?;
+        if !exe.is_file() {
+            return Err("Install Cemu from the Emulators screen first.".to_string());
+        }
+        let portable = install_dir(app)?.join("portable");
+        let _ = write_first_settings(&portable);
+        convert::make_wua(&exe, &portable.join("settings.xml"), &game.path, &game.title, into, progress, cancel)
     }
 
     fn game_settings(&self, app: &AppHandle, game: &Game) -> Result<crate::core::game_settings::GameSettings, String> {

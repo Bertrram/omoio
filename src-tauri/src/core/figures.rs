@@ -5,6 +5,7 @@
 //! which has them for every figure; the table here is Omoio's own.
 
 use crate::core::console::{Console, Features};
+use crate::core::vehicles::{self, Terrain};
 use serde::{Deserialize, Serialize};
 
 /// The element a figure belongs to.
@@ -37,7 +38,8 @@ pub enum Kind {
 
 /// The games in the order they came out. A game reads the figures of its own
 /// year and of every earlier one, never those of a later one.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Game {
     Spyro,
     Giants,
@@ -70,13 +72,15 @@ pub fn game_from_title(title: &str) -> Option<Game> {
 }
 
 /// Whether the portal menu works in this game on this console: the games it
-/// has been played through with on each, which the README names.
+/// has been played through with on each, which the README names, and
+/// SuperChargers on the Wii U, where it comes first. Its PS3 version follows
+/// once it has been played there.
 pub fn has_portal_menu(console: Console, title: &str) -> bool {
     is_skylanders(title)
         && matches!(
             (console, game_from_title(title)),
             (Console::Ps3, Some(Game::Giants | Game::SwapForce | Game::TrapTeam))
-                | (Console::WiiU, Some(Game::SwapForce | Game::TrapTeam))
+                | (Console::WiiU, Some(Game::SwapForce | Game::TrapTeam | Game::SuperChargers))
         )
 }
 
@@ -252,6 +256,15 @@ pub fn repaired(name: &str) -> String {
     bytes.and_then(|bytes| String::from_utf8(bytes).ok()).unwrap_or_else(|| name.to_string())
 }
 
+/// The name the menu and the portal show for a name in an emulator's list:
+/// `repaired`, and without the " (Nintendo Only)" Cemu puts after Nintendo's
+/// SuperChargers figures. Which figures those are is kept by id in
+/// `vehicles::NINTENDO_ONLY`, not read from the name.
+pub fn named(name: &str) -> String {
+    let name = repaired(name);
+    name.strip_suffix(" (Nintendo Only)").unwrap_or(&name).to_string()
+}
+
 /// A character an emulator can make a figure of: the name it shows, and the
 /// id and variant the figure carries.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -337,28 +350,40 @@ pub enum Class {
     /// The small ones: Trap Team's Minis, and the Sidekicks of Giants they
     /// came back as.
     Mini,
+    /// SuperChargers' own Skylanders, each with a vehicle of its own.
+    #[serde(rename = "supercharger")]
+    SuperCharger,
 }
 
 /// Which marked kind a figure is, from its id, variants included (Cemu
 /// 2.6's list). Giants' new figures alternate between a core figure and a
 /// Giant from 100; Trap Masters are the first two of each element's four
-/// from 450, then Knight Light and Knight Mare.
+/// from 450, then Knight Light and Knight Mare. SuperChargers are the
+/// vehicles' drivers, whose ids from 3400 have gaps.
 pub fn class(id: u16) -> Option<Class> {
     match id {
         101 | 102 | 104 | 107 | 109 | 110 | 112 | 114 => Some(Class::Giant),
         450..=481 if (id - 450) % 4 < 2 => Some(Class::TrapMaster),
         482 | 484 => Some(Class::TrapMaster),
         502..=510 | 514 | 519 | 526 | 540..=543 => Some(Class::Mini),
+        _ if vehicles::VEHICLES.iter().any(|vehicle| vehicle.driver == id) => Some(Class::SuperCharger),
         _ => None,
     }
 }
 
-/// Seven traps Cemu's figure maker lists with a variant Trap Team doesn't
-/// use, so the game reads them as another trap or not at all (Cemu issue
-/// #1816): name, id, Cemu's variant, the game's. The game's own Collection
-/// pictures, named by id and variant, and a list made from real figures agree
-/// on the game's. Dolphin's list has the same seven.
-const TRAP_VARIANTS: [(&str, u16, u16, u16); 7] = [
+/// Figures Cemu's figure maker lists with a variant the games don't use:
+/// name, id, Cemu's variant, the game's. RPCS3's list has the same mistakes.
+///
+/// Seven traps, which Trap Team reads as another trap or not at all (Cemu
+/// issue #1816). The game's own Collection pictures, named by id and variant,
+/// and a list made from real figures agree on the game's, and so does
+/// Dolphin's list.
+///
+/// Three Trap Team variants, listed as 0x3805. Trap Team's Collection
+/// pictures, SuperChargers' toy data and Dolphin's list all give 0x3809 for
+/// Tidal Wave Gill Grunt and 0x3801 for the other two, and no game has a
+/// picture for 0x3805 (read from Bertram's copies, 7 October 2026).
+const WRONG_VARIANTS: [(&str, u16, u16, u16); 10] = [
     ("Rune Rocket", 210, 0x3014, 0x3015),
     ("Tempest Timer", 212, 0x300D, 0x300E),
     ("Tech Totem", 214, 0x3000, 0x3001),
@@ -366,23 +391,26 @@ const TRAP_VARIANTS: [(&str, u16, u16, u16); 7] = [
     ("Spinning Sandstorm", 216, 0x3013, 0x3012),
     ("Dark Dagger", 218, 0x3000, 0x3018),
     ("Shining Ship", 219, 0x3000, 0x3015),
+    ("Tidal Wave Gill Grunt", 14, 0x3805, 0x3809),
+    ("Sure Shot Shroomboom", 113, 0x3805, 0x3801),
+    ("Hog Wild Fryno", 3004, 0x3805, 0x3801),
 ];
 
-/// The variant the game itself gives a figure. Only the seven traps above
+/// The variant the game itself gives a figure. Only the figures above
 /// change, and only while Cemu still lists them wrongly.
 pub fn game_variant(name: &str, id: u16, variant: u16) -> u16 {
-    TRAP_VARIANTS
+    WRONG_VARIANTS
         .iter()
-        .find(|&&(trap, trap_id, listed, _)| trap == name && trap_id == id && listed == variant)
+        .find(|&&(figure, figure_id, listed, _)| figure == name && figure_id == id && listed == variant)
         .map_or(variant, |&(.., right)| right)
 }
 
-/// Which of those seven traps a figure is, from its id and the game's own
+/// Which of those figures a figure is, from its id and the game's own
 /// variant, which an emulator's list can't name.
-pub fn trap_named(id: u16, variant: u16) -> Option<&'static str> {
-    TRAP_VARIANTS
+pub fn fixed_name(id: u16, variant: u16) -> Option<&'static str> {
+    WRONG_VARIANTS
         .iter()
-        .find(|&&(_, trap_id, _, right)| trap_id == id && right == variant)
+        .find(|&&(_, figure_id, _, right)| figure_id == id && right == variant)
         .map(|&(name, ..)| name)
 }
 
@@ -397,17 +425,26 @@ pub struct Offer {
     pub series: Option<u8>,
     pub movement: Option<Movement>,
     pub class: Option<Class>,
+    /// A vehicle's terrain, or a trophy's.
+    pub terrain: Option<Terrain>,
+    /// A vehicle's own SuperCharger, or a SuperCharger's own vehicle.
+    pub partner: Option<u16>,
+    /// What a SuperChargers trophy unlocks, left out for every other figure.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unlocks: Option<&'static vehicles::Trophy>,
 }
 
-/// The characters `game` reads, each with its element and kind. Every one
-/// when the game isn't known. A figure made from an offer carries the
-/// game's own variant, so a trap Cemu lists wrongly is made right.
-pub fn offers(characters: Vec<Character>, game: Option<Game>) -> Vec<Offer> {
+/// The characters `game` reads on `console`, each with its element and
+/// kind. Every one when the game isn't known, but for Nintendo's figures
+/// away from the Wii U. A figure made from an offer carries the game's own
+/// variant, so a trap Cemu lists wrongly is made right.
+pub fn offers(characters: Vec<Character>, game: Option<Game>, console: Console) -> Vec<Offer> {
     characters
         .into_iter()
         .filter(|c| game.is_none_or(|game| reads(game, c.id, c.variant)))
+        .filter(|c| vehicles::plays_on(console, c.id))
         .map(|character| {
-            let name = repaired(&character.name);
+            let name = named(&character.name);
             let variant = game_variant(&name, character.id, character.variant);
             Offer {
                 element: element(character.id),
@@ -416,6 +453,9 @@ pub fn offers(characters: Vec<Character>, game: Option<Game>) -> Vec<Offer> {
                 series: series(variant),
                 movement: movement(character.id),
                 class: class(character.id),
+                terrain: vehicles::terrain(character.id),
+                partner: vehicles::partner(character.id),
+                unlocks: vehicles::trophy(character.id),
                 character: Character { name, id: character.id, variant },
             }
         })
@@ -517,6 +557,16 @@ mod tests {
     }
 
     #[test]
+    fn nintendos_figures_are_named_without_cemus_note() {
+        assert_eq!(named("Hammer Slam Bowser (Nintendo Only)"), "Hammer Slam Bowser");
+        assert_eq!(named("Dark Turbo Charge Donkey Kong (Nintendo Only)"), "Dark Turbo Charge Donkey Kong");
+        assert_eq!(named("Clown Cruiser (Nintendo Only)"), "Clown Cruiser");
+        assert_eq!(named("Dragonâ€™s Peak"), "Dragon’s Peak");
+        assert_eq!(named("Spitfire"), "Spitfire");
+        assert_eq!(named("(Nintendo Only) Spitfire"), "(Nintendo Only) Spitfire");
+    }
+
+    #[test]
     fn swap_force_reposes_are_the_third_series() {
         assert_eq!(series(0x2805), Some(3)); // Blizzard Chill
         assert_eq!(series(0x2c02), Some(3)); // Dark Mega Ram Spyro
@@ -538,10 +588,25 @@ mod tests {
     }
 
     #[test]
-    fn giants_trap_masters_and_minis_are_told_by_their_id() {
+    fn games_are_written_the_way_the_menu_reads_them() {
+        let written = [
+            Game::Spyro,
+            Game::Giants,
+            Game::SwapForce,
+            Game::TrapTeam,
+            Game::SuperChargers,
+            Game::Imaginators,
+        ]
+        .map(|game| serde_json::to_value(game).unwrap());
+        assert_eq!(written, ["spyro", "giants", "swapforce", "trapteam", "superchargers", "imaginators"]);
+    }
+
+    #[test]
+    fn giants_trap_masters_minis_and_superchargers_are_told_by_their_id() {
         let giant = Some(Class::Giant);
         let master = Some(Class::TrapMaster);
         let mini = Some(Class::Mini);
+        let supercharger = Some(Class::SuperCharger);
         assert_eq!(class(112), giant); // Tree Rex, and Gnarly Tree Rex
         assert_eq!(class(101), giant); // Swarm
         assert_eq!(class(114), giant); // Eye Brawl
@@ -559,6 +624,16 @@ mod tests {
         assert_eq!(class(503), mini); // Spry
         assert_eq!(class(542), mini); // Mini Jini
         assert_eq!(class(108), None); // Pop Fizz
+        assert_eq!(class(3400), supercharger); // Fiesta, and Frightful Fiesta
+        assert_eq!(class(3406), supercharger); // Stormblade
+        assert_eq!(class(3424), supercharger); // Hammer Slam Bowser
+        assert_eq!(class(3428), supercharger); // Thrillipede
+        assert_eq!(class(3403), None); // no figure
+        assert_eq!(class(3220), None); // Jet Stream, a vehicle
+        assert_eq!(class(3500), None); // Sky Trophy
+        assert_eq!((3400..3500).filter(|&id| class(id) == supercharger).count(), 20);
+        assert_eq!(serde_json::to_value(Class::SuperCharger).unwrap(), "supercharger");
+        assert_eq!(serde_json::to_value(Class::TrapMaster).unwrap(), "trap_master");
     }
 
     #[test]
@@ -600,18 +675,35 @@ mod tests {
         assert_eq!(game_variant("Tempest Timer", 212, 0x300E), 0x300E);
         // Another figure that happens to share an id and variant.
         assert_eq!(game_variant("Whirlwind", 216, 0x3000), 0x3000);
-        let made = offers(vec![Character { name: "Tempest Timer".into(), id: 212, variant: 0x300D }], Some(Game::TrapTeam));
+        let made = offers(
+            vec![Character { name: "Tempest Timer".into(), id: 212, variant: 0x300D }],
+            Some(Game::TrapTeam),
+            Console::WiiU,
+        );
         assert_eq!((made[0].character.id, made[0].character.variant), (212, 0x300E));
     }
 
     #[test]
+    fn three_trap_team_variants_cemu_lists_as_3805_are_made_with_the_games() {
+        assert_eq!(game_variant("Tidal Wave Gill Grunt", 14, 0x3805), 0x3809);
+        assert_eq!(game_variant("Sure Shot Shroomboom", 113, 0x3805), 0x3801);
+        assert_eq!(game_variant("Hog Wild Fryno", 3004, 0x3805), 0x3801);
+        // Their other variants, which the lists have right.
+        assert_eq!(game_variant("Gill Grunt", 14, 0x0000), 0x0000);
+        assert_eq!(game_variant("Anchors Away Gill Grunt", 14, 0x2805), 0x2805);
+        assert_eq!(fixed_name(14, 0x3809), Some("Tidal Wave Gill Grunt"));
+        assert_eq!(fixed_name(3004, 0x3801), Some("Hog Wild Fryno"));
+        assert_eq!(fixed_name(14, 0x3805), None);
+    }
+
+    #[test]
     fn a_trap_made_with_the_games_variant_is_named() {
-        assert_eq!(trap_named(212, 0x300E), Some("Tempest Timer"));
-        assert_eq!(trap_named(210, 0x3015), Some("Rune Rocket"));
-        assert_eq!(trap_named(219, 0x3015), Some("Shining Ship"));
+        assert_eq!(fixed_name(212, 0x300E), Some("Tempest Timer"));
+        assert_eq!(fixed_name(210, 0x3015), Some("Rune Rocket"));
+        assert_eq!(fixed_name(219, 0x3015), Some("Shining Ship"));
         // The variant the emulators list, and a trap they have right.
-        assert_eq!(trap_named(212, 0x300D), None);
-        assert_eq!(trap_named(212, 0x3003), None);
+        assert_eq!(fixed_name(212, 0x300D), None);
+        assert_eq!(fixed_name(212, 0x3003), None);
     }
 
     #[test]
@@ -628,19 +720,21 @@ mod tests {
         assert!(has_portal_menu(Console::Ps3, "Skylanders Trap Team"));
         assert!(has_portal_menu(Console::WiiU, "Skylanders: Swap Force"));
         assert!(has_portal_menu(Console::WiiU, "Skylanders - Trap Team"));
+        assert!(has_portal_menu(Console::WiiU, "Skylanders SuperChargers"));
+        assert!(has_portal_menu(Console::WiiU, "Skylanders: SuperChargers"));
 
         assert!(!has_portal_menu(Console::WiiU, "Skylanders: Giants"));
-        assert!(!has_portal_menu(Console::WiiU, "Skylanders: SuperChargers"));
         assert!(!has_portal_menu(Console::Ps3, "Giants: Citizen Kabuto"), "not a Skylanders game");
     }
 
     #[test]
     fn the_other_skylanders_games_have_no_portal_menu_yet() {
         // Spyro's Adventure is next, on the PS3. Its Wii U release was sold
-        // in Japan only.
+        // in Japan only. SuperChargers has it on the Wii U only so far.
         assert!(!has_portal_menu(Console::Ps3, "Skylanders: Spyro's Adventure"));
         assert!(!has_portal_menu(Console::WiiU, "Skylanders Spyro's Adventure"));
         assert!(!has_portal_menu(Console::Ps3, "Skylanders SuperChargers"));
+        assert!(!has_portal_menu(Console::Ps3, "Skylanders: SuperChargers"));
         assert!(!has_portal_menu(Console::Ps3, "Skylanders Imaginators"));
         assert!(!has_portal_menu(Console::WiiU, "Skylanders Imaginators"));
     }
@@ -670,12 +764,64 @@ mod tests {
             Character { name: "Whirlwind".into(), id: 0, variant: 0 },
             Character { name: "Gusto".into(), id: 450, variant: 0x3000 },
         ];
-        let offered = offers(list.clone(), Some(Game::SwapForce));
+        let offered = offers(list.clone(), Some(Game::SwapForce), Console::Ps3);
         assert_eq!(offered.len(), 1);
         let json = serde_json::to_value(&offered[0]).unwrap();
         assert_eq!(json["name"], "Whirlwind");
         assert_eq!(json["element"], "air");
         assert_eq!(json["kind"], "character");
-        assert_eq!(offers(list, None).len(), 2);
+        assert_eq!(offers(list, None, Console::Ps3).len(), 2);
+    }
+
+    #[test]
+    fn nintendos_figures_are_offered_on_the_wii_u_only() {
+        let list = vec![
+            Character { name: "Hammer Slam Bowser (Nintendo Only)".into(), id: 3424, variant: 0 },
+            Character { name: "Dark Turbo Charge Donkey Kong (Nintendo Only)".into(), id: 3423, variant: 0x4502 },
+            Character { name: "Clown Cruiser (Nintendo Only)".into(), id: 3233, variant: 0 },
+            Character { name: "Dark Barrel Blaster (Nintendo Only)".into(), id: 3240, variant: 0x4402 },
+            Character { name: "Spitfire".into(), id: 3412, variant: 0 },
+        ];
+        let names = |console| -> Vec<String> {
+            offers(list.clone(), Some(Game::SuperChargers), console)
+                .into_iter()
+                .map(|offer| offer.character.name)
+                .collect()
+        };
+        assert_eq!(names(Console::Ps3), ["Spitfire"]);
+        assert_eq!(
+            names(Console::WiiU),
+            [
+                "Hammer Slam Bowser",
+                "Dark Turbo Charge Donkey Kong",
+                "Clown Cruiser",
+                "Dark Barrel Blaster",
+                "Spitfire"
+            ]
+        );
+        assert_eq!(offers(list, None, Console::Ps3).len(), 1, "whatever the game");
+    }
+
+    #[test]
+    fn a_vehicle_and_its_supercharger_are_offered_as_partners() {
+        let list = vec![
+            Character { name: "Dark Hot Streak".into(), id: 3224, variant: 0x4402 },
+            Character { name: "Dark Spitfire".into(), id: 3412, variant: 0x4502 },
+            Character { name: "Sea Trophy".into(), id: 3502, variant: 0 },
+            Character { name: "Whirlwind".into(), id: 0, variant: 0 },
+        ];
+        let json = serde_json::to_value(offers(list, Some(Game::SuperChargers), Console::Ps3)).unwrap();
+        assert_eq!(json[0]["kind"], "vehicle");
+        assert_eq!(json[0]["terrain"], "land");
+        assert_eq!(json[0]["partner"], 3412);
+        assert_eq!(json[1]["class"], "supercharger");
+        assert!(json[1]["terrain"].is_null(), "a SuperCharger goes by its vehicle's");
+        assert_eq!(json[1]["partner"], 3224);
+        assert_eq!(json[2]["terrain"], "sea");
+        assert!(json[2]["partner"].is_null());
+        assert_eq!(json[2]["unlocks"]["villains"][0], "Golden Queen");
+        assert_eq!(json[2]["unlocks"]["tracks"][1], "The Golden Temple");
+        assert!(json[3]["terrain"].is_null() && json[3]["partner"].is_null());
+        assert!(json[0].get("unlocks").is_none() && json[3].get("unlocks").is_none(), "only a trophy has it");
     }
 }
