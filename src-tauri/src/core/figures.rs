@@ -371,12 +371,19 @@ pub fn class(id: u16) -> Option<Class> {
     }
 }
 
-/// Seven traps Cemu's figure maker lists with a variant Trap Team doesn't
-/// use, so the game reads them as another trap or not at all (Cemu issue
-/// #1816): name, id, Cemu's variant, the game's. The game's own Collection
-/// pictures, named by id and variant, and a list made from real figures agree
-/// on the game's. Dolphin's list has the same seven.
-const TRAP_VARIANTS: [(&str, u16, u16, u16); 7] = [
+/// Figures Cemu's figure maker lists with a variant the games don't use:
+/// name, id, Cemu's variant, the game's. RPCS3's list has the same mistakes.
+///
+/// Seven traps, which Trap Team reads as another trap or not at all (Cemu
+/// issue #1816). The game's own Collection pictures, named by id and variant,
+/// and a list made from real figures agree on the game's, and so does
+/// Dolphin's list.
+///
+/// Three Trap Team variants, listed as 0x3805. Trap Team's Collection
+/// pictures, SuperChargers' toy data and Dolphin's list all give 0x3809 for
+/// Tidal Wave Gill Grunt and 0x3801 for the other two, and no game has a
+/// picture for 0x3805 (read from Bertram's copies, 7 October 2026).
+const WRONG_VARIANTS: [(&str, u16, u16, u16); 10] = [
     ("Rune Rocket", 210, 0x3014, 0x3015),
     ("Tempest Timer", 212, 0x300D, 0x300E),
     ("Tech Totem", 214, 0x3000, 0x3001),
@@ -384,23 +391,26 @@ const TRAP_VARIANTS: [(&str, u16, u16, u16); 7] = [
     ("Spinning Sandstorm", 216, 0x3013, 0x3012),
     ("Dark Dagger", 218, 0x3000, 0x3018),
     ("Shining Ship", 219, 0x3000, 0x3015),
+    ("Tidal Wave Gill Grunt", 14, 0x3805, 0x3809),
+    ("Sure Shot Shroomboom", 113, 0x3805, 0x3801),
+    ("Hog Wild Fryno", 3004, 0x3805, 0x3801),
 ];
 
-/// The variant the game itself gives a figure. Only the seven traps above
+/// The variant the game itself gives a figure. Only the figures above
 /// change, and only while Cemu still lists them wrongly.
 pub fn game_variant(name: &str, id: u16, variant: u16) -> u16 {
-    TRAP_VARIANTS
+    WRONG_VARIANTS
         .iter()
-        .find(|&&(trap, trap_id, listed, _)| trap == name && trap_id == id && listed == variant)
+        .find(|&&(figure, figure_id, listed, _)| figure == name && figure_id == id && listed == variant)
         .map_or(variant, |&(.., right)| right)
 }
 
-/// Which of those seven traps a figure is, from its id and the game's own
+/// Which of those figures a figure is, from its id and the game's own
 /// variant, which an emulator's list can't name.
-pub fn trap_named(id: u16, variant: u16) -> Option<&'static str> {
-    TRAP_VARIANTS
+pub fn fixed_name(id: u16, variant: u16) -> Option<&'static str> {
+    WRONG_VARIANTS
         .iter()
-        .find(|&&(_, trap_id, _, right)| trap_id == id && right == variant)
+        .find(|&&(_, figure_id, _, right)| figure_id == id && right == variant)
         .map(|&(name, ..)| name)
 }
 
@@ -674,13 +684,26 @@ mod tests {
     }
 
     #[test]
+    fn three_trap_team_variants_cemu_lists_as_3805_are_made_with_the_games() {
+        assert_eq!(game_variant("Tidal Wave Gill Grunt", 14, 0x3805), 0x3809);
+        assert_eq!(game_variant("Sure Shot Shroomboom", 113, 0x3805), 0x3801);
+        assert_eq!(game_variant("Hog Wild Fryno", 3004, 0x3805), 0x3801);
+        // Their other variants, which the lists have right.
+        assert_eq!(game_variant("Gill Grunt", 14, 0x0000), 0x0000);
+        assert_eq!(game_variant("Anchors Away Gill Grunt", 14, 0x2805), 0x2805);
+        assert_eq!(fixed_name(14, 0x3809), Some("Tidal Wave Gill Grunt"));
+        assert_eq!(fixed_name(3004, 0x3801), Some("Hog Wild Fryno"));
+        assert_eq!(fixed_name(14, 0x3805), None);
+    }
+
+    #[test]
     fn a_trap_made_with_the_games_variant_is_named() {
-        assert_eq!(trap_named(212, 0x300E), Some("Tempest Timer"));
-        assert_eq!(trap_named(210, 0x3015), Some("Rune Rocket"));
-        assert_eq!(trap_named(219, 0x3015), Some("Shining Ship"));
+        assert_eq!(fixed_name(212, 0x300E), Some("Tempest Timer"));
+        assert_eq!(fixed_name(210, 0x3015), Some("Rune Rocket"));
+        assert_eq!(fixed_name(219, 0x3015), Some("Shining Ship"));
         // The variant the emulators list, and a trap they have right.
-        assert_eq!(trap_named(212, 0x300D), None);
-        assert_eq!(trap_named(212, 0x3003), None);
+        assert_eq!(fixed_name(212, 0x300D), None);
+        assert_eq!(fixed_name(212, 0x3003), None);
     }
 
     #[test]
