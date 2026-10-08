@@ -29,9 +29,12 @@
 //! out a fix it makes for homebrew (`PatchFixedFunctions`, Core/HLE/HLE.cpp).
 //!
 //! The settings in the same files, such as `[Video_Hacks]`, Dolphin applies
-//! by itself, so they aren't offered.
+//! by itself, so they aren't offered. The graphics mods Dolphin comes with
+//! are offered after the patches and codes (mods.rs), and Dolphin's
+//! graphics mods are turned on in the game's own file while one is on for
+//! it, as its cheats are for codes.
 
-use super::ini;
+use super::{ini, mods};
 use crate::core::community::{Pack, PackChange, Packs};
 use std::path::PathBuf;
 use tauri::AppHandle;
@@ -100,7 +103,7 @@ struct Code {
 
 /// What decides a game's patches and codes: Dolphin's files and the user's
 /// for the game, each in the order Dolphin reads them, and Dolphin's
-/// settings for every game.
+/// settings for every game (Dolphin.ini).
 #[derive(Debug, Clone)]
 struct Files {
     shipped: Vec<String>,
@@ -109,6 +112,8 @@ struct Files {
     /// writes, as Dolphin's own window does.
     own: usize,
     settings: String,
+    /// GFX.ini, Dolphin's graphics settings for every game.
+    graphics: String,
 }
 
 const SOURCE: &str = "the Dolphin community";
@@ -240,20 +245,45 @@ fn is_true(value: &str) -> bool {
     value.eq_ignore_ascii_case("true") || value.parse::<f32>().is_ok_and(|number| number == 1.0)
 }
 
-/// Whether Dolphin's cheats are on for the game. The user's files for it
-/// come first, then Dolphin's own, then the settings for every game, and
-/// the first that sets it decides (`SEARCH_ORDER`, Common/Config/Enums.h);
-/// a value Dolphin can't read counts as off (`GetUncached`,
-/// Common/Config/Config.h).
-fn cheats_on(files: &Files) -> bool {
+/// Whether one of Dolphin's switches is on for the game: `key` under
+/// `section` in the game's files, and under `every_section` in `every_game`,
+/// the settings for every game. The user's files for it come first, then
+/// Dolphin's own, then the settings for every game, and the first that sets
+/// it decides (`SEARCH_ORDER`, Common/Config/Enums.h); a value Dolphin can't
+/// read counts as off (`GetUncached`, Common/Config/Config.h).
+fn is_on(files: &Files, section: &str, every_game: &str, every_section: &str, key: &str) -> bool {
     files
         .user
         .iter()
         .rev()
         .chain(files.shipped.iter().rev())
-        .chain(std::iter::once(&files.settings))
-        .find_map(|text| ini::get(text, "Core", "EnableCheats"))
+        .find_map(|text| ini::get(text, section, key))
+        .or_else(|| ini::get(every_game, every_section, key))
         .is_some_and(|value| is_true(&value))
+}
+
+/// Whether Dolphin's cheats are on for the game.
+fn cheats_on(files: &Files) -> bool {
+    is_on(files, "Core", &files.settings, "Core", "EnableCheats")
+}
+
+/// Whether Dolphin's graphics mods are on for the game: `[Settings]
+/// EnableMods` in GFX.ini, which a game's file sets under `[Video_Settings]`
+/// (`GetINIToSectionMap`, Core/ConfigLoaders/GameConfigLoader.cpp).
+fn mods_on(files: &Files) -> bool {
+    is_on(files, "Video_Settings", &files.graphics, "Settings", "EnableMods")
+}
+
+/// The game's own file with Dolphin's graphics mods on while any mod is on
+/// for the game, and without the setting once none is, so Dolphin's own
+/// choice for every game decides again.
+fn mods_switched(files: &Files, any_on: bool) -> String {
+    let own = &files.user[files.own];
+    if any_on {
+        ini::set(own, "Video_Settings", "EnableMods", "True")
+    } else {
+        ini::remove(own, "Video_Settings", "EnableMods")
+    }
 }
 
 fn pack_id(code: &Code) -> String {
@@ -352,21 +382,32 @@ fn load(app: &AppHandle, game_id: &str, revision: Option<u16>) -> Result<Files, 
     let read = |path: PathBuf| std::fs::read(path).map(|bytes| String::from_utf8_lossy(&bytes).into_owned()).unwrap_or_default();
     let names = file_names(game_id, revision);
     let own = format!("{game_id}.ini");
+    let config = super::install::user_dir(app)?.join("Config");
     Ok(Files {
         shipped: names.iter().map(|name| read(shipped.join(name))).collect(),
         user: names.iter().map(|name| read(user.join(name))).collect(),
         own: names.iter().position(|name| *name == own).unwrap_or_default(),
-        settings: read(super::install::user_dir(app)?.join("Config").join("Dolphin.ini")),
+        settings: read(config.join("Dolphin.ini")),
+        graphics: read(config.join("GFX.ini")),
     })
 }
 
-/// A game's patches and codes, for the Community packs list. `title_id` is
-/// the library's, whose first six characters are the id Dolphin files the
-/// game's settings under; `revision` is the disc's.
+/// The patches, codes and graphics mods that came with Dolphin and are for
+/// a game, from Dolphin's own files, as packs.
+fn everything(app: &AppHandle, game_id: &str, revision: Option<u16>) -> Result<Vec<Pack>, String> {
+    let files = load(app, game_id, revision)?;
+    let mut packs = list(&files);
+    packs.extend(mods::list(&mods::load(app, game_id)?, mods_on(&files)));
+    Ok(packs)
+}
+
+/// A game's patches, codes and graphics mods, for the Community packs list.
+/// `title_id` is the library's, whose first six characters are the id
+/// Dolphin files the game's settings under; `revision` is the disc's.
 pub fn view(app: &AppHandle, title_id: &str, revision: Option<u16>) -> Packs {
     let have_list = shipped_dir(app).is_ok_and(|dir| dir.is_dir());
     let packs = match super::controllers::game_id(title_id) {
-        Some(id) if have_list => load(app, id, revision).map(|files| list(&files)).unwrap_or_default(),
+        Some(id) if have_list => everything(app, id, revision).unwrap_or_default(),
         _ => Vec::new(),
     };
     Packs {
@@ -378,12 +419,21 @@ pub fn view(app: &AppHandle, title_id: &str, revision: Option<u16>) -> Packs {
     }
 }
 
-/// Switches one patch or code on or off for the game, in its own file in
-/// Dolphin's user folder. Dolphin reads it as the game starts.
+/// Switches one patch, code or graphics mod on or off for the game, in its
+/// own files in Dolphin's user folder. Dolphin reads them as the game
+/// starts.
 pub fn set(app: &AppHandle, title_id: &str, revision: Option<u16>, change: &PackChange) -> Result<(), String> {
     let id = super::controllers::game_id(title_id).ok_or(GONE)?;
     let files = load(app, id, revision)?;
-    let text = switched(&files, &change.id, change.on)?;
+    let text = match change.id.strip_prefix(mods::ID) {
+        Some(path) => {
+            let found = mods::load(app, id)?;
+            let (list, any_on) = mods::switched(&found, path, change.on)?;
+            mods::save(app, &found, &list)?;
+            mods_switched(&files, any_on)
+        }
+        None => switched(&files, &change.id, change.on)?,
+    };
     if text == files.user[files.own] {
         return Ok(());
     }
@@ -410,6 +460,7 @@ mod tests {
             user: vec![String::new(), String::new(), user.to_string(), String::new()],
             own: 2,
             settings: settings.to_string(),
+            graphics: String::new(),
         }
     }
 
@@ -537,6 +588,27 @@ mod tests {
     }
 
     #[test]
+    fn graphics_mods_are_on_for_the_game_while_one_is() {
+        let user = "[Controls]\nWiimoteSource0 = 1\n";
+        let before = files(THREE, WHOLE, "", user, "");
+        assert!(!mods_on(&before), "off unless something turns them on");
+        let on = mods_switched(&before, true);
+        assert_eq!(on, "[Controls]\nWiimoteSource0 = 1\n[Video_Settings]\nEnableMods = True\n");
+        let mut after = before.clone();
+        after.user[2] = on;
+        assert!(mods_on(&after));
+        assert!(!cheats_on(&after), "the other switch stays as it was");
+        assert_eq!(mods_switched(&after, false), "[Controls]\nWiimoteSource0 = 1\n[Video_Settings]\n");
+        // Dolphin's settings for every game count where no file for the
+        // game says otherwise.
+        let mut everywhere = before.clone();
+        everywhere.graphics = "[Settings]\nInternalResolution = 4\nEnableMods = True\n".to_string();
+        assert!(mods_on(&everywhere));
+        everywhere.user[2] = "[Video_Settings]\nEnableMods = False\n".to_string();
+        assert!(!mods_on(&everywhere), "the game's own file wins");
+    }
+
+    #[test]
     fn a_gecko_code_marked_with_a_plus_is_on_by_itself() {
         let whole = "[Gecko]\n+$Fix [Someone]\n04000000 00000001\n";
         let cheats = "[Core]\nEnableCheats = 1\n";
@@ -567,6 +639,7 @@ mod tests {
                 user: vec![String::new(); names.len()],
                 own: 2,
                 settings: String::new(),
+                graphics: String::new(),
             };
             let packs = list(&files);
             // Every patch Dolphin's file for the game switches on by name is
@@ -592,6 +665,7 @@ mod tests {
                 user: vec![String::new(); names.len()],
                 own: 2,
                 settings: String::new(),
+                graphics: String::new(),
             };
             let packs = list(&files);
             let count = |kind: Kind| packs.iter().filter(|pack| pack.kind == kind.label()).count();

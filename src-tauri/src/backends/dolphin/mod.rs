@@ -17,6 +17,7 @@ pub mod disc;
 pub mod ini;
 pub mod install;
 pub mod log;
+pub mod mods;
 pub mod packs;
 pub mod portal;
 pub mod release;
@@ -383,7 +384,8 @@ impl super::EmulatorBackend for Dolphin {
     }
 
     /// The patches and codes Dolphin comes with for the game, for the disc's
-    /// revision as Dolphin matches them (packs.rs).
+    /// revision as Dolphin matches them (packs.rs), and its graphics mods
+    /// that change the game (mods.rs).
     fn community_packs(&self, app: &AppHandle, title_id: &str, game: Option<&Game>) -> Packs {
         packs::view(app, title_id, game.and_then(revision))
     }
