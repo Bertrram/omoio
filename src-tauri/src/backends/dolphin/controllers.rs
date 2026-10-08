@@ -72,8 +72,9 @@ pub const GAMECUBE: [(&str, &str); 20] = [
 /// the real thing, the Nunchuk's C and Z on the other two face buttons, a
 /// shake of the remote on the right shoulder for games that ask for one,
 /// and the pointer on the right stick. The home button stays Omoio's, for
-/// the portal menu.
-pub const WII: [(&str, &str); 24] = [
+/// the portal menu, and the Wii's Home is left off: on a stick's press it
+/// came up whenever a player leant on the pointer, stopping the game.
+pub const WII: [(&str, &str); 23] = [
     ("South", "A"),
     ("East", "B"),
     ("RT", "B"),
@@ -85,7 +86,6 @@ pub const WII: [(&str, &str); 24] = [
     ("LS", "2"),
     ("Back", "Minus"),
     ("Start", "Plus"),
-    ("RS", "Home"),
     ("Up", "D-pad up"),
     ("Down", "D-pad down"),
     ("Left", "D-pad left"),
@@ -135,14 +135,13 @@ const GAMECUBE_KEYS: [(&str, &[&str]); 22] = [
 ];
 
 /// The same for the Wii Remote and its Nunchuk, as `WII` lays them out.
-const WII_KEYS: [(&str, &[&str]); 24] = [
+const WII_KEYS: [(&str, &[&str]); 23] = [
     ("Buttons/A", &["South"]),
     ("Buttons/B", &["East", "RT"]),
     ("Buttons/1", &["LB"]),
     ("Buttons/2", &["LS"]),
     ("Buttons/-", &["Back"]),
     ("Buttons/+", &["Start"]),
-    ("Buttons/Home", &["RS"]),
     ("D-Pad/Up", &["Up"]),
     ("D-Pad/Down", &["Down"]),
     ("D-Pad/Left", &["Left"]),
@@ -494,7 +493,6 @@ mod tests {
              Buttons/2 = `Thumb L`\r\n\
              Buttons/- = `Back`\r\n\
              Buttons/+ = `Start`\r\n\
-             Buttons/Home = `Thumb R`\r\n\
              D-Pad/Up = `Pad N`\r\n\
              D-Pad/Down = `Pad S`\r\n\
              D-Pad/Left = `Pad W`\r\n\

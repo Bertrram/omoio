@@ -240,7 +240,7 @@ function directionsScreen(
         const value = h("span", "bp-row-value bp-caps");
         value.innerHTML = `<span class="cap">${capFace(player.pad.family, player.buttons[place])}</span>`;
         // A stick's press is a button of its own on some consoles, the
-        // Wii's 2 and Home among them, so it says what it is on each.
+        // Wii's 2 among them, so it says what it is on each.
         const pressed = place === "LS" || place === "RS";
         const on = known.consoles
           .filter((console) => console.buttons[place])

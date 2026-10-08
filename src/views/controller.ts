@@ -333,7 +333,7 @@ export async function renderController(): Promise<View> {
     box.append(heading);
     for (const place of group.places) {
       // A stick's press is a button of its own on some consoles, the Wii's 2
-      // and Home among them, so it says what it is on each.
+      // among them, so it says what it is on each.
       const pressed = place === "LS" || place === "RS";
       const words = pressed ? consoleWords(view.consoles, place) : document.createElement("span");
       words.className = "pad-words";
