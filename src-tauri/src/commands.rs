@@ -1669,6 +1669,12 @@ pub fn add_figures(app: AppHandle, paths: Vec<String>) -> Result<usize, String> 
     crate::portal_menu::add(&app, &paths)
 }
 
+/// Moves one of the user's saved figures to the Recycle Bin.
+#[tauri::command]
+pub fn delete_figure(app: AppHandle, path: String) -> Result<(), String> {
+    crate::portal_menu::delete(&app, &path)
+}
+
 #[tauri::command]
 pub fn close_portal_menu(app: AppHandle) {
     crate::portal_menu::close(&app);

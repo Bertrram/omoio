@@ -254,6 +254,60 @@ pub fn villains(app: &AppHandle) -> Vec<VillainState> {
         .collect()
 }
 
+/// Moves one of the user's saved figures to the Recycle Bin, and forgets
+/// which character it was and that it was used. Only a figure file in the
+/// figures folder is taken. The Recycle Bin rather than gone for good, so a
+/// figure deleted by mistake, with everything its game saved on it, can be
+/// put back.
+pub fn delete(app: &AppHandle, figure: &str) -> Result<(), String> {
+    let dir = folder(app)?;
+    let path = Path::new(figure);
+    let in_folder = path.parent().is_some_and(|parent| parent == dir);
+    if !in_folder || !is_figure(path) || !path.is_file() {
+        return Err("That isn't one of your saved figures.".to_string());
+    }
+    to_recycle_bin(path)?;
+    let Some(name) = path.file_name().map(|name| name.to_string_lossy().into_owned()) else {
+        return Ok(());
+    };
+    let mut list = made_list(app);
+    if list.remove(&name).is_some() {
+        if let (Ok(file), Ok(text)) = (made_file(app), serde_json::to_string(&list)) {
+            let _ = std::fs::write(file, text);
+        }
+    }
+    if let Ok(dir) = data_dir(app) {
+        let file = dir.join("settings.json");
+        let mut settings = Settings::load(&file);
+        settings.recent_figures.retain(|used| *used != name);
+        let _ = settings.save(&file);
+    }
+    Ok(())
+}
+
+/// Moves a file to the Recycle Bin as Explorer's Delete does, without
+/// asking or showing anything: Windows' own file operation, with undo
+/// allowed.
+fn to_recycle_bin(path: &Path) -> Result<(), String> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::Win32::UI::Shell::{
+        SHFileOperationW, FOF_ALLOWUNDO, FOF_NOCONFIRMATION, FOF_NOERRORUI, FOF_SILENT, FO_DELETE, SHFILEOPSTRUCTW,
+    };
+    // The list of files ends with an empty one, so two nulls.
+    let from: Vec<u16> = path.as_os_str().encode_wide().chain([0, 0]).collect();
+    let mut operation = SHFILEOPSTRUCTW {
+        wFunc: FO_DELETE,
+        pFrom: windows::core::PCWSTR(from.as_ptr()),
+        fFlags: (FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_NOERRORUI | FOF_SILENT).0 as u16,
+        ..Default::default()
+    };
+    let failed = unsafe { SHFileOperationW(&mut operation) } != 0 || operation.fAnyOperationsAborted.as_bool();
+    if failed || path.exists() {
+        return Err("Couldn't move that figure to the Recycle Bin.".to_string());
+    }
+    Ok(())
+}
+
 /// Copies figure files the user picked into the figures folder. A file of the
 /// same name already there is kept. Returns how many were added.
 pub fn add(app: &AppHandle, paths: &[String]) -> Result<usize, String> {

@@ -858,6 +858,11 @@ export function addFigures(paths: string[]): Promise<number> {
   return invoke("add_figures", { paths });
 }
 
+/// Moves one of the user's saved figures to the Recycle Bin.
+export function deleteFigure(path: string): Promise<void> {
+  return invoke("delete_figure", { path });
+}
+
 /// The figures on the running game's portal, by slot, empty where none is.
 export function portalFigures(): Promise<string[]> {
   return invoke("portal_figures");

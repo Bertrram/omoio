@@ -121,6 +121,7 @@ pub fn run() {
             commands::figures,
             commands::villains,
             commands::add_figures,
+            commands::delete_figure,
             commands::close_portal_menu,
             commands::portal_menu_family,
             commands::portal_game,
