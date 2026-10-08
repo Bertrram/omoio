@@ -60,14 +60,16 @@ fn emit(app: &AppHandle, stage: &str, bytes: u64, total: u64) {
     );
 }
 
-/// Whether Omoio's own Dolphin is running, in a game or on its own. Its
-/// files are held open while it runs, and an update that met one part way
-/// through would leave it half old, half new.
+/// Whether Omoio's own Dolphin is running, in a game or on its own, or its
+/// DolphinTool, which carries on with a copy for the figures' pictures when
+/// Omoio is closed part way. Their files are held open while they run, and
+/// an update that met one part way through would leave Dolphin half old,
+/// half new.
 pub fn running(app: &AppHandle) -> bool {
-    let Ok(exe) = exe_path(app) else {
-        return false;
-    };
-    !copies(&exe).1.is_empty()
+    [exe_path(app), tool_path(app)]
+        .into_iter()
+        .flatten()
+        .any(|exe| !copies(&exe).1.is_empty())
 }
 
 /// The processes running Omoio's Dolphin, by the file they were started

@@ -58,7 +58,7 @@ impl InstallState {
         Ok(Installing { state: self, emulator })
     }
 
-    fn is_installing(&self, emulator: &dyn crate::backends::EmulatorBackend) -> bool {
+    pub(crate) fn is_installing(&self, emulator: &dyn crate::backends::EmulatorBackend) -> bool {
         self.installing.lock().unwrap().contains(&emulator.name())
     }
 }
@@ -1647,6 +1647,8 @@ pub fn cancel_cemu_install(state: State<'_, InstallState>) {
 pub async fn install_dolphin(app: AppHandle, state: State<'_, InstallState>) -> Result<String, String> {
     refuse_while_playing(&app, &crate::backends::dolphin::WII)?;
     let _installing = state.begin_install(&crate::backends::dolphin::WII)?;
+    // Asked only once marked as installing, as a copy is marked before it
+    // asks about an install, so the two never both go ahead.
     if crate::figure_pictures::copying() == Some(crate::backends::dolphin::WII.name()) {
         return Err("Dolphin is busy getting figure pictures. Try again when that is done, or stop it.".to_string());
     }

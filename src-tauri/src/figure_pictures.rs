@@ -259,19 +259,21 @@ fn make_copy(
             gigabytes(most_free(app, game))
         ));
     };
+    let copying = Copying::begin(backend.name(), || {
+        app.state::<crate::commands::InstallState>().is_installing(backend)
+    })?;
     let _ = std::fs::remove_dir_all(place);
     std::fs::create_dir_all(place).map_err(|_| "Couldn't make room for a copy of the game.".to_string())?;
     if let Ok(dir) = data_dir(app) {
         let _ = std::fs::write(dir.join(COPY_NOTE), place.to_string_lossy().as_bytes());
     }
     CANCEL.store(false, Ordering::Relaxed);
-    *COPYING.lock().unwrap() = Some(backend.name());
     let progress = |percent: u32| {
         let progress = Progress { title_id: game.title_id.clone(), step: "copy", done: percent as usize, of: 100 };
         let _ = app.emit("figure-pictures", progress);
     };
     let made = backend.make_copy(app, game, place, &progress, &CANCEL);
-    *COPYING.lock().unwrap() = None;
+    drop(copying);
     match made {
         Ok(copy) => Ok((place.clone(), copy)),
         Err(said) => {
@@ -303,6 +305,30 @@ pub fn tidy(app: &AppHandle) {
 /// The emulator busy making a copy of a game, by name.
 pub fn copying() -> Option<&'static str> {
     *COPYING.lock().unwrap()
+}
+
+/// An emulator marked as making a copy until this is dropped.
+struct Copying;
+
+impl Copying {
+    /// Marks `emulator`, unless `installing` says it is being installed: its
+    /// copier would run from files being replaced. Marked before asking, as
+    /// an install marks itself before it asks about a copy
+    /// (`commands::install_dolphin`), so the two never both go ahead.
+    fn begin(emulator: &'static str, installing: impl FnOnce() -> bool) -> Result<Self, String> {
+        *COPYING.lock().unwrap() = Some(emulator);
+        if installing() {
+            *COPYING.lock().unwrap() = None;
+            return Err(format!("{emulator} is being updated. Try again when that is done."));
+        }
+        Ok(Self)
+    }
+}
+
+impl Drop for Copying {
+    fn drop(&mut self) {
+        *COPYING.lock().unwrap() = None;
+    }
 }
 
 /// Reads the figures' pictures out of the game and keeps them, in place of
@@ -403,5 +429,19 @@ mod tests {
     #[test]
     fn the_fingerprint_is_sha256_in_hex() {
         assert_eq!(fingerprint(b"hello"), "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824");
+    }
+
+    #[test]
+    fn no_copy_is_made_while_its_emulator_is_installed() {
+        assert!(Copying::begin("Dolphin", || true).is_err());
+        assert_eq!(copying(), None, "a refused copy leaves no mark");
+        let copy = Copying::begin("Dolphin", || {
+            assert_eq!(copying(), Some("Dolphin"), "marked before the install is asked about");
+            false
+        })
+        .unwrap();
+        assert_eq!(copying(), Some("Dolphin"));
+        drop(copy);
+        assert_eq!(copying(), None);
     }
 }
