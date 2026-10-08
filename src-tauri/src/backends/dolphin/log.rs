@@ -16,10 +16,12 @@ use std::path::{Path, PathBuf};
 const VERBOSITY: &str = "3";
 
 /// The kinds of message that say how a game started and what went wrong in
-/// it: booting the disc, Dolphin's core and common code, its picture, and
-/// the emulated USB devices, which the Skylanders portal is one of. Each is
-/// the short name Dolphin files it under.
-const KINDS: [&str; 5] = ["BOOT", "CORE", "COMMON", "Video", "IOS_USB"];
+/// it: booting the disc, Dolphin's core and common code, its picture, the
+/// emulated USB devices, which the Skylanders portal is one of, and the
+/// master log, where Dolphin puts the warnings it no longer shows as boxes
+/// (settings.rs; `ShowMessageAlert`, Common/MsgHandler.cpp, writes each one
+/// there as a warning). Each is the short name Dolphin files it under.
+const KINDS: [&str; 6] = ["BOOT", "CORE", "COMMON", "Video", "IOS_USB", "MASTER"];
 
 pub fn path(user: &Path) -> PathBuf {
     user.join("Logs").join("dolphin.log")
@@ -50,6 +52,7 @@ mod tests {
         let text = std::fs::read_to_string(user.join("Config").join("Logger.ini")).unwrap();
         assert_eq!(ini::get(&text, "Options", "WriteToFile").as_deref(), Some("True"));
         assert_eq!(ini::get(&text, "Logs", "BOOT").as_deref(), Some("True"));
+        assert_eq!(ini::get(&text, "Logs", "MASTER").as_deref(), Some("True"), "the warnings Dolphin doesn't show");
         prepare(&user).unwrap();
         let _ = std::fs::remove_dir_all(&user);
     }

@@ -30,7 +30,17 @@ use std::path::Path;
 ///   Tools menu, which the portal window is opened from, "Værktøjer".
 /// - Dolphin warns before an NKit image starts (`NKitWarningDialog`); such
 ///   an image plays, and the warning would stand in front of it.
-pub const EVERY_GAME: [(&str, &str, &str); 9] = [
+/// - Dolphin's warnings about trouble it plays on through (`PanicAlertFmt`,
+///   Common/MsgHandler.h) are boxes the game waits behind. A Wii game that
+///   readies its online play at start, as Skylanders does, brings one up at
+///   every start: the files that play needs come only from a real Wii
+///   (`ReadCertFile`, Core/IOS/Network/SSL.cpp), Omoio never supplies them,
+///   and Dolphin has no setting for that warning alone. With
+///   `UsePanicHandlers` off Dolphin shows none of these, as its own "Ignore
+///   for this session" does (DolphinQt/Main.cpp); each still goes into its
+///   log (log.rs), and errors and questions still show
+///   (`ShowMessageAlert`, Common/MsgHandler.cpp).
+pub const EVERY_GAME: [(&str, &str, &str); 10] = [
     ("Analytics", "PermissionAsked", "True"),
     ("AutoUpdate", "UpdateTrack", ""),
     ("Interface", "ConfirmStop", "False"),
@@ -40,6 +50,7 @@ pub const EVERY_GAME: [(&str, &str, &str); 9] = [
     ("Interface", "OnScreenDisplayMessages", "False"),
     ("Interface", "LanguageCode", "en"),
     ("Interface", "SkipNKitWarning", "True"),
+    ("Interface", "UsePanicHandlers", "False"),
 ];
 
 /// Dolphin.ini, with what a game needs set: `EVERY_GAME`, and the Skylanders
@@ -159,6 +170,17 @@ mod tests {
         prepare(&dir, false, Path::new("C:\\Figures")).unwrap();
         let text = std::fs::read_to_string(dir.join("Dolphin.ini")).unwrap();
         assert_eq!(ini::get(&text, "EmulatedUSBDevices", "EmulateSkylanderPortal").as_deref(), Some("False"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn dolphins_warnings_dont_hold_up_a_game() {
+        let dir = std::env::temp_dir().join(format!("omoio-dolphin-warnings-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("Dolphin.ini"), "[Interface]\r\nUsePanicHandlers = True\r\n").unwrap();
+        prepare(&dir, true, Path::new("C:\\Figures")).unwrap();
+        let text = std::fs::read_to_string(dir.join("Dolphin.ini")).unwrap();
+        assert_eq!(ini::get(&text, "Interface", "UsePanicHandlers").as_deref(), Some("False"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
