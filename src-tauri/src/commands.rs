@@ -1638,7 +1638,8 @@ pub async fn portal_load(app: AppHandle, slot: usize, figure: String) -> Result<
 /// those the running game reads, for the portal menu: a figure from a later
 /// game does nothing in an earlier one, and Nintendo's SuperChargers figures
 /// do nothing away from the Wii U. A file the user brought is kept, since
-/// Omoio can't tell which character it is.
+/// Omoio can't tell which character it is, except a Creation Crystal, which
+/// it tells by the plain id in its first blocks.
 #[tauri::command]
 pub fn figures(app: AppHandle, playable: Option<bool>) -> Vec<crate::portal_menu::Figure> {
     use crate::core::figures::{game_from_title, reads};
@@ -1668,6 +1669,12 @@ pub fn add_figures(app: AppHandle, paths: Vec<String>) -> Result<usize, String> 
     crate::portal_menu::add(&app, &paths)
 }
 
+/// Moves one of the user's saved figures to the Recycle Bin.
+#[tauri::command]
+pub fn delete_figure(app: AppHandle, path: String) -> Result<(), String> {
+    crate::portal_menu::delete(&app, &path)
+}
+
 #[tauri::command]
 pub fn close_portal_menu(app: AppHandle) {
     crate::portal_menu::close(&app);
@@ -1685,6 +1692,22 @@ pub fn portal_menu_family() -> String {
 pub fn portal_game(app: AppHandle) -> Option<crate::core::figures::Game> {
     let playing = app.state::<Session>().playing()?;
     crate::core::figures::game_from_title(&playing.title)
+}
+
+/// Whether the running game takes the figures its emulator makes, so the
+/// menu can say why before making one the game would turn away. Off the
+/// interface thread: the first ask after a download reads every pack.
+#[tauri::command]
+pub async fn portal_made_figures(app: AppHandle) -> crate::core::community::MadeFigures {
+    let Some(playing) = app.state::<Session>().playing() else {
+        return crate::core::community::MadeFigures::default();
+    };
+    let Some(backend) = crate::backends::for_console(playing.console) else {
+        return crate::core::community::MadeFigures::default();
+    };
+    tauri::async_runtime::spawn_blocking(move || backend.made_figures(&app, &playing.title))
+        .await
+        .unwrap_or_default()
 }
 
 /// Everything held on any pad, for a menu any player may use. Nothing while

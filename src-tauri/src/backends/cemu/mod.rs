@@ -970,6 +970,18 @@ impl super::EmulatorBackend for Cemu {
         portal::ready(pid)
     }
 
+    /// Imaginators turns away the Senseis and Creation Crystals Cemu makes
+    /// unless the Signature Patch pack is on. The figures of every other game
+    /// carry no signature.
+    fn made_figures(&self, app: &AppHandle, title: &str) -> crate::core::community::MadeFigures {
+        use crate::core::figures::{game_from_title, Game};
+        if game_from_title(title) == Some(Game::Imaginators) {
+            packs::signature_patch(app)
+        } else {
+            crate::core::community::MadeFigures::default()
+        }
+    }
+
     fn button_names(&self) -> &'static [(&'static str, &'static str)] {
         &controllers::WII_U
     }

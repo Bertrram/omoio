@@ -4,6 +4,7 @@ pub mod console;
 pub mod figure_data;
 pub mod figures;
 pub mod game_settings;
+pub mod imaginators;
 pub mod import_warning;
 pub mod library;
 pub mod pad_layout;

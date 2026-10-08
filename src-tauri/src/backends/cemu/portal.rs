@@ -668,11 +668,12 @@ fn read(window: HWND) -> Result<Vec<String>, String> {
 /// A slot's name as the menu lists the character, through the same
 /// `figures::named`, so the two match. Cemu calls a figure its list doesn't
 /// have "Unknown (212 12302)" (`FindSkylander`, v2.6), which is how each
-/// figure made with the game's own variant in place of Cemu's wrong one shows.
+/// figure made with the game's own variant in place of Cemu's wrong one
+/// shows, and each Sensei and Creation Crystal Omoio had made.
 fn shown(name: &str) -> String {
     unknown(name)
-        .and_then(|(id, variant)| figures::fixed_name(id, variant))
-        .map_or_else(|| figures::named(name), str::to_string)
+        .and_then(|(id, variant)| figures::unlisted_name(id, variant))
+        .unwrap_or_else(|| figures::named(name))
 }
 
 fn unknown(name: &str) -> Option<(u16, u16)> {
@@ -937,6 +938,10 @@ mod tests {
         // Tempest Timer made with Trap Team's own variant, 0x300E.
         assert_eq!(shown("Unknown (212 12302)"), "Tempest Timer");
         assert_eq!(shown("Unknown (219 12309)"), "Shining Ship");
+        // King Pen made with a real Sensei's variant, 0x5000, and a crystal.
+        assert_eq!(shown("Unknown (601 20480)"), "King Pen");
+        assert_eq!(shown("Unknown (680 21000)"), "Magic Lantern Crystal");
+        assert_eq!(shown("King Pen"), "King Pen");
         // A figure Cemu doesn't know stays as Cemu put it.
         assert_eq!(shown("Unknown (999 0)"), "Unknown (999 0)");
         assert_eq!(unknown("Unknown Spyro"), None);

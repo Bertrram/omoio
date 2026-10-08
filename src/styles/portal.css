@@ -325,6 +325,16 @@ body {
   color: var(--kind-supercharged);
 }
 
+.portal-class-corner.sensei,
+.portal-class.sensei {
+  color: var(--ink);
+}
+
+.portal-class-corner.villain_sensei,
+.portal-class.villain_sensei {
+  color: var(--kind-villain-sensei);
+}
+
 .portal-name {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1475,6 +1485,477 @@ body {
   .portal-card-action:active {
     transform: scale(0.97);
   }
+}
+
+/* ---- Imaginators: Creation Crystals and Senseis ---- */
+
+.portal-tab-mark.crystal {
+  color: var(--kind-crystal);
+}
+
+.portal-tab-mark.sensei {
+  color: var(--ink);
+}
+
+/* The game's own badge for a tab, as it draws it. */
+.portal-tab-badge {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+}
+
+/* A battle class with its symbol, in the text's colour: classes have no
+   colour of their own in the game. */
+.portal-battle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 12px;
+  color: var(--ink);
+}
+
+.portal-drives .portal-battle {
+  margin-left: 0;
+  color: var(--mute);
+}
+
+.portal-battle-shape {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+}
+
+.portal-battle-shape svg {
+  width: 100%;
+  height: 100%;
+}
+
+.tint-ink {
+  --tint: var(--ink);
+}
+
+/* The crystals: the user's own on a shelf, then a row of blank ones to each
+   element. The list scrolls beside the card. */
+.portal-shelf-main {
+  gap: 10px;
+  padding-right: 6px;
+}
+
+.portal-shelf-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 4px 4px 2px;
+}
+
+.portal-shelf-head + .portal-shelf-head,
+.portal-shelf + .portal-shelf-head {
+  margin-top: 14px;
+}
+
+.portal-shelf-head b {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.portal-shelf-head span {
+  color: var(--mute);
+  font-size: 15px;
+}
+
+.portal-shelf {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 22px 18px;
+  padding: 8px 6px 4px;
+}
+
+.portal-forge {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.portal-forge-row {
+  display: grid;
+  grid-template-columns: 112px repeat(5, minmax(0, 1fr));
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  border-radius: var(--r);
+  background: linear-gradient(to right, color-mix(in srgb, var(--tint) 12%, transparent), transparent 40%);
+}
+
+.portal-forge-element {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--tint);
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.portal-forge-element svg,
+.portal-forge-element .portal-symbol {
+  width: 20px;
+  height: 20px;
+}
+
+.portal-blank {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 5px;
+  background: none;
+  border: 0;
+  border-radius: var(--r);
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  scroll-margin: 12px;
+}
+
+.portal-blank-art {
+  position: relative;
+  display: grid;
+  place-items: center;
+  aspect-ratio: 4 / 3;
+  border-radius: 6px;
+  background:
+    radial-gradient(circle at 50% 45%, color-mix(in srgb, var(--tint) 30%, transparent), transparent 70%),
+    var(--raise);
+  color: var(--tint);
+}
+
+.portal-blank-art > img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.portal-blank-art > svg {
+  width: 52%;
+  height: 52%;
+}
+
+.portal-blank .portal-car-name {
+  font-size: 15px;
+}
+
+.portal-blank.sel {
+  background: var(--raise2);
+  box-shadow: 0 0 0 2px var(--ink);
+}
+
+/* A crystal's casing, beside its element on the card. */
+.portal-casing {
+  margin-left: 12px;
+  padding: 1px 8px;
+  border: 1px solid var(--line2);
+  border-radius: 99px;
+  color: var(--ink);
+  font-size: 14px;
+}
+
+.portal-card-note {
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.4;
+}
+
+/* Why the game would turn a Sensei or crystal made now away, and what to
+   do: in the warning colour, since nothing made then would work. */
+.portal-patch {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: var(--r);
+  background: color-mix(in srgb, var(--warn) 10%, var(--raise));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warn) 45%, transparent);
+}
+
+.portal-patch > svg {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  color: var(--warn);
+}
+
+.portal-patch-words {
+  display: grid;
+  gap: 3px;
+}
+
+.portal-patch-words b {
+  color: var(--warn);
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.portal-patch-words span {
+  color: var(--ink);
+  font-size: 15px;
+  line-height: 1.4;
+}
+
+/* The Senseis: eleven classes in two rows of six, each a column of its
+   Senseis, wide enough for a name in two lines; the last place shows who is
+   on the portal. */
+.portal-dojo-classes {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  align-content: start;
+  gap: 10px 8px;
+}
+
+.portal-dojo-class,
+.portal-dojo-status {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: 0 4px 6px;
+  border-radius: var(--r);
+  background: linear-gradient(to bottom, var(--raise), var(--panel) 70%);
+}
+
+.portal-dojo-class.tint-kaos {
+  background: linear-gradient(to bottom, color-mix(in srgb, var(--tint) 16%, var(--raise)), var(--panel) 70%);
+}
+
+.portal-dojo-class-head {
+  display: flex;
+  justify-content: center;
+  padding: 9px 0 5px;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.portal-dojo-class-head .portal-battle {
+  gap: 7px;
+  margin: 0;
+}
+
+.portal-dojo-class-head .portal-battle-shape {
+  width: 30px;
+  height: 30px;
+}
+
+.portal-sensei {
+  position: relative;
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 5px 4px;
+  background: none;
+  border: 0;
+  border-radius: var(--r);
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  scroll-margin: 12px;
+}
+
+.portal-sensei .portal-car-name {
+  font-size: 15px;
+}
+
+.portal-sensei.on .portal-car-art::after {
+  box-shadow: inset 0 0 0 3px var(--go);
+}
+
+.portal-sensei.sel {
+  background: var(--raise2);
+  box-shadow: 0 0 0 2px var(--ink);
+}
+
+/* A villain's horns and a saved figure's mark sit on the picture's top
+   corners. */
+.portal-sensei-villain,
+.portal-sensei-saved {
+  position: absolute;
+  top: -5px;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--panel);
+}
+
+.portal-sensei-villain {
+  right: -6px;
+  color: var(--kind-villain-sensei);
+}
+
+.portal-sensei-saved {
+  left: -6px;
+  color: var(--mute);
+}
+
+.portal-sensei-villain svg,
+.portal-sensei-saved svg {
+  width: 14px;
+  height: 14px;
+}
+
+.portal-sensei-element {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--tint);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.portal-sensei-element svg,
+.portal-sensei-element .portal-symbol {
+  width: 14px;
+  height: 14px;
+}
+
+.portal-dojo-status {
+  justify-content: flex-start;
+  gap: 6px;
+  padding: 0 10px 10px;
+}
+
+.portal-dojo-status .portal-label {
+  margin: 12px 0 2px;
+}
+
+.portal-dojo-status b {
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.portal-dojo-status > span {
+  color: var(--mute);
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.portal-dojo-main {
+  gap: 10px;
+}
+
+.portal-dojo-on {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+/* What a Sensei does, a line to each thing. */
+.portal-does {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding-left: 18px;
+  font-size: 15px;
+  line-height: 1.35;
+}
+
+.portal-does li::marker {
+  color: var(--tint);
+}
+
+.portal-blank:focus-visible,
+.portal-sensei:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .portal-blank:hover:not(.sel),
+  .portal-sensei:hover:not(.sel) {
+    background: color-mix(in srgb, var(--raise2) 60%, transparent);
+  }
+}
+
+/* Pressing a row gives way under the pointer. Moving through the rows never
+   animates, as in the garage. */
+@media (prefers-reduced-motion: no-preference) {
+  .portal-blank,
+  .portal-sensei {
+    transition: transform 160ms var(--ease-out);
+  }
+
+  .portal-blank:active,
+  .portal-sensei:active {
+    transform: scale(0.97);
+  }
+}
+
+/* A saved figure held to be deleted: a bar fills its picture over the five
+   seconds, slowly while held and running back fast when let go. */
+.portal-hold {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border-radius: inherit;
+  background: color-mix(in srgb, var(--void) 50%, transparent);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 200ms var(--ease-out);
+}
+
+.portal-hold.held {
+  opacity: 1;
+}
+
+.portal-hold i {
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--bad) 55%, transparent);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 200ms var(--ease-out);
+}
+
+.portal-hold.held i {
+  transition: transform 60ms linear;
+}
+
+.portal-hold b {
+  position: relative;
+  padding: 5px 12px;
+  border-radius: 99px;
+  background: var(--glass);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .portal-hold i,
+  .portal-hold.held i {
+    transition: none;
+  }
+}
+
+/* Scrollbars thin and in the panel's own colours rather than Windows'
+   white, in every game's menu. */
+.portal-body,
+.portal-tray-main,
+.portal-villain-card,
+.portal-garage-column {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line2) transparent;
 }
 
 /* ---- buttons ---- */

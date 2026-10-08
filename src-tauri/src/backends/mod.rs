@@ -7,7 +7,7 @@
 pub mod cemu;
 pub mod rpcs3;
 
-use crate::core::community::{PackChange, Packs};
+use crate::core::community::{MadeFigures, PackChange, Packs};
 use crate::core::console::{Console, Features};
 use crate::core::game_settings::{Chosen, GameSettings};
 use crate::core::import_warning::Imported;
@@ -104,6 +104,13 @@ pub trait EmulatorBackend: Sync {
     /// Gets the emulator's own portal window open as the portal menu opens,
     /// before the game is hushed. An emulator that needs nothing leaves this.
     fn ready_portal(&self, _pid: u32) {}
+
+    /// Whether the game titled `title` takes the figures this emulator's
+    /// figure maker makes for it, and the pack that lets it when it checks
+    /// them. An emulator whose games take them as they are leaves this.
+    fn made_figures(&self, _app: &AppHandle, _title: &str) -> MadeFigures {
+        MadeFigures::default()
+    }
 
     /// A copy of the game whose files Omoio can read, for the figures'
     /// pictures: decrypted, as an archive or an unpacked folder. `title_of`

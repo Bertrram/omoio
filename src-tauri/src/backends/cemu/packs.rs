@@ -17,8 +17,13 @@
 //! in its own file as well and writes them in again before every game,
 //! since Cemu writes its settings back and would undo a change made while
 //! it ran.
+//!
+//! Omoio switches on by itself only the packs on its own short list
+//! (`OWN_PACKS`), each tied to a named game with its reason written down.
+//! Every other pack waits for the user, and one of Omoio's own that the user
+//! switches off in Omoio stays off.
 
-use crate::core::community::{Pack, PackChange, PackChoice, Packs};
+use crate::core::community::{Check, MadeFigures, Pack, PackChange, PackChoice, Packs};
 use crate::core::types::Progress;
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
@@ -665,6 +670,43 @@ fn about(description: &str) -> (String, String) {
     (what, who)
 }
 
+// ---- Omoio's own ----
+
+/// A pack Omoio switches on by itself, found by the `path` its rules.txt
+/// gives: the name its makers give it and the place Cemu's own list shows
+/// it. Its folder, which settings.xml names it by, is only where the
+/// download keeps it today, and a reshuffle of the repository's folders
+/// would lose a match on that while the pack stayed the same.
+struct OwnPack {
+    path: &'static str,
+    /// Shown while it is on, so nobody has to wonder why.
+    reason: &'static str,
+    /// Shown once the user has switched it off: what that costs.
+    when_off: &'static str,
+}
+
+/// Skylanders Imaginators checks a factory signature on the figures
+/// released for it, Senseis and Creation Crystals, and won't take one
+/// without. A figure Cemu's figure maker makes carries none, and a UID of
+/// its own, so the portal menu's Senseis and crystals need this pack, by
+/// Winner Nombre with MusicDisc, MoltenLavaCore and NefariousTechSupport. It
+/// removes the check in game versions 1.0.0 and 1.1.0 and the demo, and its
+/// makers leave it off (rules.txt and patch_sigpatch.asm in the graphic
+/// packs' v987, read 7 October 2026). Figures from the older games carry no
+/// such signature, so no other game needs it.
+const SIGNATURE_PATCH: &str = "Skylanders Imaginators/Mods/Signature Patch";
+
+const OWN_PACKS: &[OwnPack] = &[OwnPack {
+    path: SIGNATURE_PATCH,
+    reason: "On so Imaginators takes the Senseis and Creation Crystals the portal menu makes. The game checks a factory signature those figures can't carry.",
+    when_off: "Off, so Imaginators won't take the Senseis and Creation Crystals the portal menu makes.",
+}];
+
+/// Omoio's own entry for a pack, `None` for one that waits for the user.
+fn own(rules: &Rules) -> Option<&'static OwnPack> {
+    OWN_PACKS.iter().find(|own| rules.path.eq_ignore_ascii_case(own.path))
+}
+
 // ---- which are on ----
 
 /// A pack as the user left it in Omoio.
@@ -811,28 +853,104 @@ fn with_entry(text: &str, key: &str, default_on: bool, kept: &Kept) -> String {
     }
 }
 
-/// Writes every pack the user changed in Omoio into Cemu's settings.xml.
-/// Called before each game, and after a change.
+/// Whether Cemu has a pack on: as its entry says, or as its makers set it
+/// when it has none.
+fn cemu_has_on(rules: &Rules, entry: Option<&Entry>) -> bool {
+    entry.map_or(rules.default_on, |entry| !entry.disabled)
+}
+
+/// How Omoio has a pack written into settings.xml: as the user left it in
+/// Omoio, or, for one of Omoio's own the user hasn't touched there, on with
+/// its default choices. `None` leaves the pack to Cemu, as it does one of
+/// Omoio's own that Cemu already has on, so that entry isn't rewritten
+/// before every game.
+fn wanted(rules: &Rules, kept: Option<&Kept>, entry: Option<&Entry>) -> Option<Kept> {
+    if let Some(kept) = kept {
+        return Some(kept.clone());
+    }
+    if own(rules).is_none() || cemu_has_on(rules, entry) {
+        return None;
+    }
+    Some(Kept {
+        on: true,
+        choices: settle(rules, &BTreeMap::new()).0,
+    })
+}
+
+/// The user's choice for a pack, kept under its settings.xml name; for one
+/// of Omoio's own also under its path, so switching it off outlasts its
+/// folder moving in a later download.
+fn kept_for<'a>(kept: &'a BTreeMap<String, Kept>, key: &str, rules: &Rules) -> Option<&'a Kept> {
+    kept.get(key).or_else(|| own(rules).and_then(|own| kept.get(own.path)))
+}
+
+/// settings.xml with every pack Omoio has a say in written in. A kept pack
+/// no longer in the download is left alone, as is everything else in the
+/// file.
+fn settings_with(text: &str, packs: &[(String, Rules)], kept: &BTreeMap<String, Kept>) -> String {
+    let before = entries(text);
+    let mut text = text.to_string();
+    for (key, rules) in packs {
+        let entry = before.iter().find(|entry| same_file(&entry.filename, key));
+        if let Some(wanted) = wanted(rules, kept_for(kept, key, rules), entry) {
+            text = with_entry(&text, key, rules.default_on, &wanted);
+        }
+    }
+    text
+}
+
+/// settings.xml as the latest game started with it. Cemu reads its packs
+/// only as a game starts, so a pack switched on or downloaded while the game
+/// runs is in the file for the next start but not in this one.
+static STARTED_WITH: Mutex<Option<String>> = Mutex::new(None);
+
+/// Writes the packs Omoio has a say in into Cemu's settings.xml as a game
+/// is about to start, and keeps what that game starts with. Called only
+/// then; a change made in Omoio is written by `set`.
 pub fn apply(app: &AppHandle) {
-    let (Ok(data), Ok(packs)) = (data_dir(app), folder(app)) else {
-        return;
-    };
-    let settings = data.join("settings.xml");
-    let Ok(before) = std::fs::read_to_string(&settings) else {
-        return;
-    };
-    let mut text = before.clone();
-    for (key, kept) in load_kept(app) {
-        let inside: PathBuf = key.split('\\').skip(DOWNLOADED.len()).collect();
-        // A pack that is no longer in the download is left alone.
-        let Some(rules) = std::fs::read_to_string(packs.join(inside)).ok().and_then(|text| parse_rules(&text)) else {
-            continue;
-        };
-        text = with_entry(&text, &key, rules.default_on, &kept);
+    let started_with = write(app);
+    *STARTED_WITH.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = started_with;
+}
+
+/// Writes the packs the user changed in Omoio and Omoio's own into Cemu's
+/// settings.xml. Returns the file as it now is, `None` when there is none.
+fn write(app: &AppHandle) -> Option<String> {
+    let settings = data_dir(app).ok()?.join("settings.xml");
+    let before = std::fs::read_to_string(&settings).ok()?;
+    let text = settings_with(&before, &all_packs(app), &load_kept(app));
+    if text == before {
+        return Some(before);
     }
-    if text != before {
-        let _ = std::fs::write(&settings, text);
+    match std::fs::write(&settings, &text) {
+        Ok(()) => Some(text),
+        Err(_) => Some(before),
     }
+}
+
+/// Whether a pack is on, with the choices made in it, and whether anyone
+/// changed it: in Omoio, as kept there, or else in Cemu, as its entry says.
+/// One of Omoio's own the user hasn't touched in Omoio is on, since it is
+/// written on before the next game.
+fn state(rules: &Rules, kept: Option<&Kept>, entry: Option<&Entry>) -> (bool, BTreeMap<String, String>, bool) {
+    if let Some(kept) = kept {
+        return (kept.on, kept.choices.clone(), true);
+    }
+    if let Some(wanted) = wanted(rules, None, entry) {
+        return (wanted.on, wanted.choices, false);
+    }
+    match entry {
+        Some(entry) => (!entry.disabled, entry.choices.clone(), true),
+        None => (rules.default_on, BTreeMap::new(), false),
+    }
+}
+
+/// Why a pack is on without being asked. One of Omoio's own says why while
+/// it is on, and what that costs once the user has switched it off.
+fn on_because(rules: &Rules, on: bool, changed: bool) -> Option<String> {
+    if let Some(own) = own(rules) {
+        return Some(if on { own.reason } else { own.when_off }.to_string());
+    }
+    (on && rules.default_on && !changed).then(|| "On unless you turn it off, as its makers advise for this game.".to_string())
 }
 
 /// The packs for a game whose Cemu title id is `title`, `None` when it is
@@ -859,13 +977,8 @@ pub fn view(app: &AppHandle, title: Option<&str>) -> Packs {
         .map(|text| entries(&text))
         .unwrap_or_default();
     for (key, rules) in packs_for(app, title) {
-        let (on, asked, changed) = match kept.get(&key) {
-            Some(kept) => (kept.on, kept.choices.clone(), true),
-            None => match in_settings.iter().find(|entry| same_file(&entry.filename, &key)) {
-                Some(entry) => (!entry.disabled, entry.choices.clone(), true),
-                None => (rules.default_on, BTreeMap::new(), false),
-            },
-        };
+        let entry = in_settings.iter().find(|entry| same_file(&entry.filename, &key));
+        let (on, asked, changed) = state(&rules, kept_for(&kept, &key, &rules), entry);
         let (chosen, visible) = settle(&rules, &asked);
         let (what, who) = about(&rules.description);
         answer.packs.push(Pack {
@@ -877,8 +990,7 @@ pub fn view(app: &AppHandle, title: Option<&str>) -> Packs {
             on,
             applies: true,
             needs: None,
-            on_because: (on && rules.default_on && !changed)
-                .then(|| "On unless you turn it off, as its makers advise for this game.".to_string()),
+            on_because: on_because(&rules, on, changed),
             choices: choices(&rules, &chosen, &visible),
         });
     }
@@ -899,16 +1011,57 @@ pub fn set(app: &AppHandle, title: Option<&str>, change: &PackChange) -> Result<
     // Omoio shows rather than working out its own.
     let (choices, _) = settle(&rules, &change.choices);
     let mut kept = load_kept(app);
-    kept.insert(
-        key,
-        Kept {
-            on: change.on,
-            choices: if change.on { choices } else { BTreeMap::new() },
-        },
-    );
+    let chosen = Kept {
+        on: change.on,
+        choices: if change.on { choices } else { BTreeMap::new() },
+    };
+    if let Some(own) = own(&rules) {
+        kept.insert(own.path.to_string(), chosen.clone());
+    }
+    kept.insert(key, chosen);
     save_kept(app, &kept)?;
-    apply(app);
+    write(app);
     Ok(())
+}
+
+/// Whether Skylanders Imaginators takes the figures Cemu's figure maker
+/// makes, which needs the Signature Patch on in the game that runs.
+pub fn signature_patch(app: &AppHandle) -> MadeFigures {
+    let started_with = STARTED_WITH
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
+        // Omoio started after the game did, so the file is the best guide.
+        .or_else(|| data_dir(app).ok().and_then(|data| std::fs::read_to_string(data.join("settings.xml")).ok()))
+        .unwrap_or_default();
+    made_figures(&all_packs(app), &load_kept(app), &started_with)
+}
+
+/// What `signature_patch` answers, from every pack in the download (none
+/// before there is one), the packs as the user left them in Omoio, and the
+/// settings.xml the game started with.
+fn made_figures(packs: &[(String, Rules)], kept: &BTreeMap<String, Kept>, started_with: &str) -> MadeFigures {
+    let found = packs.iter().find(|(_, rules)| rules.path.eq_ignore_ascii_case(SIGNATURE_PATCH));
+    let check = match found {
+        None if packs.is_empty() => Check::NotDownloaded,
+        None => Check::Missing,
+        Some((key, rules)) if kept_for(kept, key, rules).is_some_and(|kept| !kept.on) => Check::Off,
+        Some((key, rules)) => {
+            let entry = entries(started_with).into_iter().find(|entry| same_file(&entry.filename, key));
+            if cemu_has_on(rules, entry.as_ref()) {
+                Check::Passed
+            } else {
+                Check::NextStart
+            }
+        }
+    };
+    // Without the download, the last part of its path, which is also the
+    // name its rules.txt gives.
+    let pack = found.map_or_else(
+        || SIGNATURE_PATCH.rsplit('/').next().unwrap_or(SIGNATURE_PATCH).to_string(),
+        |(_, rules)| rules.name.clone(),
+    );
+    MadeFigures { check, pack }
 }
 
 #[cfg(test)]
@@ -1099,6 +1252,224 @@ condition = ((($aspectRatioWidth - 21) == 0) + (($aspectRatioHeight - 9) == 0)) 
             key_for(&packs.join("SkylandersSwapForce").join("Mods").join("FPS"), packs).unwrap(),
             r"graphicPacks\downloadedGraphicPacks\SkylandersSwapForce\Mods\FPS\rules.txt"
         );
+    }
+
+    /// The Signature Patch's rules.txt as the graphic packs' v987 has it,
+    /// read 7 October 2026.
+    const SIGNATURE: &str = "[Definition]\ntitleIds =  00050000101F4D00,00050000101FB100,0005000010205E00\nname = Signature Patch\npath = \"Skylanders Imaginators/Mods/Signature Patch\"\ndescription = This patch removes the check for a factory's signature on dumps of characters released for Skylanders Imaginators, allowing for unique UIDs and unreleased characters to be generated.||Made by Winner Nombre with help from MusicDisc, MoltenLavaCore, and NefariousTechSupport.\nversion = 7";
+
+    const SIGNATURE_KEY: &str = r"graphicPacks\downloadedGraphicPacks\SkylandersImaginators\Mods\SignaturePatch\rules.txt";
+    const A: &str = r"graphicPacks\downloadedGraphicPacks\A\rules.txt";
+    const B: &str = r"graphicPacks\downloadedGraphicPacks\B\rules.txt";
+
+    /// The two packs SETTINGS names, A the FPS pack and B one its makers
+    /// have on, beside the Signature Patch.
+    fn three_packs() -> Vec<(String, Rules)> {
+        let mut on_by_default = parse_rules(FPS).unwrap();
+        on_by_default.default_on = true;
+        vec![
+            (A.to_string(), parse_rules(FPS).unwrap()),
+            (B.to_string(), on_by_default),
+            (SIGNATURE_KEY.to_string(), parse_rules(SIGNATURE).unwrap()),
+        ]
+    }
+
+    fn has_on(text: &str, key: &str) -> bool {
+        entries(text).iter().any(|entry| same_file(&entry.filename, key) && !entry.disabled)
+    }
+
+    #[test]
+    fn the_signature_patch_is_omoios_own_and_the_rest_are_not() {
+        let signature = parse_rules(SIGNATURE).unwrap();
+        assert!(own(&signature).is_some());
+        assert!(!signature.default_on, "its makers leave it off");
+        assert_eq!(kind(&signature.path), "Mods");
+        assert!(own(&parse_rules(FPS).unwrap()).is_none());
+        // Its path is matched whatever its case.
+        let lower = SIGNATURE.replace("Skylanders Imaginators/Mods", "skylanders imaginators/mods");
+        assert!(own(&parse_rules(&lower).unwrap()).is_some());
+    }
+
+    #[test]
+    fn omoios_own_pack_is_written_on_and_the_others_are_left_as_they_were() {
+        let text = settings_with(SETTINGS, &three_packs(), &BTreeMap::new());
+        let found = entries(&text);
+        assert_eq!(found.len(), 3);
+        assert!(has_on(&text, SIGNATURE_KEY));
+        assert_eq!(found[0].choices["FPS Limit"], "60 FPS");
+        assert!(found[1].disabled);
+        assert!(text.starts_with("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<content>\n"));
+
+        // Written once: the next game finds nothing to change, nor in the
+        // shape Cemu writes the entry back in.
+        assert_eq!(settings_with(&text, &three_packs(), &BTreeMap::new()), text);
+        let cemu = SETTINGS.replace("</GraphicPack>", &format!("<Entry filename=\"{SIGNATURE_KEY}\"/>\n\t</GraphicPack>"));
+        assert_eq!(settings_with(&cemu, &three_packs(), &BTreeMap::new()), cemu);
+
+        // Off in Cemu alone, Omoio writes it on again.
+        let disabled = SETTINGS.replace("</GraphicPack>", &format!("<Entry filename=\"{SIGNATURE_KEY}\" disabled=\"true\"/>\n\t</GraphicPack>"));
+        assert!(has_on(&settings_with(&disabled, &three_packs(), &BTreeMap::new()), SIGNATURE_KEY));
+
+        // Added to a file with no packs on yet.
+        let empty = "<content>\n\t<GraphicPack/>\n</content>\n";
+        let text = settings_with(empty, &three_packs(), &BTreeMap::new());
+        assert_eq!(entries(&text).len(), 1);
+        assert!(has_on(&text, SIGNATURE_KEY));
+    }
+
+    #[test]
+    fn omoios_own_pack_switched_off_in_omoio_stays_off() {
+        let off = BTreeMap::from([(SIGNATURE_KEY.to_string(), Kept::default())]);
+        assert_eq!(settings_with(SETTINGS, &three_packs(), &off), SETTINGS, "never written");
+        let written = settings_with(SETTINGS, &three_packs(), &BTreeMap::new());
+        let text = settings_with(&written, &three_packs(), &off);
+        assert!(!entries(&text).iter().any(|entry| same_file(&entry.filename, SIGNATURE_KEY)));
+        assert_eq!(entries(&text).len(), 2);
+
+        // Switched on again, it is written as kept.
+        let on = BTreeMap::from([(SIGNATURE_KEY.to_string(), Kept { on: true, choices: BTreeMap::new() })]);
+        assert!(has_on(&settings_with(&text, &three_packs(), &on), SIGNATURE_KEY));
+
+        // Off is kept under the pack's path too, so it stays off when a later
+        // download moves its folder.
+        let moved = r"graphicPacks\downloadedGraphicPacks\Imaginators\SignaturePatch\rules.txt";
+        let packs = vec![(moved.to_string(), parse_rules(SIGNATURE).unwrap())];
+        let off_by_path = BTreeMap::from([(SIGNATURE_PATCH.to_string(), Kept::default())]);
+        assert_eq!(settings_with(SETTINGS, &packs, &off_by_path), SETTINGS, "never written");
+        assert_eq!(made_figures(&packs, &off_by_path, SETTINGS).check, Check::Off);
+        assert!(has_on(&settings_with(SETTINGS, &packs, &BTreeMap::new()), moved));
+    }
+
+    #[test]
+    fn packs_the_user_changed_are_still_written_as_they_left_them() {
+        let thirty = BTreeMap::from([("FPS Limit".to_string(), "30 FPS (Default)".to_string())]);
+        let kept = BTreeMap::from([
+            (A.to_string(), Kept { on: true, choices: thirty }),
+            (B.to_string(), Kept { on: true, choices: BTreeMap::new() }),
+            (r"graphicPacks\downloadedGraphicPacks\Gone\rules.txt".to_string(), Kept { on: true, choices: BTreeMap::new() }),
+        ]);
+        let text = settings_with(SETTINGS, &three_packs(), &kept);
+        let found = entries(&text);
+        assert_eq!(found[0].choices["FPS Limit"], "30 FPS (Default)");
+        assert!(has_on(&text, B));
+        assert!(has_on(&text, SIGNATURE_KEY));
+        // A pack no longer in the download is left alone.
+        assert!(!found.iter().any(|entry| entry.filename.contains("Gone")));
+        assert_eq!(found.len(), 3);
+    }
+
+    #[test]
+    fn the_list_says_why_omoios_own_pack_is_on_and_what_off_costs() {
+        let signature = parse_rules(SIGNATURE).unwrap();
+        let (on, chosen, changed) = state(&signature, None, None);
+        assert!(on && chosen.is_empty() && !changed);
+        assert_eq!(on_because(&signature, on, changed).as_deref(), Some(OWN_PACKS[0].reason));
+
+        let (on, _, changed) = state(&signature, Some(&Kept::default()), None);
+        assert!(!on);
+        assert_eq!(on_because(&signature, on, changed).as_deref(), Some(OWN_PACKS[0].when_off));
+
+        // Off in Cemu alone, the list shows it on, as it will be next game.
+        let disabled = Entry {
+            start: 0,
+            end: 0,
+            filename: SIGNATURE_KEY.to_string(),
+            disabled: true,
+            choices: BTreeMap::new(),
+        };
+        assert!(state(&signature, None, Some(&disabled)).0);
+
+        // A pack that waits for the user says nothing, and one its makers
+        // have on says so until someone changes it.
+        let fps = parse_rules(FPS).unwrap();
+        assert_eq!(state(&fps, None, None), (false, BTreeMap::new(), false));
+        assert_eq!(on_because(&fps, false, false), None);
+        let mut advised = fps.clone();
+        advised.default_on = true;
+        assert!(on_because(&advised, true, false).is_some());
+        assert!(on_because(&advised, true, true).is_none());
+    }
+
+    #[test]
+    fn omoios_own_packs_say_why_in_plain_sentences() {
+        const BANNED: [&str; 9] = ["seamless", "effortless", "powerful", "robust", "elevate", "unlock", "simply", "just", "leverage"];
+        for own in OWN_PACKS {
+            for line in [own.reason, own.when_off] {
+                assert!(line.ends_with('.'), "{line}");
+                assert!(!line.contains('\u{2014}') && !line.contains('!'), "{line}");
+                let lower = line.to_lowercase();
+                let mut words = lower.split(|c: char| !c.is_alphabetic());
+                assert!(!words.any(|word| BANNED.contains(&word)), "{line}");
+            }
+        }
+    }
+
+    #[test]
+    fn imaginators_takes_made_figures_only_with_the_patch_in_the_game_that_runs() {
+        let none = BTreeMap::new();
+        let written = settings_with(SETTINGS, &three_packs(), &none);
+        let check = |packs: &[(String, Rules)], kept: &BTreeMap<String, Kept>, started_with: &str| {
+            made_figures(packs, kept, started_with).check
+        };
+
+        // Not downloaded, or not in the download.
+        assert_eq!(check(&[], &none, &written), Check::NotDownloaded);
+        assert_eq!(check(&three_packs()[..2], &none, &written), Check::Missing);
+        assert_eq!(made_figures(&[], &none, "").pack, "Signature Patch");
+
+        assert_eq!(check(&three_packs(), &none, &written), Check::Passed);
+        assert_eq!(made_figures(&three_packs(), &none, &written).pack, "Signature Patch");
+
+        // On, but the game started before it was written in, as when the
+        // packs were downloaded or it was switched on while the game ran.
+        assert_eq!(check(&three_packs(), &none, SETTINGS), Check::NextStart);
+        let on = BTreeMap::from([(SIGNATURE_KEY.to_string(), Kept { on: true, choices: BTreeMap::new() })]);
+        assert_eq!(check(&three_packs(), &on, SETTINGS), Check::NextStart);
+        assert_eq!(check(&three_packs(), &on, &written), Check::Passed);
+
+        // Switched off in Omoio, whatever the game started with.
+        let off = BTreeMap::from([(SIGNATURE_KEY.to_string(), Kept::default())]);
+        assert_eq!(check(&three_packs(), &off, &written), Check::Off);
+        assert_eq!(check(&three_packs(), &off, SETTINGS), Check::Off);
+    }
+
+    /// The Signature Patch in the download Omoio's Cemu has on this machine,
+    /// found by its path. Skipped where the packs aren't downloaded.
+    #[test]
+    fn the_downloaded_signature_patch_is_found_by_its_path() {
+        let Some(local) = std::env::var_os("LOCALAPPDATA") else {
+            return;
+        };
+        let packs = Path::new(&local).join("Omoio").join("cemu").join("portable").join(DOWNLOADED[0]).join(DOWNLOADED[1]);
+        if !packs.is_dir() {
+            return;
+        }
+        let mut found = Vec::new();
+        walk(&packs, &mut found);
+        let all: Vec<(String, Rules)> = found
+            .iter()
+            .filter_map(|dir| Some((key_for(dir, &packs)?, parse_rules(&std::fs::read_to_string(dir.join("rules.txt")).ok()?)?)))
+            .collect();
+        let ours: Vec<&(String, Rules)> = all.iter().filter(|(_, rules)| own(rules).is_some()).collect();
+        assert_eq!(ours.len(), 1, "one pack is Omoio's own");
+        let (key, rules) = ours[0];
+        assert_eq!(rules.name, "Signature Patch");
+        assert!(!rules.default_on);
+        assert!(rules.title_ids.iter().any(|id| id == "00050000101f4d00"));
+        println!("{key}");
+
+        let none = BTreeMap::new();
+        assert_eq!(
+            made_figures(&all, &none, ""),
+            MadeFigures {
+                check: Check::NextStart,
+                pack: "Signature Patch".to_string()
+            }
+        );
+        // Written into settings with no packs on, it is the only entry.
+        let text = settings_with("<content>\n\t<GraphicPack/>\n</content>\n", &all, &none);
+        assert_eq!(entries(&text).len(), 1);
+        assert_eq!(made_figures(&all, &none, &text).check, Check::Passed);
     }
 
     /// Reads every pack in a real download of the graphic packs, unpacked

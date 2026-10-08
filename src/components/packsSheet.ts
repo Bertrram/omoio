@@ -52,7 +52,11 @@ function packRow(pack: Pack, change: (on: boolean, choices: Record<string, strin
   const left = document.createElement("div");
   left.className = "pack-words";
   left.appendChild(line("setting-k", pack.name));
-  if (pack.on_because) left.appendChild(line("setting-hint", pack.on_because));
+  // One Omoio turns on by itself keeps its line once switched off, saying
+  // what that costs, so it stands out as a warning then.
+  if (pack.on_because) {
+    left.appendChild(line(pack.on || !pack.applies ? "setting-hint" : "setting-hint warn", pack.on_because));
+  }
   if (pack.about) left.appendChild(line("setting-hint", pack.about));
   if (pack.by) left.appendChild(line("setting-hint", pack.by));
   if (pack.needs) left.appendChild(line("setting-hint warn", pack.needs));

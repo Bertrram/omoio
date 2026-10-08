@@ -52,8 +52,9 @@
   --el-tech: #f0b43c;
   --el-light: #f5e9a6;
   --el-dark: #8f86c4;
-  /* Kaos has no element, but a trap and a column of the villain tray of
-     his own, in the purple Trap Team gives him. */
+  /* Kaos has no element in Trap Team, but a trap and a column of the
+     villain tray of his own, in the purple Trap Team gives him. Imaginators
+     makes him an element of his own, held by the Kaos Sensei alone. */
   --el-kaos: #a990ee;
   /* Omoio's own icons for the menu's tabs without an element, in the
      colours they were drawn in. */
@@ -74,6 +75,11 @@
   --kind-vehicle: #f08a5d;
   --kind-trophy: #f2cb5c;
   --kind-supercharged: #ffd84a;
+  /* Imaginators. A Creation Crystal's tab and gem in a light pink, apart
+     from Magic's and Kaos's purples; a villain Sensei's horns in a red
+     apart from Fire's orange. A Sensei's belt is plain, like a Mini's ring. */
+  --kind-crystal: #ff9ad5;
+  --kind-villain-sensei: #ff6b81;
 
   /* Each console's tag on a library tile, two colours far apart, so the same
      game owned on both consoles tells apart at a glance: silver for the PS3,

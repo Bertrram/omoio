@@ -768,15 +768,35 @@ export function padsConnected(): Promise<Pad[]> {
 }
 
 /// One of the user's figure files, kept in Omoio's figures folder.
-export type FigureElement = "air" | "earth" | "fire" | "water" | "life" | "undead" | "magic" | "tech" | "light" | "dark";
+/// Kaos is an element of his own in Imaginators, held by the Kaos Sensei only.
+export type FigureElement = "air" | "earth" | "fire" | "water" | "life" | "undead" | "magic" | "tech" | "light" | "dark" | "kaos";
 
-export type FigureKind = "character" | "item" | "trap" | "adventure" | "vehicle" | "trophy";
+export type FigureKind = "character" | "item" | "trap" | "adventure" | "vehicle" | "trophy" | "crystal";
 
 /// How a Swap Force swapper gets about, which its bottom half decides.
 export type Movement = "bounce" | "climb" | "dig" | "rocket" | "sneak" | "speed" | "spin" | "teleport";
 
 /// Where a SuperChargers vehicle goes, which is also what a trophy is for.
 export type Terrain = "land" | "sea" | "sky";
+
+/// An Imaginators Sensei's battle class, which it teaches the Imaginators of
+/// its class. Kaos is a class of his own.
+export type BattleClass =
+  | "knight"
+  | "bowslinger"
+  | "quickshot"
+  | "ninja"
+  | "brawler"
+  | "smasher"
+  | "sorcerer"
+  | "swashbuckler"
+  | "sentinel"
+  | "bazooker"
+  | "kaos";
+
+/// The design of an Imaginators Creation Crystal's casing, by the names
+/// collectors give them; Activision named none.
+export type Casing = "angel" | "pyramid" | "lantern" | "rune" | "reactor" | "acorn" | "armor" | "fanged" | "claw" | "rocket";
 
 export interface Figure {
   name: string;
@@ -795,6 +815,10 @@ export interface Figure {
   terrain: Terrain | null;
   /// A vehicle's own SuperCharger, or a SuperCharger's own vehicle, by id.
   partner: number | null;
+  /// An Imaginators Sensei's battle class.
+  battle_class: BattleClass | null;
+  /// A Creation Crystal's casing.
+  casing: Casing | null;
   /// The villain a Trap Team trap holds, read from the trap's own data.
   holds: Trapped | null;
 }
@@ -838,6 +862,11 @@ export function villains(): Promise<Villain[]> {
 /// Resolves to how many were added.
 export function addFigures(paths: string[]): Promise<number> {
   return invoke("add_figures", { paths });
+}
+
+/// Moves one of the user's saved figures to the Recycle Bin.
+export function deleteFigure(path: string): Promise<void> {
+  return invoke("delete_figure", { path });
 }
 
 /// The figures on the running game's portal, by slot, empty where none is.
@@ -889,11 +918,16 @@ export interface Offer extends Character {
   /// What a SuperChargers trophy unlocks: the villains to race as and the
   /// tracks it opens. Left out for any other figure.
   unlocks?: { villains: string[]; tracks: string[] };
+  /// An Imaginators Sensei's battle class.
+  battle_class: BattleClass | null;
+  /// A Creation Crystal's casing.
+  casing: Casing | null;
 }
 
 /// The kinds of Skylander the games' checklists mark apart: the Giants,
-/// Trap Team's Trap Masters, the Minis, and SuperChargers' own Skylanders.
-export type FigureClass = "giant" | "trap_master" | "mini" | "supercharger";
+/// Trap Team's Trap Masters, the Minis, SuperChargers' own Skylanders, and
+/// Imaginators' Senseis, the villains among them marked apart.
+export type FigureClass = "giant" | "trap_master" | "mini" | "supercharger" | "sensei" | "villain_sensei";
 
 export function figureCharacters(): Promise<Offer[]> {
   return invoke("figure_characters");
@@ -905,6 +939,18 @@ export type SkylandersGame = "spyro" | "giants" | "swapforce" | "trapteam" | "su
 /// laid out. `null` for one Omoio can't tell.
 export function portalGame(): Promise<SkylandersGame | null> {
   return invoke("portal_game");
+}
+
+/// Whether the running game takes the figures its emulator makes. Imaginators
+/// checks a factory signature on its own figures, which a made one can't
+/// carry, and a community pack, named in `pack`, takes that check away.
+export interface MadeFigures {
+  check: "none" | "passed" | "next_start" | "off" | "not_downloaded" | "missing";
+  pack: string;
+}
+
+export function portalMadeFigures(): Promise<MadeFigures> {
+  return invoke("portal_made_figures");
 }
 
 /// Makes a new figure of `character` and puts it on the portal in `slot`,

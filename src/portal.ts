@@ -2,10 +2,13 @@ import "./styles/tokens.css";
 import "./styles/portal.css";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import {
+  cancelCommunity,
   closePortalMenu,
+  deleteFigure,
   figureCharacters,
   figurePictures,
   figures as listFigures,
+  onCommunityProgress,
   onPortalMenu,
   padsHeld,
   portalClear,
@@ -13,12 +16,17 @@ import {
   portalFigures,
   portalLoad,
   portalGame,
+  portalMadeFigures,
   portalMenuFamily,
+  refreshCommunity,
   villains as listVillains,
+  type BattleClass,
+  type Casing,
   type Figure,
   type FigureClass,
   type FigureElement,
   type FigureKind,
+  type MadeFigures,
   type Movement,
   type Offer,
   type PadFamily,
@@ -36,11 +44,12 @@ import swapperIcon from "./icons/swappers.svg";
 /// game wants them: Saved, traps and the villains they hold, then one tab to
 /// each element, then swappers, items such as the treasure chest and the
 /// swords, and adventure packs. SuperChargers puts its garage of vehicles
-/// next to Saved instead, and the older pieces last. The d-pad or left stick
-/// moves, the bottom face button puts a figure on the portal, the left one
-/// takes it off, the right one closes, and in SuperChargers the top one puts
-/// a SuperCharger and its vehicle on together. Mouse and keyboard work as
-/// well.
+/// next to Saved instead, and the older pieces last. Imaginators puts its
+/// Creation Crystals and its Senseis there, the Senseis by battle class. The
+/// d-pad or left stick moves, the bottom face button puts a figure on the
+/// portal, the left one takes it off, the right one closes, and in
+/// SuperChargers the top one puts a SuperCharger and its vehicle on
+/// together. Mouse and keyboard work as well.
 ///
 /// A character is made by the emulator's own figure maker the first time it
 /// is chosen, and saved. After that the saved figure goes on, so it keeps
@@ -79,7 +88,9 @@ const ELEMENTS: [FigureElement, string][] = [
   ["dark", "Dark"],
 ];
 
-const ELEMENT_NAMES = new Map(ELEMENTS);
+/// Kaos is an element of his own in Imaginators, held by the Kaos Sensei
+/// alone, so he has no tab of it: he is under Senseis.
+const ELEMENT_NAMES = new Map<FigureElement, string>([...ELEMENTS, ["kaos", "Kaos"]]);
 
 const KINDS: [FigureKind, string][] = [
   ["item", "Items"],
@@ -96,6 +107,7 @@ const KIND_NAMES: Partial<Record<FigureKind, string>> = {
   adventure: "Adventure pack",
   vehicle: "Vehicle",
   trophy: "Trophy",
+  crystal: "Creation Crystal",
 };
 
 /// Omoio's own icons for the tabs without an element and for the figures of
@@ -153,14 +165,109 @@ const MARKS: Record<string, string> = {
   supercharged: `<path d="M13.6 2 4.8 13.4h6.1L9.6 22l9.6-12.2h-6.3z" fill="currentColor"/>`,
   trophy: `<path d="M7 3h10v5a5 5 0 0 1-10 0zM7 5H4a3 3 0 0 0 3.3 4M17 5h3a3 3 0 0 1-3.3 4M12 13v4M9 21h6" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`,
   figure: `<circle cx="12" cy="8" r="4" fill="currentColor"/><path d="M4 21a8 8 0 0 1 16 0z" fill="currentColor"/>`,
+  // Imaginators: Kaos's own element as a spiral, a Creation Crystal as a
+  // cut gem, and a Sensei as the knot of a belt.
+  kaos: `<path d="M10.5 12a1.5 1.5 0 0 1 3 0 3 3 0 0 1-6 0 4.5 4.5 0 0 1 9 0 6 6 0 0 1-12 0 7.5 7.5 0 0 1 15 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>`,
+  crystal: `<path d="M7 3h10l4.5 6L12 21.5 2.5 9z" fill="currentColor" opacity=".35"/><path d="M7 3h10l4.5 6L12 21.5 2.5 9zM2.5 9h19M9.2 3 7.8 9 12 21.5 16.2 9 14.8 3" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>`,
+  sensei: `<path d="M2.5 8.5h19v4.5h-19z" fill="currentColor"/><path d="m10 12-3.2 9M14 12l3.2 9" stroke="currentColor" stroke-width="2.8" stroke-linecap="round"/><rect x="8.8" y="6.8" width="6.4" height="8" rx="1.6" fill="currentColor"/>`,
 };
 
+/// Imaginators' battle classes in the game's order, which it numbers 1 to
+/// 11 on an Imaginator (NefariousTechSupport's Runes notes on the figure
+/// format, read 7 October 2026), each with Omoio's own drawing until the
+/// game's symbol is read: a sword, a bow, a sight, a ninja's mask, a glove,
+/// a hammer, a staff, crossed sabres, a shield, a launcher, and Kaos's
+/// spiral for the class only he has.
+const BATTLE_CLASSES: Record<BattleClass, { words: string; shape: string }> = {
+  knight: {
+    words: "Knight",
+    shape: `<path d="M12 1.8 14.2 4.5V15H9.8V4.5z" fill="currentColor"/><path d="M6.5 15.4h11M12 15.4v4.4" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/><circle cx="12" cy="21.2" r="1.7" fill="currentColor"/>`,
+  },
+  bowslinger: {
+    words: "Bowslinger",
+    shape: `<path d="M7 2.5c6.5 3.5 6.5 15.5 0 19" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/><path d="M7 2.5v19" stroke="currentColor" stroke-width="1.2"/><path d="M3.5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="m16 8.2 5.5 3.8-5.5 3.8z" fill="currentColor"/>`,
+  },
+  quickshot: {
+    words: "Quickshot",
+    shape: `<circle cx="12" cy="12" r="7" fill="none" stroke="currentColor" stroke-width="2.2"/><path d="M12 2v5.5M12 16.5V22M2 12h5.5M16.5 12H22" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><circle cx="12" cy="12" r="1.8" fill="currentColor"/>`,
+  },
+  ninja: {
+    words: "Ninja",
+    shape: `<path fill-rule="evenodd" d="M12 3a8 8 0 0 0-8 8v3a7 7 0 0 0 7 7h2a7 7 0 0 0 7-7v-3a8 8 0 0 0-8-8zM7.2 10.2h9.6a1.6 1.6 0 0 1 0 3.2H7.2a1.6 1.6 0 0 1 0-3.2z" fill="currentColor"/><path d="M19.6 8.6 22.5 6M20 11l3 .6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>`,
+  },
+  brawler: {
+    words: "Brawler",
+    shape: `<path fill-rule="evenodd" d="M8.5 2.5h6A6.5 6.5 0 0 1 21 9v3.5a5.5 5.5 0 0 1-5.5 5.5H9.5A5.5 5.5 0 0 1 4 12.5V7a4.5 4.5 0 0 1 4.5-4.5zM4 10.6h7.4a1 1 0 0 1 0 2H4z" fill="currentColor"/><rect x="7" y="19" width="10" height="3.2" rx="1" fill="currentColor"/><path d="M9.5 3v5.6M13.5 3v5.6" stroke="currentColor" stroke-width="1" opacity=".35"/>`,
+  },
+  smasher: {
+    words: "Smasher",
+    shape: `<rect x="3.5" y="3" width="15" height="7" rx="1.5" fill="currentColor"/><path d="M11 10v11.2" stroke="currentColor" stroke-width="2.8" stroke-linecap="round"/><path d="M18.5 4.5h2v4h-2" fill="currentColor"/>`,
+  },
+  sorcerer: {
+    words: "Sorcerer",
+    shape: `<path d="M5.5 21.5 14 9" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/><circle cx="16" cy="6.5" r="3.6" fill="currentColor"/><path d="M5 4.5 6 7l2.5 1L6 9 5 11.5 4 9 1.5 8 4 7z" fill="currentColor"/>`,
+  },
+  swashbuckler: {
+    words: "Swashbuckler",
+    shape: `<path d="M4 3c5.5 3 10 9 13.8 15.5M20 3C14.5 6 10 12 6.2 18.5" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round"/><path d="m15.2 19.6 4.6-2.4M8.8 19.6 4.2 17.2" stroke="currentColor" stroke-width="2.3" stroke-linecap="round"/>`,
+  },
+  sentinel: {
+    words: "Sentinel",
+    shape: `<path fill-rule="evenodd" d="M12 2.2 20.5 5.4v6.2c0 5.2-3.6 8.9-8.5 10.3-4.9-1.4-8.5-5.1-8.5-10.3V5.4zM12 7.4l4.2 1.6v2.9c0 2.5-1.7 4.4-4.2 5.3-2.5-.9-4.2-2.8-4.2-5.3V9z" fill="currentColor"/>`,
+  },
+  bazooker: {
+    words: "Bazooker",
+    shape: `<path d="M2.8 15.2 16.6 6.4l2.4 3.7-13.8 8.8z" fill="currentColor"/><path d="m8.4 16.4 1.8 4.6" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/><path d="M20.4 4.4 22 2.8M21.6 7.6h1.9M18.6 3.2V1.3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>`,
+  },
+  kaos: {
+    words: "Kaos",
+    shape: `<path d="M10.5 12a1.5 1.5 0 0 1 3 0 3 3 0 0 1-6 0 4.5 4.5 0 0 1 9 0 6 6 0 0 1-12 0 7.5 7.5 0 0 1 15 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>`,
+  },
+};
+
+const BATTLE_ORDER = Object.keys(BATTLE_CLASSES) as BattleClass[];
+
+/// The casings of the Creation Crystals, by the names collectors give them,
+/// since Activision named none (Texthead1's Skylander-IDs list, read 7
+/// October 2026).
+const CASINGS: Record<Casing, string> = {
+  angel: "Angel",
+  pyramid: "Pyramid",
+  lantern: "Lantern",
+  rune: "Rune",
+  reactor: "Reactor",
+  acorn: "Acorn",
+  armor: "Armor",
+  fanged: "Fanged",
+  claw: "Claw",
+  rocket: "Rocket",
+};
+
+/// How many saved crystals sit side by side in the Imaginators tab, next to
+/// the card of the one picked.
+const SHELF = 4;
+
+/// Tabs the game has a badge of its own for, once Omoio has read it:
+/// Imaginators' for a Sensei, and for an Imaginator, a crystal lantern.
+const TAB_BADGES: Partial<Record<keyof typeof MARKS, string>> = { sensei: "class-sensei", crystal: "class-imaginator" };
+
 /// The kinds the games' checklists mark apart, with their names, where they
-/// sort in an element, and Omoio's own mark where it has one: SuperChargers
-/// first, with a bolt, then Giants and Trap Masters, with a crown with a
-/// Traptanium crystal at its heart for a Trap Master, and Minis last, with a
-/// small figure in a ring.
+/// sort in an element, and Omoio's own mark where it has one: Imaginators'
+/// Senseis first, with a belt, and the villains among them with horns, then
+/// SuperChargers, with a bolt, then Giants and Trap Masters, with a crown
+/// with a Traptanium crystal at its heart for a Trap Master, and Minis last,
+/// with a small figure in a ring.
 const CLASSES: Record<FigureClass, { words: string; order: number; shape: string | null }> = {
+  sensei: {
+    words: "Sensei",
+    order: -2,
+    shape: MARKS.sensei,
+  },
+  villain_sensei: {
+    words: "Villain Sensei",
+    order: -2,
+    shape: `<path d="M5 3c-.6 4 .6 6.8 3.4 8.4M19 3c.6 4-.6 6.8-3.4 8.4" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/><path fill-rule="evenodd" d="M12 9a6.8 6.8 0 0 1 6.8 6.8c0 3.4-3 5.7-6.8 5.7s-6.8-2.3-6.8-5.7A6.8 6.8 0 0 1 12 9zM8.4 14.2l2.6 1.4-2.6 1zM15.6 14.2 13 15.6l2.6 1z" fill="currentColor"/>`,
+  },
   supercharger: {
     words: "SuperCharger",
     order: -1,
@@ -202,6 +309,9 @@ interface Entry {
   offer?: Offer;
   /// A Swap Force swapper: both halves of one character.
   swap?: { top: Offer; bottom: Offer };
+  /// A blank Creation Crystal: always made new, never a saved one, since a
+  /// crystal holds one Imaginator for good.
+  fresh?: true;
 }
 
 interface Tab {
@@ -216,6 +326,13 @@ interface Tab {
   /// SuperChargers' vehicles, laid out as a garage with a column to each
   /// terrain.
   garage?: true;
+  /// Imaginators' Creation Crystals: the user's own, then a row of blank
+  /// ones to each element.
+  crystals?: true;
+  /// Imaginators' Senseis, a column to each battle class.
+  senseis?: true;
+  /// The user's saved figures.
+  mine?: true;
 }
 
 /// The tray's columns, one to each element, as the villains fit the traps,
@@ -254,6 +371,13 @@ let chip = 0;
 let ready = false;
 /// The top half picked for a swapper, while waiting for its bottom.
 let pickedTop: { name: string; top: Offer } | null = null;
+/// Whether the running game takes the figures the emulator makes: in
+/// Imaginators, whether Cemu's Signature Patch is on. Asked each time the
+/// menu opens.
+let made: MadeFigures | null = null;
+/// Whether Cemu's packs are being downloaded from the menu, which East
+/// stops.
+let gettingPacks = false;
 /// The figures' pictures Omoio has read out of this game, by name, for each
 /// figure id the picture of its lowest variant, and the badges this game
 /// lacks that another of the user's games had.
@@ -267,11 +391,14 @@ let pictures: {
 /// A figure's picture, or its plain version's when its variant has none of
 /// its own, or failing that any version's: Trap Team names its pictures by
 /// the game's own variants, which Cemu's list doesn't give its Trap Masters.
-/// `null` when Omoio has no picture of it.
+/// `null` when Omoio has no picture of it. A Creation Crystal's variant is
+/// its casing, so another variant's picture would show the wrong one.
 function pictureOf(id: number | null | undefined, variant: number | null | undefined): string | null {
   if (id == null) return null;
   const four = (value: number) => value.toString(16).padStart(4, "0");
-  return fileOf(`${id}-${four(variant ?? 0)}`) ?? fileOf(`${id}-0000`) ?? fileOf(pictures?.firstOf.get(id) ?? "");
+  const own = fileOf(`${id}-${four(variant ?? 0)}`);
+  if (offers.some((offer) => offer.id === id && offer.kind === "crystal")) return own;
+  return own ?? fileOf(`${id}-0000`) ?? fileOf(pictures?.firstOf.get(id) ?? "");
 }
 
 /// For each figure id, the name of its picture with the lowest variant.
@@ -345,8 +472,14 @@ function savedFor(offer: Offer): Figure | undefined {
 /// is on whichever file brought it; a saved file goes by its name only in a
 /// slot whose file Omoio doesn't know.
 function slotOf(entry: Entry): number {
+  // A blank crystal is never on: one on the portal of the same casing is
+  // another crystal, holding its own Imaginator.
+  if (entry.fresh) return -1;
   const byFile = slotOfFile(entry.figure?.path);
   if (byFile >= 0) return byFile;
+  // A crystal goes by its file only: the crystals of one casing share a
+  // name, each holding an Imaginator of its own.
+  if (entry.kind === "crystal") return -1;
   const name = portalName(entry);
   return onPortal.findIndex((held, slot) => held === name && (Boolean(entry.offer) || !slotFiles[slot]));
 }
@@ -391,8 +524,10 @@ function driverOn(): boolean {
 }
 
 /// Each vehicle on the portal with its own SuperCharger on too, which the
-/// game calls SuperCharged, by slot.
+/// game calls SuperCharged, by slot. None in a game that makes nothing of
+/// the two together.
 function superCharged(): { driver: number; vehicle: number }[] {
+  if (!pairsUp()) return [];
   return vehiclesOn().flatMap((vehicle) => {
     const partner = characterIn(vehicle.slot)?.partner;
     const driver = partner == null ? -1 : slotWith(partner);
@@ -440,14 +575,41 @@ function rank(entry: Entry): number {
 
 /// What a tile stands for, to find it again once the lists are made anew.
 function keyOf(entry: Entry | undefined): string | null {
-  return entry?.offer ? `${entry.offer.id}-${entry.offer.variant}` : null;
+  if (entry?.fresh && entry.offer) return `new-${entry.offer.id}-${entry.offer.variant}`;
+  if (entry?.offer) return `${entry.offer.id}-${entry.offer.variant}`;
+  return entry?.figure ? `file-${entry.figure.path}` : null;
+}
+
+/// A Sensei's battle class.
+function battleOf(entry: Entry | undefined): BattleClass | null {
+  return entry?.offer?.battle_class ?? entry?.figure?.battle_class ?? null;
+}
+
+function casingOf(entry: Entry | undefined): Casing | null {
+  return entry?.offer?.casing ?? entry?.figure?.casing ?? null;
+}
+
+/// Whether a tile is one of Imaginators' own figures, a Sensei or a
+/// Creation Crystal, which the game checks for a factory signature.
+function signed(entry: Entry): boolean {
+  const kind = classOf(entry);
+  return (entry.offer?.kind ?? entry.figure?.kind) === "crystal" || kind === "sensei" || kind === "villain_sensei";
+}
+
+/// Whether putting a tile on makes a new Sensei or crystal the game would
+/// turn away now, since Cemu's Signature Patch isn't on in it.
+function turnedAway(entry: Entry | undefined): boolean {
+  const check = made?.check ?? "none";
+  return Boolean(entry && signed(entry) && !entry.figure && entry.offer) && check !== "none" && check !== "passed";
 }
 
 function buildTabs() {
   const kept = tabs[tab]?.label;
   // The garage puts saved vehicles first, so a vehicle made moves up its
-  // column, and the selection goes with it.
-  const picked = zone === "grid" && tabs[tab]?.garage ? keyOf(tabs[tab]?.entries[at]) : null;
+  // column, and a crystal made goes in front of the blank ones. The
+  // selection stays on what it was on.
+  const follows = tabs[tab]?.garage || tabs[tab]?.crystals || tabs[tab]?.senseis;
+  const picked = zone === "grid" && follows ? keyOf(tabs[tab]?.entries[at]) : null;
   const byName = (a: Entry, b: Entry) => rank(a) - rank(b) || a.name.localeCompare(b.name);
   const entry = (offer: Offer): Entry => ({
     name: offer.name,
@@ -459,6 +621,7 @@ function buildTabs() {
   const characters = offers.filter((offer) => offer.kind === "character" && !offer.half);
   const saved: Tab = {
     label: "Saved",
+    mine: true,
     entries: mine.map((figure) => ({ name: figure.name, element: figure.element, kind: figure.kind, figure })),
   };
   const traps = offers.filter((offer) => offer.kind === "trap").map(entry).sort(byName);
@@ -493,16 +656,57 @@ function buildTabs() {
     return at < 0 ? TERRAINS.length : at;
   };
   trophies.entries.sort((a, b) => races(a) - races(b));
+  // Imaginators' crystals: the user's own, the one used last first, then
+  // the blank ones, a row to each element.
+  const crystalTab: Tab = {
+    label: "Imaginators",
+    mark: "crystal",
+    crystals: true,
+    entries: [
+      ...mine
+        .filter((figure) => figure.kind === "crystal")
+        .map((figure) => ({ name: figure.name, element: figure.element, kind: figure.kind, figure })),
+      ...ELEMENTS.flatMap(([element]) =>
+        offers
+          .filter((offer) => offer.kind === "crystal" && offer.element === element)
+          .map((offer) => ({ name: offer.name, element, kind: offer.kind, offer, fresh: true as const }))
+      ),
+    ],
+  };
+  const byBattle = (a: Entry, b: Entry) => battleRank(a) - battleRank(b) || a.name.localeCompare(b.name);
+  const senseiTab: Tab = {
+    label: "Senseis",
+    mark: "sensei",
+    senseis: true,
+    entries: offers
+      .filter((offer) => offer.class === "sensei" || offer.class === "villain_sensei")
+      .map(entry)
+      .sort(byBattle),
+  };
   // The game decides the order. SuperChargers wants a vehicle at every Land,
   // Sea and Sky gate (Game Informer, "21 Things You Need To Know", read 7
   // October 2026), so its garage sits next to Saved, and the pieces from the
-  // games before, which do smaller things in it, come last. Everywhere else traps
-  // sit next to Saved, since they go on and off all through a Trap Team
-  // game, with the villains they hold right after.
-  const order: (Tab | null)[] =
-    game === "superchargers"
-      ? [garage(offers.filter((offer) => offer.kind === "vehicle").map(entry)), ...elementTabs, otherTab, swapperTab, trophies, trapTab, kindTab("item"), kindTab("adventure")]
-      : [trapTab, villainTab, ...elementTabs, otherTab, swapperTab, kindTab("item"), kindTab("adventure"), kindTab("vehicle"), kindTab("trophy")];
+  // games before, which do smaller things in it, come last. Imaginators is
+  // about the Imaginators made in its Creation Crystals and the Senseis who
+  // teach them, so those come next to Saved, and the older pieces last as
+  // well; it catches no villains. Everywhere else traps sit next to Saved,
+  // since they go on and off all through a Trap Team game, with the
+  // villains they hold right after.
+  const orders: Partial<Record<SkylandersGame, (Tab | null)[]>> = {
+    superchargers: [garage(offers.filter((offer) => offer.kind === "vehicle").map(entry)), ...elementTabs, otherTab, swapperTab, trophies, trapTab, kindTab("item"), kindTab("adventure")],
+    imaginators: [crystalTab, senseiTab, ...elementTabs, otherTab, swapperTab, trapTab, kindTab("item"), kindTab("adventure"), kindTab("vehicle"), trophies],
+  };
+  const order: (Tab | null)[] = (game && orders[game]) || [
+    trapTab,
+    villainTab,
+    ...elementTabs,
+    otherTab,
+    swapperTab,
+    kindTab("item"),
+    kindTab("adventure"),
+    kindTab("vehicle"),
+    kindTab("trophy"),
+  ];
   tabs = [saved, ...order.filter((each): each is Tab => Boolean(each && (each.tray || each.entries.length > 0)))];
   const again = tabs.findIndex((each) => each.label === kept);
   tab = again >= 0 ? again : Math.min(tab, tabs.length - 1);
@@ -539,6 +743,39 @@ function garageColumns(entries: Entry[]): { terrain: Terrain | null; label: stri
     label,
     entries: entries.filter((entry) => terrainOf(entry) === terrain),
   }));
+  return columns.filter((column) => column.entries.length > 0);
+}
+
+/// Where a Sensei's class comes in the game's order, one without a class
+/// last.
+function battleRank(entry: Entry): number {
+  const battle = battleOf(entry);
+  return battle ? BATTLE_ORDER.indexOf(battle) : BATTLE_ORDER.length;
+}
+
+/// The Imaginators tab's rows, as moving through it counts them: the saved
+/// crystals `SHELF` to a row, then a row of blank ones to each element, in
+/// the order the tab lists them.
+function crystalRows(entries: Entry[]): { element: FigureElement | null; entries: Entry[] }[] {
+  const saved = entries.filter((each) => !each.fresh);
+  const rows: { element: FigureElement | null; entries: Entry[] }[] = [];
+  for (let first = 0; first < saved.length; first += SHELF) rows.push({ element: null, entries: saved.slice(first, first + SHELF) });
+  for (const [element] of ELEMENTS) {
+    const blank = entries.filter((each) => each.fresh && each.element === element);
+    if (blank.length > 0) rows.push({ element, entries: blank });
+  }
+  return rows;
+}
+
+/// The Senseis tab's columns, one to each battle class in the game's order,
+/// so finding a Knight takes one look. A Sensei Omoio has no class for gets
+/// a column of its own rather than going missing.
+function senseiColumns(entries: Entry[]): { battle: BattleClass | null; entries: Entry[] }[] {
+  const columns: { battle: BattleClass | null; entries: Entry[] }[] = BATTLE_ORDER.map((battle) => ({
+    battle,
+    entries: entries.filter((each) => battleOf(each) === battle),
+  }));
+  columns.push({ battle: null, entries: entries.filter((each) => !battleOf(each)) });
   return columns.filter((column) => column.entries.length > 0);
 }
 
@@ -684,6 +921,14 @@ function movement(moves: Movement): HTMLElement {
   return part;
 }
 
+/// What stands in for a figure's picture until Omoio has the game's: a
+/// Creation Crystal's cut gem in its element's colour, which tells it apart
+/// from the element's Skylanders, and for anything else its element's shape.
+function artless(into: HTMLElement, entry: Entry) {
+  if (entry.kind === "crystal") into.insertAdjacentHTML("beforeend", svg(MARKS.crystal));
+  else emblem(into, entry.element, entry.kind);
+}
+
 /// The picture spot at the top of a tile, with its corner badge: the
 /// figure's own picture from the game when Omoio has it, its element's
 /// drawing when not. A swapper is its bottom with a top laid over it: its
@@ -696,7 +941,7 @@ function picture(entry: Entry, badge: keyof typeof BADGES | null): HTMLElement {
   if (sources.every((source) => source)) {
     for (const source of sources) spot.appendChild(image(source!));
   } else {
-    emblem(spot, entry.element, entry.kind);
+    artless(spot, entry);
   }
   const kind = classOf(entry);
   const mark = kind && classMark(kind);
@@ -765,6 +1010,33 @@ function drivesLine(entry: Entry): HTMLElement | null {
   return line;
 }
 
+/// A battle class's symbol: the game's own white shape when Omoio has read
+/// it, painted in the text's colour, Omoio's drawing when not.
+function battleMark(battle: BattleClass): HTMLElement {
+  const source = fileOf(`class-${battle}`);
+  if (source) return painted(source, "tint-ink portal-battle-shape");
+  const drawn = node("span", "portal-battle-shape");
+  drawn.innerHTML = svg(BATTLE_CLASSES[battle].shape);
+  return drawn;
+}
+
+/// A battle class with its name: "Knight".
+function battlePart(battle: BattleClass): HTMLElement {
+  const part = node("span", "portal-battle");
+  part.append(battleMark(battle), BATTLE_CLASSES[battle].words);
+  return part;
+}
+
+/// A Sensei's battle class under its element, the way a SuperCharger's tile
+/// says what it drives.
+function battleLine(entry: Entry): HTMLElement | null {
+  const battle = battleOf(entry);
+  if (!battle) return null;
+  const line = node("span", "portal-drives");
+  line.appendChild(battlePart(battle));
+  return line;
+}
+
 /// "A, B and C".
 function listed(names: string[]): string {
   return names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}` : (names[0] ?? "");
@@ -807,9 +1079,40 @@ const OLDER_PIECES: Partial<Record<FigureKind, string>> = {
   trap: "Gives a special attack. A villain in it opens its Skystones card",
 };
 
-/// What an older piece or a trophy does in SuperChargers, under its name.
+/// What a piece from an earlier game does in Imaginators, where every older
+/// toy works (Activision's "Skylanders Imaginators Toy FAQ", question 1,
+/// read 7 October 2026). A magic item gives the Skylander on the portal
+/// gold, over 500 (the Skylanders wiki's "Magic Item"), a trap 500 and
+/// nothing else in the story (its "Traps"), and an adventure pack's piece
+/// goes into the collection with a little treasure the first time it goes
+/// on (its "Adventure Pack"). SuperChargers' vehicles race in Skylanders Racing,
+/// which the map opens, and traps work there as in SuperChargers
+/// (Activision's Imaginators FAQ, questions 6 and 7), and a trophy opens its
+/// villains' vehicles for racing (readers' answers on
+/// skylanderscharacterlist.com), all read the same day.
+const IMAGINATORS_PIECES: Partial<Record<FigureKind, string>> = {
+  item: "Gives the Skylander on the portal gold",
+  adventure: "Goes in the collection, with a little treasure the first time",
+  trap: "Gives 500 gold, and a special attack in racing",
+  vehicle: "Races in Skylanders Racing, from the map",
+  trophy: "Opens its villains' vehicles for racing",
+};
+
+function doesInImaginators(entry: Entry): string[] {
+  const kind = entry.offer?.kind ?? entry.figure?.kind;
+  const words = kind ? IMAGINATORS_PIECES[kind] : undefined;
+  return words ? [words] : [];
+}
+
+/// What an older piece does in the game running, under its name, in the
+/// games where it does something else than in its own.
+const NOTES: Partial<Record<SkylandersGame, (entry: Entry) => string[]>> = {
+  superchargers: doesInSuperChargers,
+  imaginators: doesInImaginators,
+};
+
 function noteLines(entry: Entry): HTMLElement[] {
-  const lines = game === "superchargers" ? doesInSuperChargers(entry) : [];
+  const lines = (game && NOTES[game]?.(entry)) || [];
   return lines.map((words) => node("span", "portal-note", words));
 }
 
@@ -820,7 +1123,7 @@ function renderHead(): HTMLElement {
   const on = placed();
   if (on.length === 0) row.appendChild(node("span", "portal-quiet", "Nothing on the portal."));
   const pairs = superCharged();
-  const unmanned = !driverOn();
+  const unmanned = pairsUp() && !driverOn();
   // A SuperCharged pair sits in one frame, its driver first, with the mark
   // the game's lightning stands for.
   let frame: HTMLElement | null = null;
@@ -888,7 +1191,12 @@ function renderTabs(): HTMLElement {
       if (own) button.appendChild(own);
       else button.insertAdjacentHTML("beforeend", `<svg class="portal-tab-mark tint-${each.element}" viewBox="0 0 24 24" aria-hidden="true">${MARKS[each.element]}</svg>`);
     } else if (each.icon) button.appendChild(icon(each.icon));
-    else if (each.mark) button.insertAdjacentHTML("beforeend", `<svg class="portal-tab-mark ${each.mark}" viewBox="0 0 24 24" aria-hidden="true">${MARKS[each.mark]}</svg>`);
+    else if (each.mark) {
+      const badge = TAB_BADGES[each.mark];
+      const own = badge ? fileOf(badge) : null;
+      if (own) button.appendChild(image(own)).className = "portal-tab-badge";
+      else button.insertAdjacentHTML("beforeend", `<svg class="portal-tab-mark ${each.mark}" viewBox="0 0 24 24" aria-hidden="true">${MARKS[each.mark]}</svg>`);
+    }
     button.append(each.label);
     button.onclick = () => showTab(index);
     bar.appendChild(button);
@@ -900,6 +1208,8 @@ function renderTabs(): HTMLElement {
 function renderBody(): HTMLElement {
   if (tabs[tab]?.tray) return renderTray();
   if (tabs[tab]?.garage) return renderGarage();
+  if (tabs[tab]?.crystals) return renderCrystals();
+  if (tabs[tab]?.senseis) return renderSenseis();
   const body = node("div", "portal-body");
   const current = tabs[tab];
   if (!current || current.entries.length === 0) {
@@ -924,7 +1234,7 @@ function renderBody(): HTMLElement {
     );
     const badge = chosen ? "picked" : on ? "on" : entry.offer && entry.figure ? "saved" : null;
     tile.append(picture(entry, badge), node("span", "portal-name", entry.name), kindLine(entry));
-    const drives = drivesLine(entry);
+    const drives = drivesLine(entry) ?? battleLine(entry);
     if (drives) tile.appendChild(drives);
     tile.append(...noteLines(entry));
     tile.onclick = () => {
@@ -1329,6 +1639,358 @@ function renderVehicle(entry: Entry | undefined): HTMLElement {
   return card;
 }
 
+// ---- Imaginators: Creation Crystals and Senseis ----
+
+/// An element's name, its shape in front, in its colour.
+function elementPart(element: FigureElement, words = ELEMENT_NAMES.get(element) ?? ""): HTMLElement {
+  const part = node("span", `portal-card-element tint-${element}`);
+  emblem(part, element, null);
+  part.append(words);
+  return part;
+}
+
+/// Whether a crystal is a Legendary one, which its variant marks.
+function legendary(entry: Entry): boolean {
+  return (variantOf(entry) & 0x0400) !== 0;
+}
+
+/// A blank crystal's casing as its tile and card name it.
+function casingWords(entry: Entry): string {
+  const casing = casingOf(entry);
+  const words = casing ? CASINGS[casing] : "Crystal";
+  return legendary(entry) ? `Legendary ${words}` : words;
+}
+
+/// What the game does when a Sensei or a crystal made now goes on, when the
+/// Signature Patch isn't on in it, and what to do: a box over the crystals
+/// and the Senseis, and the same words as the notice when one is tried.
+function patchWords(): { title: string; detail: string } | null {
+  const pack = made?.pack || "Signature Patch";
+  switch (made?.check) {
+    case "not_downloaded":
+      return {
+        title: "Cemu's packs aren't here yet",
+        detail: `Imaginators checks a factory signature that the Senseis and crystals Omoio makes can't carry. Cemu's ${pack}, one of its community packs, takes that check away. ${nameOf(family, "South")} on a new Sensei or crystal gets them.`,
+      };
+    case "missing":
+      return {
+        title: `Cemu's packs have no ${pack}`,
+        detail: "Imaginators won't take a Sensei or crystal Omoio makes without it. Download the packs again in this game's Community packs in Omoio, then start the game again.",
+      };
+    case "off":
+      return {
+        title: `The ${pack} is off`,
+        detail: "Imaginators won't take a Sensei or crystal Omoio makes without it. Turn it on in this game's Community packs in Omoio, then start the game again.",
+      };
+    case "next_start":
+      return {
+        title: `The ${pack} counts from the next start`,
+        detail: "Close the game and start it again, then make Senseis and crystals here.",
+      };
+    default:
+      return null;
+  }
+}
+
+function patchBox(): HTMLElement | null {
+  const words = patchWords();
+  if (!words) return null;
+  const box = node("div", "portal-patch");
+  box.innerHTML = svg(NOTICE_SHAPES.problem);
+  const text = node("div", "portal-patch-words");
+  text.append(node("b", "", words.title), node("span", "", words.detail));
+  box.appendChild(text);
+  return box;
+}
+
+/// Imaginators' Creation Crystals: the user's own first, each holding the
+/// Imaginator made in it, the one used last first; then a row of blank
+/// crystals to each element, a tile to each casing; and the crystal picked
+/// beside. A blank one always makes a new crystal in a new file, since a
+/// crystal keeps its Imaginator for good: "There are no options to reset a
+/// Creation Crystal or change a Battle Class" (Activision's "Skylanders
+/// Imaginators Toy FAQ", read 7 October 2026).
+function renderCrystals(): HTMLElement {
+  const body = node("div", "portal-body portal-tray portal-crystals");
+  const entries = tabs[tab]?.entries ?? [];
+  const main = node("div", "portal-tray-main portal-shelf-main");
+  main.dataset.scroll = "crystals";
+  const saved = entries.filter((each) => !each.fresh);
+  const yours = node("div", "portal-shelf-head");
+  yours.append(
+    node("b", "", "Your Imaginators"),
+    node("span", "", saved.length === 0 ? "None yet. Pick a blank crystal below to make one." : saved.length === 1 ? "1 crystal" : `${saved.length} crystals`)
+  );
+  main.appendChild(yours);
+  if (saved.length > 0) {
+    const shelf = node("div", "portal-shelf");
+    saved.forEach((entry, index) => shelf.appendChild(crystalTile(entry, index)));
+    main.appendChild(shelf);
+  }
+  const blank = node("div", "portal-shelf-head");
+  blank.append(node("b", "", "Blank crystals"), node("span", "", "Each one makes a new crystal in a new file."));
+  main.appendChild(blank);
+  const box = patchBox();
+  if (box) main.appendChild(box);
+  const forge = node("div", "portal-forge");
+  if (entries.length === saved.length) forge.appendChild(node("div", "portal-quiet", asking ? "Getting the characters…" : "None to make here."));
+  let index = saved.length;
+  for (const row of crystalRows(entries)) {
+    if (!row.element) continue;
+    const line = node("div", `portal-forge-row tint-${row.element}`);
+    const label = node("div", "portal-forge-element");
+    emblem(label, row.element, null);
+    label.append(ELEMENT_NAMES.get(row.element) ?? "");
+    line.appendChild(label);
+    for (const entry of row.entries) line.appendChild(blankTile(entry, index++));
+    forge.appendChild(line);
+  }
+  main.appendChild(forge);
+  body.append(main, renderCrystal(entries[at]));
+  return body;
+}
+
+/// One of the user's crystals: its picture, its file's name, and the
+/// element of the Imaginator in it. Omoio doesn't read the Imaginator's own
+/// name out of the crystal.
+function crystalTile(entry: Entry, index: number): HTMLElement {
+  const on = isOn(entry);
+  const tile = node("button", `portal-item${zone === "grid" && index === at ? " sel" : ""}${on ? " on" : ""}`);
+  const element = entry.element ? ELEMENT_NAMES.get(entry.element) : null;
+  tile.setAttribute("aria-label", [entry.name, element && `${element} Imaginator`, on ? "on the portal" : "saved"].filter(Boolean).join(", "));
+  const line = node("span", `portal-kind ${tintOf(entry.element, entry.kind)}`);
+  if (entry.element) {
+    emblem(line, entry.element, null);
+    line.append(`${element} Imaginator`);
+  }
+  tile.append(picture(entry, on ? "on" : null), node("span", "portal-name", entry.name), line);
+  tile.onclick = () => {
+    zone = "grid";
+    at = index;
+    void act(choose);
+  };
+  return tile;
+}
+
+/// A blank crystal of one casing, in its element's row.
+function blankTile(entry: Entry, index: number): HTMLElement {
+  const tile = node("button", `portal-blank${zone === "grid" && index === at ? " sel" : ""}`);
+  const element = entry.element ? ELEMENT_NAMES.get(entry.element) : "";
+  tile.setAttribute("aria-label", `New ${element} crystal, ${casingWords(entry)}`);
+  const art = node("span", `portal-blank-art ${tintOf(entry.element, entry.kind)}`);
+  const source = pictureOf(entry.offer?.id, entry.offer?.variant);
+  if (source) art.appendChild(image(source));
+  else artless(art, entry);
+  const words = node("span", "portal-car-words");
+  const state = node("span", "portal-car-state new");
+  state.innerHTML = svg(BADGES.new[1]);
+  state.append("New");
+  words.append(node("span", "portal-car-name", casingWords(entry)), state);
+  tile.append(art, words);
+  tile.onclick = () => {
+    zone = "grid";
+    at = index;
+    void act(choose);
+  };
+  return tile;
+}
+
+/// The crystal picked: a blank one says what happens when it goes on, one
+/// of the user's that it keeps its Imaginator.
+function renderCrystal(entry: Entry | undefined): HTMLElement {
+  const card = node("div", `portal-villain-card portal-car-card ${tintOf(entry?.element ?? null, "crystal")}`);
+  if (!entry) return card;
+  const element = entry.element ? (ELEMENT_NAMES.get(entry.element) ?? "") : "";
+  const art = node("div", "portal-villain-card-art");
+  const source = pictureOf(entry.offer?.id ?? entry.figure?.id, variantOf(entry));
+  if (source) art.appendChild(image(source));
+  else artless(art, entry);
+  const line = node("div", "portal-kind");
+  if (entry.element) line.appendChild(elementPart(entry.element, entry.fresh ? element : `${element} Imaginator`));
+  if (casingOf(entry)) line.appendChild(node("span", "portal-casing", casingWords(entry)));
+  card.append(art, node("div", "portal-villain-card-name", entry.fresh ? `New ${element} crystal` : entry.name), line);
+  if (entry.fresh) {
+    card.appendChild(node("div", "portal-label", "When it goes on"));
+    card.appendChild(node("p", "portal-card-note", "The game asks you to make an Imaginator in it. Its battle class is picked then, and stays for good."));
+    card.appendChild(node("div", "portal-label", "This figure"));
+    const kept = node("div", "portal-car-kept new");
+    kept.innerHTML = svg(BADGES.new[1]);
+    kept.append("A new crystal in a new file");
+    card.append(kept, node("p", "portal-villain-note", "Your other crystals stay as they are."));
+    return card;
+  }
+  card.appendChild(node("div", "portal-label", "This figure"));
+  const kept = node("div", "portal-car-kept saved");
+  kept.innerHTML = svg(BADGES.saved[1]);
+  kept.append("Saved, keeps its Imaginator");
+  card.appendChild(kept);
+  if (isOn(entry)) {
+    const state = node("div", "portal-car-kept on");
+    state.innerHTML = svg(BADGES.on[1]);
+    state.append(BADGES.on[0]);
+    card.appendChild(state);
+  }
+  return card;
+}
+
+/// How many classes sit side by side in the Senseis tab. Eleven columns in
+/// one row would each be too narrow to read from a sofa, so they go in two
+/// rows of six, and the last place shows the Senseis on the portal.
+const BAND = 6;
+
+/// Imaginators' Senseis, a column to each battle class, so "I need a
+/// Knight" takes one look, and the Sensei picked beside.
+function renderSenseis(): HTMLElement {
+  const body = node("div", "portal-body portal-tray portal-dojo");
+  const entries = tabs[tab]?.entries ?? [];
+  const main = node("div", "portal-tray-main portal-dojo-main");
+  main.dataset.scroll = "senseis";
+  const box = patchBox();
+  if (box) main.appendChild(box);
+  const classes = node("div", "portal-dojo-classes");
+  let index = 0;
+  for (const column of senseiColumns(entries)) {
+    const shown = node("div", `portal-dojo-class${column.battle === "kaos" ? " tint-kaos" : ""}`);
+    const head = node("div", "portal-dojo-class-head");
+    if (column.battle) head.appendChild(battlePart(column.battle));
+    else head.append("Other");
+    shown.appendChild(head);
+    for (const entry of column.entries) shown.appendChild(senseiTile(entry, index++));
+    classes.appendChild(shown);
+  }
+  classes.appendChild(renderDojoStatus());
+  main.appendChild(classes);
+  body.append(main, renderSensei(entries[at]));
+  return body;
+}
+
+/// One Sensei in its class's column: its picture, a mark when it is a
+/// villain, its name and its element.
+function senseiTile(entry: Entry, index: number): HTMLElement {
+  const on = isOn(entry);
+  const tile = node("button", `portal-sensei${zone === "grid" && index === at ? " sel" : ""}${on ? " on" : ""}`);
+  const element = entry.element ? (ELEMENT_NAMES.get(entry.element) ?? "") : "";
+  const battle = battleOf(entry);
+  const villain = classOf(entry) === "villain_sensei";
+  const state = on ? "on the portal" : entry.figure ? "saved" : "new";
+  // Kaos's class and element are both his own, said once.
+  const kind = [element, battle && battle !== entry.element ? BATTLE_CLASSES[battle].words : "", villain ? "Villain Sensei" : "Sensei"];
+  tile.setAttribute("aria-label", [entry.name, kind.filter(Boolean).join(" "), state].join(", "));
+  const art = node("span", `portal-car-art ${tintOf(entry.element, entry.kind)}`);
+  const source = pictureOf(entry.offer?.id ?? entry.figure?.id, variantOf(entry));
+  if (source) art.appendChild(image(source));
+  else emblem(art, entry.element, entry.kind);
+  if (villain) {
+    const horns = node("span", "portal-sensei-villain");
+    horns.innerHTML = svg(CLASSES.villain_sensei.shape!);
+    art.appendChild(horns);
+  }
+  if (entry.figure) {
+    const kept = node("span", "portal-sensei-saved");
+    kept.innerHTML = svg(BADGES.saved[1]);
+    art.appendChild(kept);
+  }
+  const words = node("span", "portal-car-words");
+  const line = node("span", `portal-sensei-element ${tintOf(entry.element, entry.kind)}`);
+  emblem(line, entry.element, null);
+  line.append(element);
+  words.append(node("span", "portal-car-name", entry.name), line);
+  tile.append(art, words);
+  tile.onclick = () => {
+    zone = "grid";
+    at = index;
+    void act(choose);
+  };
+  return tile;
+}
+
+/// The Senseis on the portal now, in the place after the last class.
+function renderDojoStatus(): HTMLElement {
+  const status = node("div", "portal-dojo-status");
+  const on = filled().filter((figure) =>
+    offers.some((offer) => offer.name === figure.name && (offer.class === "sensei" || offer.class === "villain_sensei"))
+  );
+  status.appendChild(node("div", "portal-label", "On the portal"));
+  if (on.length === 0) {
+    status.append(node("b", "", "No Sensei"), node("span", "", "A Sensei opens its element's realms on the map."));
+    return status;
+  }
+  for (const figure of on) {
+    const known = offers.find((offer) => offer.name === figure.name);
+    const row = node("span", "portal-dojo-on");
+    row.append(mark(known?.element ?? null, known?.kind ?? null, pictureOf(known?.id, known?.variant)), figure.name);
+    status.appendChild(row);
+  }
+  return status;
+}
+
+/// What a Sensei does besides being played, a line to each thing. Its
+/// element's Sensei Realms on the map open to a Sensei of that element
+/// only (Activision's "Skylanders Imaginators Gameplay FAQ", question 1).
+/// Adding one teaches the Imaginators of its class one of their four Secret
+/// Techniques, its class's Sensei Shrine gives it Sky-Chi, its super move,
+/// and each new Sensei raises the level the Imaginators can reach by one
+/// (the Skylanders wiki's "Battle Classes", "Sky-Chi" and "Imaginators").
+/// Kaos has a class of his own and no Shrine. Crash and Cortex open
+/// Thumpin' Wumpa Islands (the wiki's "Senseis"). All read 7 October 2026.
+function senseiDoes(entry: Entry): string[] {
+  const battle = battleOf(entry);
+  const element = entry.element && entry.element !== "kaos" ? ELEMENT_NAMES.get(entry.element) : null;
+  const lines: string[] = [];
+  if (element) lines.push(`Opens the ${element} Sensei Realms on the map`);
+  if (battle && battle !== "kaos") {
+    const words = BATTLE_CLASSES[battle].words;
+    lines.push(`Teaches ${words} Imaginators a Secret Technique`);
+    lines.push(`Learns Sky-Chi at the ${words} Sensei Shrine`);
+  }
+  lines.push("The first time on, your Imaginators can go up one more level");
+  const id = entry.offer?.id ?? entry.figure?.id;
+  if (id === 630 || id === 631) lines.push("Opens Thumpin' Wumpa Islands");
+  return lines;
+}
+
+/// The Sensei picked: its element and class, what it does in the game, and
+/// whether its figure is saved and on the portal.
+function renderSensei(entry: Entry | undefined): HTMLElement {
+  const card = node("div", `portal-villain-card portal-car-card ${tintOf(entry?.element ?? null, entry?.kind ?? null)}`);
+  if (!entry) return card;
+  const art = node("div", "portal-villain-card-art");
+  const source = pictureOf(entry.offer?.id ?? entry.figure?.id, variantOf(entry));
+  if (source) art.appendChild(image(source));
+  else emblem(art, entry.element, entry.kind);
+  const line = node("div", "portal-kind");
+  if (entry.element) line.appendChild(elementPart(entry.element));
+  // Kaos's element and class are both his own, and saying so twice says
+  // nothing more.
+  const battle = battleOf(entry);
+  if (battle && battle !== entry.element) line.appendChild(battlePart(battle));
+  const kind = classOf(entry);
+  if (kind) {
+    const named = node("span", `portal-class ${kind}`);
+    const shape = classMark(kind);
+    if (shape) named.appendChild(shape);
+    named.append(CLASSES[kind].words);
+    line.appendChild(named);
+  }
+  card.append(art, node("div", "portal-villain-card-name", entry.name), line);
+  card.appendChild(node("div", "portal-label", "What it does"));
+  const does = node("ul", "portal-does");
+  for (const words of senseiDoes(entry)) does.appendChild(node("li", "", words));
+  card.appendChild(does);
+  card.appendChild(node("div", "portal-label", "This figure"));
+  const kept = node("div", `portal-car-kept ${entry.figure ? "saved" : "new"}`);
+  kept.innerHTML = svg(entry.figure ? BADGES.saved[1] : BADGES.new[1]);
+  kept.append(entry.figure ? "Saved, keeps its levels" : "New, made the first time it goes on");
+  card.appendChild(kept);
+  if (isOn(entry)) {
+    const state = node("div", "portal-car-kept on");
+    state.innerHTML = svg(BADGES.on[1]);
+    state.append(BADGES.on[0]);
+    card.appendChild(state);
+  }
+  return card;
+}
+
 /// One of a SuperCharger and its vehicle: the character, and its saved
 /// figure when there is one, otherwise what the emulator makes it from.
 interface Pick {
@@ -1350,10 +2012,17 @@ function pickFor(id: number): Pick | null {
   return offer ? { id, name: offer.name, offer } : null;
 }
 
+/// Whether the game running makes anything of a SuperCharger with its own
+/// vehicle. Imaginators races SuperChargers' vehicles, and nothing found
+/// says the two do anything together there, so the top button stays free.
+function pairsUp(): boolean {
+  return game !== "imaginators";
+}
+
 /// The pair a tile stands in: a SuperCharger and its own vehicle, the tile's
 /// own figure as one of them and `other` as the one to go with it.
 function pairOf(entry: Entry | undefined): { driver: Pick; vehicle: Pick; other: Pick } | null {
-  if (!entry || entry.swap) return null;
+  if (!entry || entry.swap || !pairsUp()) return null;
   const id = entry.offer?.id ?? entry.figure?.id;
   const partner = partnerOf(entry);
   if (id == null || partner == null) return null;
@@ -1377,6 +2046,13 @@ function pairOn(entry: Entry | undefined): boolean {
   return Boolean(pair && slotWith(pair.driver.id) >= 0 && slotWith(pair.vehicle.id) >= 0);
 }
 
+/// What the bottom face button does on a tile.
+function southWords(entry: Entry | undefined): string {
+  if (entry?.swap) return pickedTop ? "Pick bottom" : "Pick top";
+  if (turnedAway(entry)) return made?.check === "not_downloaded" ? "Get Cemu's packs" : "See why";
+  return entry?.fresh ? "Make crystal" : "Put on";
+}
+
 function renderFoot(): HTMLElement {
   const foot = node("div", "portal-foot");
   const entry = tabs[tab]?.entries[at];
@@ -1388,12 +2064,13 @@ function renderFoot(): HTMLElement {
     if (villain?.trap && trapOn(villain)) hints.push(["West", `Take ${trapName(villain)} off`]);
     else if (villain?.trap) hints.push(["South", `Put ${trapName(villain)} on`]);
   } else {
-    hints.push(["South", entry?.swap ? (pickedTop ? "Pick bottom" : "Pick top") : "Put on"]);
+    hints.push(["South", southWords(entry)]);
     if (entry && isOn(entry)) hints.push(["West", "Take off"]);
     const pair = pairOf(entry);
-    if (entry && pair && !pairOn(entry)) hints.push(["North", pairWords(entry, pair.other)]);
+    if (deletable(entry)) hints.push(["North", "Hold to delete"]);
+    else if (entry && pair && !pairOn(entry)) hints.push(["North", pairWords(entry, pair.other)]);
   }
-  hints.push(["East", pickedTop ? "Back" : "Close"]);
+  hints.push(["East", gettingPacks ? "Stop" : pickedTop ? "Back" : "Close"]);
   const row = node("div", "portal-hints");
   for (const [input, words] of hints) {
     const hint = node("span", "portal-hint");
@@ -1425,8 +2102,11 @@ function render() {
   for (const column of panel.querySelectorAll<HTMLElement>("[data-scroll]")) {
     column.scrollTop = columnsScrolled.get(column.dataset.scroll) ?? 0;
   }
-  panel.querySelector(".portal-item.sel, .portal-villain.sel, .portal-car.sel")?.scrollIntoView({ block: "nearest" });
+  panel
+    .querySelector(".portal-item.sel, .portal-villain.sel, .portal-car.sel, .portal-blank.sel, .portal-sensei.sel")
+    ?.scrollIntoView({ block: "nearest" });
   panel.querySelector(".portal-tab.sel")?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  drawHold();
 }
 
 // ---- notices ----
@@ -1565,6 +2245,53 @@ function moveColumns(move: Move, sizes: number[]) {
   render();
 }
 
+/// Through the Imaginators tab: across a row, and up or down to the same
+/// place in the next row, or its last crystal, and up off the top to the
+/// portal row.
+function moveRows(move: Move) {
+  const sizes = crystalRows(tabs[tab]?.entries ?? []).map((row) => row.entries.length);
+  let row = 0;
+  let column = at;
+  while (row < sizes.length - 1 && column >= sizes[row]) column -= sizes[row++];
+  const first = (index: number) => sizes.slice(0, index).reduce((sum, size) => sum + size, 0);
+  if (move === "left" && column > 0) at -= 1;
+  else if (move === "right" && column < sizes[row] - 1) at += 1;
+  else if (move === "down" && row < sizes.length - 1) at = first(row + 1) + Math.min(column, sizes[row + 1] - 1);
+  else if (move === "up" && row > 0) at = first(row - 1) + Math.min(column, sizes[row - 1] - 1);
+  else if (move === "up" && placed().length > 0) {
+    zone = "portal";
+    chip = Math.min(column, placed().length - 1);
+  }
+  render();
+}
+
+/// Through the Senseis: up and down a class's column, across to the next
+/// class at the same height, and on from the bottom of a column in the first
+/// row of classes to the top of the one under it.
+function moveDojo(move: Move) {
+  const sizes = senseiColumns(tabs[tab]?.entries ?? []).map((column) => column.entries.length);
+  let column = 0;
+  let row = at;
+  while (column < sizes.length - 1 && row >= sizes[column]) row -= sizes[column++];
+  const first = (index: number) => sizes.slice(0, index).reduce((sum, size) => sum + size, 0);
+  const to = (target: number, height: number) => {
+    at = first(target) + Math.min(height, sizes[target] - 1);
+  };
+  const start = column - (column % BAND);
+  const end = Math.min(start + BAND, sizes.length) - 1;
+  if (move === "left" && column > start) to(column - 1, row);
+  else if (move === "right" && column < end) to(column + 1, row);
+  else if (move === "down" && row + 1 < sizes[column]) at += 1;
+  else if (move === "down" && start + BAND < sizes.length) to(Math.min(column + BAND, sizes.length - 1), 0);
+  else if (move === "up" && row > 0) at -= 1;
+  else if (move === "up" && start > 0) to(column - BAND, sizes[column - BAND] - 1);
+  else if (move === "up" && placed().length > 0) {
+    zone = "portal";
+    chip = Math.min(column, placed().length - 1);
+  }
+  render();
+}
+
 function movePortal(move: Move) {
   if (move === "left") chip -= 1;
   else if (move === "right") chip += 1;
@@ -1693,7 +2420,8 @@ async function takeOff() {
 /// co-op review, read 7 October 2026), and two vehicles on a portal can
 /// leave it showing the figure going on for ever (Activision's Gameplay FAQ,
 /// question 1). So a vehicle already on comes off first too, and the notice
-/// says so. Says whether the figure is on now.
+/// says so. Imaginators races SuperChargers' vehicles (its FAQ, question 6),
+/// and the same is taken to hold there. Says whether the figure is on now.
 async function putOn(name: string, figure: Figure | undefined, offer: Offer | undefined): Promise<boolean> {
   const kind = offer?.kind ?? figure?.kind;
   if (kind === "trap") {
@@ -1711,7 +2439,8 @@ async function putOn(name: string, figure: Figure | undefined, offer: Offer | un
     return false;
   }
   const picture = [pictureOf(offer?.id ?? figure?.id, offer?.variant ?? figure?.variant)];
-  const detail = cameOff(leaving.map((each) => each.name));
+  const blank = !figure && kind === "crystal";
+  const detail = cameOff(leaving.map((each) => each.name)) ?? (blank ? "The game asks you to make an Imaginator in it." : undefined);
   let done = false;
   if (figure) {
     done = await change(
@@ -1861,11 +2590,77 @@ async function choose() {
   }
   const slot = slotOf(entry);
   if (slot >= 0) return already(slot);
+  if (turnedAway(entry)) return explainPatch();
   const id = entry.offer?.id ?? entry.figure?.id;
   const vehicle = (entry.offer?.kind ?? entry.figure?.kind) === "vehicle";
   const leaving = vehicle ? vehiclesOn().map((each) => each.name) : [];
+  const kept = new Set(mine.map((figure) => figure.path));
   const done = await putOn(entry.name, entry.figure, entry.offer);
-  if (done && id != null && (vehicle || classOf(entry) === "supercharger")) tellDriving(id, leaving);
+  if (done && id != null && pairsUp() && (vehicle || classOf(entry) === "supercharger")) tellDriving(id, leaving);
+  if (!done && entry.fresh) findLostCrystal(kept);
+  // A Sensei or crystal made before goes on whatever the patch, and the
+  // game turns it away the same, so the menu says why.
+  const words = done && signed(entry) ? patchWords() : null;
+  if (words) notify({ kind: "hint", ...words });
+}
+
+/// After making a crystal didn't work: the emulator may have written it
+/// before running into the problem, and then it is under Your Imaginators,
+/// to be put on from there rather than made again.
+function findLostCrystal(kept: Set<string>) {
+  const lost = mine.find((figure) => figure.kind === "crystal" && !kept.has(figure.path));
+  if (!lost) return;
+  notify({
+    kind: "hint",
+    title: `${lost.name} was made, but isn't on the portal`,
+    detail: "It's first under Your Imaginators. Put it on from there rather than make another.",
+  });
+}
+
+/// Says why Imaginators would turn away a Sensei or a crystal made now, and
+/// what to do about it, before one is made. Without Cemu's packs, gets
+/// them, outside the turn of the press, so other figures still go on while
+/// they come.
+function explainPatch() {
+  if (made?.check === "not_downloaded") return void getPacks();
+  const words = patchWords();
+  if (words) notify({ kind: "hint", ...words });
+}
+
+/// Downloads Cemu's community packs, which bring the Signature Patch, with
+/// the share done in the notice. East stops it.
+async function getPacks() {
+  if (gettingPacks) return;
+  gettingPacks = true;
+  const getting: Notice = { kind: "working", title: "Getting Cemu's packs…", detail: "Imaginators needs the Signature Patch from them." };
+  notify(getting);
+  render();
+  const stopListening = await onCommunityProgress((progress) => {
+    if (notice?.kind === "working" && progress.total > 0) {
+      notify({ ...getting, detail: `${Math.round((progress.bytes / progress.total) * 100)}% done` });
+    }
+  }).catch(() => null);
+  try {
+    await refreshCommunity("wiiu");
+    made = await portalMadeFigures().catch(() => made);
+    const words = patchWords();
+    notify(
+      made?.check === "next_start" || !words
+        ? { kind: "hint", title: "Cemu's packs are here", detail: "Close the game and start it again, and Imaginators takes the Senseis and crystals made here." }
+        : { kind: "hint", ...words }
+    );
+  } catch (err) {
+    // Stopped with East: the packs on the computer are as they were.
+    notify(
+      err === "cancelled"
+        ? { kind: "info", title: "Stopped", detail: "The packs you had are as they were." }
+        : problem(err, "Couldn't get Cemu's packs. Try again.")
+    );
+  } finally {
+    stopListening?.();
+    gettingPacks = false;
+    render();
+  }
 }
 
 /// The characters come from the emulator's own figure maker the first time
@@ -1888,9 +2683,12 @@ async function loadOffers() {
     // With nothing saved yet, open on the first element, not an empty tab.
     // In SuperChargers that isn't the garage, the second tab there: a
     // vehicle needs a Skylander on the portal to drive it (Stevivor's review
-    // of the game, read 7 October 2026), so a Skylander comes first.
+    // of the game, read 7 October 2026), so a Skylander comes first. Nothing
+    // found says what Imaginators asks for first, a Skylander, a Sensei or a
+    // crystal, so it opens there too.
     const firstElement = tabs.findIndex((each) => each.element);
-    if (mine.length === 0 && tab === 0 && tabs.length > 1) tab = game === "superchargers" && firstElement > 0 ? firstElement : 1;
+    const elementFirst = game === "superchargers" || game === "imaginators";
+    if (mine.length === 0 && tab === 0 && tabs.length > 1) tab = elementFirst && firstElement > 0 ? firstElement : 1;
     render();
   }
 }
@@ -1947,14 +2745,22 @@ async function readPads(): Promise<Set<string>> {
 }
 
 function press(input: string) {
+  // Anything else pressed lets go of a figure being held to delete it.
+  if (holding && input !== "North") stopHold();
   const move = MOVES[input];
   if (move) {
     if (zone === "portal") return movePortal(move);
-    return tabs[tab]?.tray ? moveTray(move) : tabs[tab]?.garage ? moveGarage(move) : moveGrid(move);
+    const current = tabs[tab];
+    if (current?.tray) return moveTray(move);
+    if (current?.garage) return moveGarage(move);
+    if (current?.crystals) return moveRows(move);
+    if (current?.senseis) return moveDojo(move);
+    return moveGrid(move);
   }
   if (input === "LB") return showTab(tab - 1);
   if (input === "RB") return showTab(tab + 1);
   if (input === "East") {
+    if (gettingPacks) return void cancelCommunity();
     if (!pickedTop) return void closePortalMenu();
     pickedTop = null;
     notify(null);
@@ -1962,7 +2768,10 @@ function press(input: string) {
   }
   if (input === "South") void act(choose);
   else if (input === "West") void act(takeOff);
-  else if (input === "North") void act(pairUp);
+  else if (input === "North") {
+    if (deletable(tabs[tab]?.entries[at])) startHold("pad");
+    else void act(pairUp);
+  }
 }
 
 window.setInterval(async () => {
@@ -1985,12 +2794,106 @@ window.setInterval(async () => {
       }
     }
     held = now;
+    if (holding) {
+      const still = holding.by === "pad" ? now.has("North") : keyHeld;
+      if (!still) stopHold();
+      else if (time - holding.since >= HOLD_TO_DELETE) void finishHold();
+      else drawHold();
+    }
   } finally {
     reading = false;
   }
 }, 50);
 
+// ---- deleting a saved figure ----
+
+/// How long the top face button is held on a saved figure to delete it:
+/// long enough that it never happens by chance, as a child pressing every
+/// button would otherwise make it.
+const HOLD_TO_DELETE = 5000;
+
+/// A saved figure being held to be deleted: its file, since when, and what
+/// holds it, the pad or the keyboard's Y.
+let holding: { path: string; name: string; since: number; by: "pad" | "key" } | null = null;
+let keyHeld = false;
+
+/// Whether holding the top face button deletes the selected tile's figure:
+/// one of the user's own, in the Saved tab or among their crystals, where
+/// the button has nothing else to do.
+function deletable(entry: Entry | undefined): entry is Entry & { figure: Figure } {
+  const current = tabs[tab];
+  return zone === "grid" && Boolean(entry?.figure && !entry.fresh && (current?.mine || current?.crystals));
+}
+
+/// Starts the hold, unless the figure is on the portal: the emulator writes
+/// to a figure's file while it is on.
+function startHold(by: "pad" | "key") {
+  const entry = tabs[tab]?.entries[at];
+  if (!deletable(entry) || holding || acting) return;
+  if (isOn(entry)) {
+    notify({ kind: "info", title: `Take ${entry.name} off the portal first`, detail: `Then hold ${nameOf(family, "North")} on it to delete it.` });
+    return;
+  }
+  holding = { path: entry.figure.path, name: entry.name, since: Date.now(), by };
+  drawHold();
+}
+
+/// Let go before the time is up: nothing happens.
+function stopHold() {
+  holding = null;
+  drawHold();
+}
+
+/// The bar over the selected tile's picture that fills while its figure is
+/// held, and runs back when let go.
+function drawHold() {
+  const art = root.querySelector<HTMLElement>(".portal-item.sel .portal-art");
+  if (!art) return;
+  let bar = art.querySelector<HTMLElement>(".portal-hold");
+  if (!bar) {
+    bar = node("span", "portal-hold");
+    bar.append(node("i", ""), node("b", "", "Keep holding to delete"));
+    art.appendChild(bar);
+  }
+  const share = holding ? Math.min(1, (Date.now() - holding.since) / HOLD_TO_DELETE) : 0;
+  bar.classList.toggle("held", Boolean(holding));
+  bar.querySelector<HTMLElement>("i")!.style.transform = `scaleX(${share})`;
+}
+
+/// Held long enough: the figure goes to the Recycle Bin, from where it can
+/// be put back.
+async function finishHold() {
+  if (!holding) return;
+  const { path, name } = holding;
+  holding = null;
+  await act(async () => {
+    try {
+      await deleteFigure(path);
+      mine = await listFigures(true).catch(() => mine);
+      buildTabs();
+      render();
+      notify({ kind: "done", title: `${name} is in the Recycle Bin`, detail: "Restore it from there to get it back." });
+    } catch (err) {
+      render();
+      notify(problem(err, "Couldn't delete that figure."));
+    }
+  });
+}
+
+document.addEventListener("keyup", (event) => {
+  if (event.key === "y" || event.key === "Y") keyHeld = false;
+});
+
 document.addEventListener("keydown", (event) => {
+  // Y held deletes a saved figure, as the pad's top face button does.
+  if (event.key === "y" || event.key === "Y") {
+    event.preventDefault();
+    if (!event.repeat) {
+      keyHeld = true;
+      if (deletable(tabs[tab]?.entries[at])) startHold("key");
+    }
+    return;
+  }
   const keys: Record<string, () => void> = {
     ArrowUp: () => press("Up"),
     ArrowDown: () => press("Down"),
@@ -2009,6 +2912,9 @@ document.addEventListener("keydown", (event) => {
   const act = keys[event.key];
   if (act) {
     event.preventDefault();
+    // A key held down repeats; only moving through the menu should, the
+    // arrows and the page keys, so a held Enter never makes a second figure.
+    if (event.repeat && !event.key.startsWith("Arrow") && !event.key.startsWith("Page")) return;
     act();
   }
 });
@@ -2020,6 +2926,7 @@ async function show() {
   try {
     family = (await portalMenuFamily()) as PadFamily;
     game = await portalGame().catch(() => null);
+    made = await portalMadeFigures().catch(() => null);
     held = await readPads();
     zone = "grid";
     shown = true;
@@ -2046,6 +2953,9 @@ async function show() {
 void onPortalMenu((state) => {
   family = state.family as PadFamily;
   if (state.open) void show();
-  else shown = false;
+  else {
+    shown = false;
+    holding = null;
+  }
 });
 void show();
