@@ -693,6 +693,15 @@ function chordNote(rest: string): HTMLElement {
   return note;
 }
 
+/// The remote's moves a Wii game asks for, on the buttons Omoio gives them
+/// (backends/dolphin/controllers.rs, `WII`), drawn as on the pad in hand.
+function wiiMovesNote(): HTMLElement {
+  const note = h("div", "bp-chord");
+  note.innerHTML = `${cap("RB")}<span>shakes the Wii Remote,</span>${cap("RT")}`;
+  note.append(h("span", "", "pushes it forward"));
+  return note;
+}
+
 // ---- the top bar and the hints ----
 
 const clock = h("span", "bp-clock");
@@ -1105,6 +1114,7 @@ function gamePage(titleId: string, section: Section): Screen {
         if (!result.known || !runs.isConnected) return;
         runs.append(h("span", `bp-status ${result.tone}`, result.label), h("span", "", result.explanation));
       });
+      if (game.console === "wii") notes.append(wiiMovesNote());
       if (playable(game) && family) notes.append(chordNote("while you play brings you back here."));
 
       info.append(meta, h("h1", "bp-page-title", game.title), actions);

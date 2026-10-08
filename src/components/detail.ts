@@ -69,6 +69,9 @@ function listRow(id: string, paths: string, label: string): string {
   return `<button class="d-row" id="detail-${id}">${icon(paths)}<span class="d-row-k">${label}</span><span class="d-row-v"></span>${icon(ICON.chevron, "d-chev")}</button>`;
 }
 
+/// What to press when a Wii game asks you to move the remote.
+const WII_MOVES = "When a Wii game asks you to move the remote, press RB to shake it or RT to push it forward.";
+
 function fill(body: HTMLElement, hero: HTMLElement, game: Game): void {
   hero.innerHTML = game.cover
     ? `<img class="cover" src="${convertFileSrc(game.cover)}" alt="">`
@@ -96,6 +99,7 @@ function fill(body: HTMLElement, hero: HTMLElement, game: Game): void {
       <span id="detail-compat-note"></span>
       <button class="link-btn gone" id="detail-compat-get"></button>
     </div>
+    <div class="note plain gone" id="detail-wii-moves"></div>
     <div class="gone" id="detail-portal">
       <div class="d-group-h">
         <span class="sec-h">Skylanders</span>
@@ -186,6 +190,15 @@ function fill(body: HTMLElement, hero: HTMLElement, game: Game): void {
   const { rpcs3Version, firmwareVersion } = store.get();
   if (game.console === "ps3" && game.set_up && game.available && rpcs3Version && firmwareVersion === null) {
     askForFirmware();
+  }
+
+  // A pad has no motion, so the moves a Wii game asks of the remote are on
+  // buttons (backends/dolphin/controllers.rs, `WII`). Said for every Wii
+  // game, since a game asking for one shows only the remote, not a button.
+  if (game.console === "wii") {
+    const moves = body.querySelector<HTMLElement>("#detail-wii-moves")!;
+    moves.textContent = WII_MOVES;
+    moves.classList.remove("gone");
   }
 
   reveal.onclick = async () => {

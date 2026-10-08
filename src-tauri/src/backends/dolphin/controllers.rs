@@ -68,21 +68,29 @@ pub const GAMECUBE: [(&str, &str); 20] = [
 /// lists the Nunchuk as required for Spyro's Adventure, Giants, SWAP Force
 /// and Trap Team). Dolphin has no layout of its own for a gamepad here, so
 /// this is Omoio's: the Nunchuk's stick on the left stick, the remote's A
-/// and B on the bottom and right buttons as the Wii's menus use them, B
-/// again and the Nunchuk's Z on the triggers, where the fingers hold them on
-/// the real thing, the Nunchuk's C and Z on the other two face buttons, a
-/// shake of the remote on the right shoulder for games that ask for one,
-/// and the pointer on the right stick. The home button stays Omoio's, for
-/// the portal menu, and the Wii's Home is left off: on a stick's press it
-/// came up whenever a player leant on the pointer, stopping the game.
+/// and B on the bottom and right buttons as the Wii's menus use them, the
+/// Nunchuk's Z on the left trigger, where the finger holds it on the real
+/// thing, the Nunchuk's C and Z on the other two face buttons, and the
+/// pointer on the right stick. The two moves of the remote that games ask
+/// for most sit on the right shoulder and trigger: a shake on RB, and a push
+/// of the remote towards the screen on RT. Skylanders on the Wii asks for
+/// one ("Move!") to open a chest or put a key in a lock: "shaking to open
+/// chests and thrusting forward to insert a key into a door" (Nintendo
+/// World Report's review of Spyro's Adventure on the Wii, October 2011),
+/// and a shake opens a lock too. The push is Dolphin's swing forward: a
+/// quick 50 cm jab, then a slow way back that no game takes for a second
+/// move (`EmulateSwing`, Core/HW/WiimoteEmu/Dynamics.cpp). The home button
+/// stays Omoio's, for the portal menu, and the Wii's Home is left off: on a
+/// stick's press it came up whenever a player leant on the pointer, stopping
+/// the game.
 pub const WII: [(&str, &str); 23] = [
     ("South", "A"),
     ("East", "B"),
-    ("RT", "B"),
     ("West", "Nunchuk Z"),
     ("LT", "Nunchuk Z"),
     ("North", "Nunchuk C"),
     ("RB", "Shake"),
+    ("RT", "Push forward"),
     ("LB", "1"),
     ("LS", "2"),
     ("Back", "Minus"),
@@ -136,9 +144,9 @@ const GAMECUBE_KEYS: [(&str, &[&str]); 22] = [
 ];
 
 /// The same for the Wii Remote and its Nunchuk, as `WII` lays them out.
-const WII_KEYS: [(&str, &[&str]); 23] = [
+const WII_KEYS: [(&str, &[&str]); 24] = [
     ("Buttons/A", &["South"]),
-    ("Buttons/B", &["East", "RT"]),
+    ("Buttons/B", &["East"]),
     ("Buttons/1", &["LB"]),
     ("Buttons/2", &["LS"]),
     ("Buttons/-", &["Back"]),
@@ -154,6 +162,7 @@ const WII_KEYS: [(&str, &[&str]); 23] = [
     ("Shake/X", &["RB"]),
     ("Shake/Y", &["RB"]),
     ("Shake/Z", &["RB"]),
+    ("Swing/Forward", &["RT"]),
     ("Nunchuk/Buttons/C", &["North"]),
     ("Nunchuk/Buttons/Z", &["West", "LT"]),
     ("Nunchuk/Stick/Up", &["LS Y+"]),
@@ -627,7 +636,7 @@ mod tests {
             "[Wiimote1]\r\n\
              Device = XInput/0/Gamepad\r\n\
              Buttons/A = `Button A`\r\n\
-             Buttons/B = `Button B` | `Trigger R`\r\n\
+             Buttons/B = `Button B`\r\n\
              Buttons/1 = `Shoulder L`\r\n\
              Buttons/2 = `Thumb L`\r\n\
              Buttons/- = `Back`\r\n\
@@ -643,6 +652,7 @@ mod tests {
              Shake/X = `Shoulder R`\r\n\
              Shake/Y = `Shoulder R`\r\n\
              Shake/Z = `Shoulder R`\r\n\
+             Swing/Forward = `Trigger R`\r\n\
              Nunchuk/Buttons/C = `Button Y`\r\n\
              Nunchuk/Buttons/Z = `Button X` | `Trigger L`\r\n\
              Nunchuk/Stick/Up = `Left Y+`\r\n\
