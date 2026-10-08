@@ -216,13 +216,14 @@ archive) need no keys. Downloads in NUS form aren't supported.
 <summary>Which controllers work?</summary>
 <br>
 
-Xbox controllers, and other pads that speak XInput, work in both emulators.
-Other pads work in RPCS3 through SDL. In Cemu, PS5 and PS4 controllers
-(DualSense, DualSense Edge and DualShock 4) and the Switch Pro Controller work
-through SDL too, as does an 8BitDo pad set to its Switch or XInput mode. Other
-pads don't work in Cemu yet. Plug a pad in before you press Play, since Omoio
-tells Cemu about the pads it finds then. You set one layout on the Controller
-screen and Omoio uses it everywhere, for up to four players. Every button is labelled with what it does on PS3 and Wii U, and you
+Xbox controllers, and other pads that speak XInput, work in both emulators. So
+do PS5 and PS4 controllers (DualSense, DualSense Edge and DualShock 4), without
+DS4Windows, and the Switch Pro Controller, as does an 8BitDo pad set to its
+Switch or XInput mode. Other pads work in RPCS3 through SDL, but not in Cemu
+yet. Plug a pad in before you press Play, since Omoio tells Cemu about the pads
+it finds then. A PlayStation or Switch pad on its own is player 1 without being
+picked. You set one layout on the Controller screen and Omoio uses it
+everywhere, for up to four players. Every button is labelled with what it does on PS3 and Wii U, and you
 change one by picking its label and pressing the new button. Big Picture has the
 same screen, used with the pad.
 

@@ -14,7 +14,7 @@ Omoio is in early development and runs on 64-bit Windows only. It is not an emul
 - One library for every system. Import a folder, a zip or 7z file, or scan a whole drive at once.
 - Installs the official builds of RPCS3 and Cemu. RPCS3 is kept up to date; Cemu is updated to the newest version Omoio has tested, which is v2.6. Games run inside Omoio's window, fullscreen with F11.
 - Omoio updates itself from version 0.2.2 on: it downloads a new version in the background and asks before it restarts, never during a game. Older versions have to install the newest one once by hand.
-- One controller layout for every emulator, for up to four players. Xbox and other XInput pads work in both emulators; other pads work in RPCS3 through SDL, and in Cemu PS5 and PS4 controllers and the Switch Pro Controller work too.
+- One controller layout for every emulator, for up to four players. Xbox and other XInput pads, PS5 and PS4 controllers (no DS4Windows needed) and the Switch Pro Controller work in both emulators; other pads work in RPCS3 through SDL.
 - Big Picture: a full-screen library for a TV and a controller. View and Menu together switch between Big Picture and a running game.
 - Community packs: RPCS3's patches for PS3 games and Cemu's graphic packs for Wii U games, such as 60 fps for Skylanders SWAP Force.
 - For PS3 games: official game updates, save backups and RPCS3's settings for each game. Homebrew installs from a .pkg the user already has.
