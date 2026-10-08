@@ -209,14 +209,30 @@ impl super::EmulatorBackend for Dolphin {
         }
     }
 
-    fn prepare(&self, app: &AppHandle, game: &Game) {
+    /// A Dolphin still running is ended first (`install::end_running`): on
+    /// its way out it would write its own settings over these
+    /// (`MainWindow::~MainWindow`, DolphinQt/MainWindow.cpp), and it holds
+    /// the log this empties. A Dolphin.ini that can't be changed stops the
+    /// start, since the game would come up behind Dolphin's own questions
+    /// and warnings, and a Skylanders game without its portal. A Hotkeys.ini
+    /// or a log left as it was harms nothing, and is tried again next time.
+    fn prepare(&self, app: &AppHandle, game: &Game) -> Result<(), String> {
+        let Ok(exe) = install::exe_path(app) else {
+            return Ok(());
+        };
+        if !exe.is_file() {
+            return Ok(());
+        }
+        install::end_running(&exe);
         let (Ok(user), Ok(figures)) = (install::user_dir(app), crate::portal_menu::folder(app)) else {
-            return;
+            return Ok(());
         };
         let config = user.join("Config");
-        let _ = settings::prepare(&config, self.wants_portal(game), &figures);
+        settings::prepare(&config, self.wants_portal(game), &figures)
+            .map_err(|_| "Couldn't change Dolphin's settings, so the game can't start. Try again in a moment.".to_string())?;
         let _ = settings::quiet_hotkeys(&config);
         let _ = log::prepare(&user);
+        Ok(())
     }
 
     fn portal_figures(&self, pid: u32) -> Result<Vec<String>, String> {
@@ -346,7 +362,6 @@ impl super::EmulatorBackend for Dolphin {
         if !game.path.exists() {
             return Err("This game isn't where it was. Reconnect the drive it's on.".to_string());
         }
-        install::end_running(&exe);
         let portal = self.wants_portal(game);
         let mut command = install::command(&exe);
         command.arg("--user").arg(install::user_dir(app)?);

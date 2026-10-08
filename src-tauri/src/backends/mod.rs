@@ -74,8 +74,12 @@ pub trait EmulatorBackend: Sync {
     fn icon(&self, app: &AppHandle, game: &Game) -> Option<Vec<u8>>;
 
     /// Gets anything the emulator needs ready before `game` starts, apart
-    /// from the controller layout, which `write_layout` hands over.
-    fn prepare(&self, _app: &AppHandle, _game: &Game) {}
+    /// from the controller layout, which `write_layout` hands over. An error
+    /// is why the game can't start as it should, worded for the person
+    /// about to play.
+    fn prepare(&self, _app: &AppHandle, _game: &Game) -> Result<(), String> {
+        Ok(())
+    }
 
     /// The figures on the running game's toy portal, by slot, empty where
     /// there is none. `pid` is the emulator's process.

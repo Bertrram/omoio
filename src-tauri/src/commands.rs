@@ -628,7 +628,7 @@ fn launch(app: AppHandle, title_id: &str) -> Result<(), String> {
     // Ready before the emulator starts: every player has their pad and
     // buttons, a pad plugged in for the first time works, and the picture
     // fits this machine.
-    backend.prepare(&app, game);
+    backend.prepare(&app, game)?;
     crate::controllers::before_launch(&app, backend, &game.title_id);
     tune_picture(&app, backend);
     let pid = backend.launch(&app, game)?;

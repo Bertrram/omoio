@@ -896,17 +896,18 @@ impl super::EmulatorBackend for Cemu {
         own_picture(&game.path).or_else(|| played_picture(app, game))
     }
 
-    fn prepare(&self, app: &AppHandle, game: &Game) {
+    fn prepare(&self, app: &AppHandle, game: &Game) -> Result<(), String> {
         let Ok(dir) = install_dir(app) else {
-            return;
+            return Ok(());
         };
         if !dir.join("Cemu.exe").is_file() {
-            return;
+            return Ok(());
         }
         let portable = dir.join("portable");
         let _ = write_first_settings(&portable);
         let _ = tune_settings(&portable.join("settings.xml"), is_skylanders(&game.title));
         packs::apply(app);
+        Ok(())
     }
 
     fn tidy_window(&self, pid: u32, _game: isize) {
