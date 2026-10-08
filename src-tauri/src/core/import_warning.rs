@@ -368,6 +368,10 @@ mod tests {
     fn a_release_the_list_lacks_is_rated_like_the_rest_of_its_game() {
         let warning = warning(&ps3_game("BLUS31600", "Skylanders Imaginators"), &lists()).unwrap();
         assert!(warning.rating.starts_with("RPCS3 rates it Ingame"));
+        assert_eq!(
+            warning.better,
+            "The Wii U version is rated Perfect in Cemu, and the portal menu works in it."
+        );
     }
 
     #[test]

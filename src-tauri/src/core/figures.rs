@@ -5,6 +5,7 @@
 //! which has them for every figure; the table here is Omoio's own.
 
 use crate::core::console::{Console, Features};
+use crate::core::imaginators::{self, BattleClass, Casing, Crystal};
 use crate::core::vehicles::{self, Terrain};
 use serde::{Deserialize, Serialize};
 
@@ -22,6 +23,8 @@ pub enum Element {
     Tech,
     Light,
     Dark,
+    /// Kaos's own, which Imaginators gives the Kaos Sensei alone.
+    Kaos,
 }
 
 /// What a figure is, which decides where the menu lists it.
@@ -34,6 +37,8 @@ pub enum Kind {
     Adventure,
     Vehicle,
     Trophy,
+    /// An Imaginators Creation Crystal, which an Imaginator is made in.
+    Crystal,
 }
 
 /// The games in the order they came out. A game reads the figures of its own
@@ -73,14 +78,14 @@ pub fn game_from_title(title: &str) -> Option<Game> {
 
 /// Whether the portal menu works in this game on this console: the games it
 /// has been played through with on each, which the README names, and
-/// SuperChargers on the Wii U, where it comes first. Its PS3 version follows
-/// once it has been played there.
+/// SuperChargers and Imaginators on the Wii U, where each comes first. Their
+/// PS3 versions follow once they have been played there.
 pub fn has_portal_menu(console: Console, title: &str) -> bool {
     is_skylanders(title)
         && matches!(
             (console, game_from_title(title)),
             (Console::Ps3, Some(Game::Giants | Game::SwapForce | Game::TrapTeam))
-                | (Console::WiiU, Some(Game::SwapForce | Game::TrapTeam | Game::SuperChargers))
+                | (Console::WiiU, Some(Game::SwapForce | Game::TrapTeam | Game::SuperChargers | Game::Imaginators))
         )
 }
 
@@ -100,7 +105,8 @@ fn id_game(id: u16) -> Game {
         505 | 514 | 519 | 526 | 540..=543 => Game::Giants,
         0..=99 | 200..=207 | 300..=304 | 400..=449 => Game::Spyro,
         100..=199 | 208..=209 => Game::Giants,
-        // Imaginators' Senseis start at 600 (King Pen), so Trap Team stops before.
+        // Trap Team stops at 599: 600 to 699 are Imaginators' own, its
+        // Senseis from 601 (King Pen) and its Creation Crystals from 680.
         210..=299 | 305..=399 | 450..=599 => Game::TrapTeam,
         1000..=3219 | 3300..=3399 => Game::SwapForce,
         3220..=3299 | 3400..=3599 => Game::SuperChargers,
@@ -143,6 +149,7 @@ pub fn kind(id: u16) -> Kind {
         300..=399 | 3300..=3399 => Kind::Adventure,
         3220..=3299 => Kind::Vehicle,
         3500..=3599 => Kind::Trophy,
+        _ if imaginators::is_crystal(id) => Kind::Crystal,
         _ => Kind::Character,
     }
 }
@@ -231,7 +238,8 @@ pub fn element(id: u16) -> Option<Element> {
         3422 | 3425 => Water,
         3426 => Light,
         3427 => Dark,
-        _ => return None,
+        // Imaginators' Senseis and Creation Crystals
+        _ => return imaginators::element(id),
     })
 }
 
@@ -353,13 +361,18 @@ pub enum Class {
     /// SuperChargers' own Skylanders, each with a vehicle of its own.
     #[serde(rename = "supercharger")]
     SuperCharger,
+    /// Imaginators' Senseis, each with a battle class (`imaginators`).
+    Sensei,
+    /// The Senseis who are villains, one to an element, and Kaos.
+    VillainSensei,
 }
 
 /// Which marked kind a figure is, from its id, variants included (Cemu
 /// 2.6's list). Giants' new figures alternate between a core figure and a
 /// Giant from 100; Trap Masters are the first two of each element's four
 /// from 450, then Knight Light and Knight Mare. SuperChargers are the
-/// vehicles' drivers, whose ids from 3400 have gaps.
+/// vehicles' drivers, whose ids from 3400 have gaps. Senseis are 601 to 631,
+/// marked villain or not in `imaginators::SENSEIS`.
 pub fn class(id: u16) -> Option<Class> {
     match id {
         101 | 102 | 104 | 107 | 109 | 110 | 112 | 114 => Some(Class::Giant),
@@ -367,7 +380,7 @@ pub fn class(id: u16) -> Option<Class> {
         482 | 484 => Some(Class::TrapMaster),
         502..=510 | 514 | 519 | 526 | 540..=543 => Some(Class::Mini),
         _ if vehicles::VEHICLES.iter().any(|vehicle| vehicle.driver == id) => Some(Class::SuperCharger),
-        _ => None,
+        _ => imaginators::sensei(id).map(|sensei| if sensei.villain { Class::VillainSensei } else { Class::Sensei }),
     }
 }
 
@@ -397,8 +410,15 @@ const WRONG_VARIANTS: [(&str, u16, u16, u16); 10] = [
 ];
 
 /// The variant the game itself gives a figure. Only the figures above
-/// change, and only while Cemu still lists them wrongly.
+/// change, and only while Cemu still lists them wrongly; and a Sensei, which
+/// the emulators list with 0x0000 where a real one carries
+/// `imaginators::SENSEI_VARIANT`. Changed here, beside the wrong variants,
+/// rather than in the offers, so a Sensei is made the same way whichever
+/// game asks for it.
 pub fn game_variant(name: &str, id: u16, variant: u16) -> u16 {
+    if variant == 0x0000 && imaginators::sensei(id).is_some() {
+        return imaginators::SENSEI_VARIANT;
+    }
     WRONG_VARIANTS
         .iter()
         .find(|&&(figure, figure_id, listed, _)| figure == name && figure_id == id && listed == variant)
@@ -406,12 +426,26 @@ pub fn game_variant(name: &str, id: u16, variant: u16) -> u16 {
 }
 
 /// Which of those figures a figure is, from its id and the game's own
-/// variant, which an emulator's list can't name.
+/// variant, which an emulator's list can't name. A Sensei made with the
+/// variant real ones carry is one too.
 pub fn fixed_name(id: u16, variant: u16) -> Option<&'static str> {
     WRONG_VARIANTS
         .iter()
         .find(|&&(_, figure_id, _, right)| figure_id == id && right == variant)
         .map(|&(name, ..)| name)
+        .or_else(|| {
+            imaginators::sensei(id)
+                .filter(|_| variant == imaginators::SENSEI_VARIANT)
+                .map(|sensei| sensei.name)
+        })
+}
+
+/// The name of a figure Omoio had made that the emulator's list can't name:
+/// one of those above, or a Creation Crystal, which no list has.
+pub fn unlisted_name(id: u16, variant: u16) -> Option<String> {
+    fixed_name(id, variant)
+        .map(str::to_string)
+        .or_else(|| imaginators::crystal(id, variant).map(Crystal::name))
 }
 
 /// A character as the menu lists it, with where it belongs.
@@ -429,37 +463,63 @@ pub struct Offer {
     pub terrain: Option<Terrain>,
     /// A vehicle's own SuperCharger, or a SuperCharger's own vehicle.
     pub partner: Option<u16>,
+    /// A Sensei's battle class.
+    pub battle_class: Option<BattleClass>,
+    /// A Creation Crystal's casing.
+    pub casing: Option<Casing>,
     /// What a SuperChargers trophy unlocks, left out for every other figure.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub unlocks: Option<&'static vehicles::Trophy>,
+}
+
+fn offer(character: Character) -> Offer {
+    let (id, variant) = (character.id, character.variant);
+    Offer {
+        element: element(id),
+        kind: kind(id),
+        half: half(id),
+        series: series(variant),
+        movement: movement(id),
+        class: class(id),
+        terrain: vehicles::terrain(id),
+        partner: vehicles::partner(id),
+        battle_class: imaginators::battle_class(id),
+        casing: imaginators::crystal(id, variant).map(|crystal| crystal.casing),
+        unlocks: vehicles::trophy(id),
+        character,
+    }
 }
 
 /// The characters `game` reads on `console`, each with its element and
 /// kind. Every one when the game isn't known, but for Nintendo's figures
 /// away from the Wii U. A figure made from an offer carries the game's own
 /// variant, so a trap Cemu lists wrongly is made right.
+///
+/// Imaginators also gets every Creation Crystal, which no emulator's list
+/// has (Cemu 2.6). One a later list has is offered once, under the list's
+/// name, which is the one its slot will show.
 pub fn offers(characters: Vec<Character>, game: Option<Game>, console: Console) -> Vec<Offer> {
-    characters
+    let mut offered: Vec<Offer> = characters
         .into_iter()
         .filter(|c| game.is_none_or(|game| reads(game, c.id, c.variant)))
         .filter(|c| vehicles::plays_on(console, c.id))
         .map(|character| {
             let name = named(&character.name);
             let variant = game_variant(&name, character.id, character.variant);
-            Offer {
-                element: element(character.id),
-                kind: kind(character.id),
-                half: half(character.id),
-                series: series(variant),
-                movement: movement(character.id),
-                class: class(character.id),
-                terrain: vehicles::terrain(character.id),
-                partner: vehicles::partner(character.id),
-                unlocks: vehicles::trophy(character.id),
-                character: Character { name, id: character.id, variant },
-            }
+            offer(Character { name, id: character.id, variant })
         })
-        .collect()
+        .collect();
+    if game == Some(Game::Imaginators) {
+        let crystals: Vec<Offer> = imaginators::CRYSTALS
+            .iter()
+            .filter(|crystal| {
+                !offered.iter().any(|o| (o.character.id, o.character.variant) == (crystal.id, crystal.variant))
+            })
+            .map(|crystal| offer(Character { name: crystal.name(), id: crystal.id, variant: crystal.variant }))
+            .collect();
+        offered.extend(crystals);
+    }
+    offered
 }
 
 /// A file name for a new figure that is not taken yet: the character's
@@ -584,6 +644,7 @@ mod tests {
         assert_eq!(game_from_title("Skylanders Giants"), Some(Game::Giants));
         assert_eq!(game_from_title("Skylanders: Trap Team"), Some(Game::TrapTeam));
         assert_eq!(game_from_title("Skylanders SuperChargers"), Some(Game::SuperChargers));
+        assert_eq!(game_from_title("Skylanders: Imaginators"), Some(Game::Imaginators));
         assert_eq!(game_from_title("LittleBigPlanet 3"), None);
     }
 
@@ -722,6 +783,8 @@ mod tests {
         assert!(has_portal_menu(Console::WiiU, "Skylanders - Trap Team"));
         assert!(has_portal_menu(Console::WiiU, "Skylanders SuperChargers"));
         assert!(has_portal_menu(Console::WiiU, "Skylanders: SuperChargers"));
+        assert!(has_portal_menu(Console::WiiU, "Skylanders Imaginators"));
+        assert!(has_portal_menu(Console::WiiU, "Skylanders: Imaginators"));
 
         assert!(!has_portal_menu(Console::WiiU, "Skylanders: Giants"));
         assert!(!has_portal_menu(Console::Ps3, "Giants: Citizen Kabuto"), "not a Skylanders game");
@@ -730,13 +793,14 @@ mod tests {
     #[test]
     fn the_other_skylanders_games_have_no_portal_menu_yet() {
         // Spyro's Adventure is next, on the PS3. Its Wii U release was sold
-        // in Japan only. SuperChargers has it on the Wii U only so far.
+        // in Japan only. SuperChargers and Imaginators have it on the Wii U
+        // only so far.
         assert!(!has_portal_menu(Console::Ps3, "Skylanders: Spyro's Adventure"));
         assert!(!has_portal_menu(Console::WiiU, "Skylanders Spyro's Adventure"));
         assert!(!has_portal_menu(Console::Ps3, "Skylanders SuperChargers"));
         assert!(!has_portal_menu(Console::Ps3, "Skylanders: SuperChargers"));
         assert!(!has_portal_menu(Console::Ps3, "Skylanders Imaginators"));
-        assert!(!has_portal_menu(Console::WiiU, "Skylanders Imaginators"));
+        assert!(!has_portal_menu(Console::Ps3, "Skylanders: Imaginators"));
     }
 
     #[test]
@@ -823,5 +887,77 @@ mod tests {
         assert_eq!(json[2]["unlocks"]["tracks"][1], "The Golden Temple");
         assert!(json[3]["terrain"].is_null() && json[3]["partner"].is_null());
         assert!(json[0].get("unlocks").is_none() && json[3].get("unlocks").is_none(), "only a trophy has it");
+    }
+
+    #[test]
+    fn senseis_and_crystals_are_sorted_by_their_element_and_kind() {
+        assert_eq!(element(601), Some(Element::Water)); // King Pen
+        assert_eq!(element(627), Some(Element::Kaos)); // Kaos
+        assert_eq!(element(631), Some(Element::Tech)); // Dr. Neo Cortex
+        assert_eq!(element(680), Some(Element::Magic)); // a Magic Creation Crystal
+        assert_eq!(element(689), Some(Element::Light));
+        assert_eq!(element(600), None);
+        assert_eq!(kind(601), Kind::Character);
+        assert_eq!(kind(685), Kind::Crystal);
+        assert_eq!(class(601), Some(Class::Sensei));
+        assert_eq!(class(610), Some(Class::VillainSensei)); // Dr. Krankcase
+        assert_eq!(class(680), None);
+        assert!(reads(Game::Imaginators, 680, 0x5208));
+        assert!(reads(Game::Imaginators, 3400, 0x4100), "and every older figure");
+        assert!(!reads(Game::SuperChargers, 680, 0x5208));
+        assert!(!reads(Game::SuperChargers, 601, 0x5000));
+    }
+
+    #[test]
+    fn a_sensei_is_made_with_the_variant_real_ones_carry() {
+        assert_eq!(game_variant("King Pen", 601, 0x0000), 0x5000);
+        assert_eq!(game_variant("King Pen", 601, 0x5000), 0x5000);
+        assert_eq!(game_variant("Whirlwind", 0, 0x0000), 0x0000);
+        assert_eq!(fixed_name(601, 0x5000), Some("King Pen"));
+        assert_eq!(fixed_name(631, 0x5000), Some("Dr. Neo Cortex"));
+        assert_eq!(fixed_name(601, 0x0000), None, "Cemu names that one itself");
+    }
+
+    #[test]
+    fn a_figure_no_list_names_is_named() {
+        assert_eq!(unlisted_name(680, 0x5208).as_deref(), Some("Magic Lantern Crystal"));
+        assert_eq!(unlisted_name(689, 0x5616).as_deref(), Some("Legendary Light Fanged Crystal"));
+        assert_eq!(unlisted_name(601, 0x5000).as_deref(), Some("King Pen"));
+        assert_eq!(unlisted_name(212, 0x300E).as_deref(), Some("Tempest Timer"));
+        assert_eq!(unlisted_name(682, 0x5212), None, "Air Acorn was never sold");
+        assert_eq!(unlisted_name(16, 0x0000), None);
+    }
+
+    #[test]
+    fn older_games_are_offered_what_they_were_before_imaginators() {
+        let list = vec![
+            Character { name: "Whirlwind".into(), id: 0, variant: 0 },
+            Character { name: "Tempest Timer".into(), id: 212, variant: 0x300D },
+            Character { name: "Gusto".into(), id: 450, variant: 0x3000 },
+            Character { name: "Dark Hot Streak".into(), id: 3224, variant: 0x4402 },
+            Character { name: "Hammer Slam Bowser (Nintendo Only)".into(), id: 3424, variant: 0 },
+            Character { name: "King Pen".into(), id: 601, variant: 0 },
+            Character { name: "Crash Bandicoot".into(), id: 630, variant: 0 },
+        ];
+        let made = |game, console| -> Vec<String> {
+            offers(list.clone(), Some(game), console)
+                .into_iter()
+                .map(|offer| format!("{} {} {:#06X}", offer.character.name, offer.character.id, offer.character.variant))
+                .collect()
+        };
+        let trap_team = ["Whirlwind 0 0x0000", "Tempest Timer 212 0x300E", "Gusto 450 0x3000"];
+        assert_eq!(made(Game::TrapTeam, Console::WiiU), trap_team);
+        assert_eq!(made(Game::TrapTeam, Console::Ps3), trap_team);
+        let superchargers = [&trap_team[..], &["Dark Hot Streak 3224 0x4402"][..]].concat();
+        assert_eq!(made(Game::SuperChargers, Console::Ps3), superchargers);
+        let wii_u = [&superchargers[..], &["Hammer Slam Bowser 3424 0x0000"][..]].concat();
+        assert_eq!(made(Game::SuperChargers, Console::WiiU), wii_u);
+
+        for game in [Game::TrapTeam, Game::SuperChargers] {
+            let json = serde_json::to_value(offers(list.clone(), Some(game), Console::WiiU)).unwrap();
+            for offer in json.as_array().unwrap() {
+                assert!(offer["battle_class"].is_null() && offer["casing"].is_null(), "{offer}");
+            }
+        }
     }
 }
