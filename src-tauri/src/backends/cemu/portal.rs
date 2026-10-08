@@ -398,20 +398,22 @@ pub fn tidy(pid: u32) {
 /// messages, so `is_message` has to leave it out.
 ///
 /// Cemu opens the window whenever it gets to the menu command, however
-/// late: a posted command is handled with or without the menu bar on the
-/// window (wxWidgets 3.2.5, which Cemu 2.6 is built with, `window.cpp`,
-/// `wxWindowMSW::HandleCommand`), and each one opens a window of its own
-/// (`MainWindow.cpp`, `OnOptionsInput`, v2.6; both read 8 October 2026). One
-/// that opened after the menu had closed kept the game deaf until the menu
-/// was opened and closed again (reported October 2026). So the command is
-/// sent only when none is still on its way, and a window that shows after
-/// `hush` stopped waiting for it is seen to as it shows.
+/// late: a posted command reaches the frame with or without the menu bar on
+/// the window (wxWidgets 3.2.5, which Cemu 2.6 is built with, `frame.cpp`,
+/// `wxFrame::HandleCommand`, then `framecmn.cpp`, `ProcessCommand`), and each
+/// one opens a window of its own (`MainWindow.cpp`, `OnOptionsInput`, v2.6;
+/// both read 8 October 2026). One that opened after the menu had closed kept
+/// the game deaf until the menu was opened and closed again (reported October
+/// 2026). So the command is sent only when none is still on its way, and from
+/// the first one on, Cemu's input settings windows are watched for as long as
+/// it runs and kept as the menus want them. `ProcessCommand` drops a command
+/// for a menu item that is turned off, so one that hasn't shown after
+/// `ASK_AGAIN` is taken as lost and sent again.
 pub fn hush(pid: u32, hushed: bool) -> Result<(), String> {
     if !hushed {
         let mut quiet = quiet();
         quiet.deaf = false;
         close_shown(pid, &mut quiet);
-        watch_late(&mut quiet);
         return Ok(());
     }
     quiet().deaf = true;
@@ -423,7 +425,7 @@ pub fn hush(pid: u32, hushed: bool) -> Result<(), String> {
     until(GONE_WAIT, || quiet().settled(Instant::now(), exists));
     let ask = {
         let quiet = quiet();
-        open_input(pid, &quiet).is_none() && quiet.may_ask(pid)
+        open_input(pid, &quiet).is_none() && quiet.may_ask(pid, Instant::now())
     };
     if ask {
         let main = main_window(pid).ok_or("Cemu isn't answering.")?;
@@ -434,18 +436,22 @@ pub fn hush(pid: u32, hushed: bool) -> Result<(), String> {
         }
         unsafe { PostMessageW(Some(main), WM_COMMAND, WPARAM(input as usize), LPARAM(0)) }
             .map_err(|_| "Cemu isn't answering.".to_string())?;
-        quiet.asked = Some(pid);
+        quiet.asked = Some((pid, Instant::now()));
+        watch(pid, &mut quiet);
     }
-    let kept = keep_when_shown(pid, START_WAIT);
-    watch_late(&mut quiet());
-    kept
+    keep_when_shown(pid, START_WAIT)
 }
 
 /// How long a window told to close is waited for, at most, before a new
 /// one is asked for.
 const GONE_WAIT: Duration = Duration::from_secs(2);
-/// How often a window Cemu shows late is looked for: soon enough that it is
-/// barely seen, seldom enough to cost nothing while the game runs.
+/// How long a command whose window hasn't shown is waited for before it is
+/// sent again: three times `START_WAIT`, the longest Cemu has been seen to
+/// take.
+const ASK_AGAIN: Duration = Duration::from_secs(60);
+/// How often Cemu's input settings windows are looked at: soon enough that
+/// one shown late is barely seen, seldom enough to cost nothing while the
+/// game runs.
 const LATE_LOOK: Duration = Duration::from_millis(250);
 
 /// What the menus want of Cemu's input settings window, kept between one
@@ -453,24 +459,28 @@ const LATE_LOOK: Duration = Duration::from_millis(250);
 struct Quiet {
     /// Whether the game is to be deaf, as last asked.
     deaf: bool,
-    /// The Cemu sent the command that opens the window, until the window
-    /// shows.
-    asked: Option<u32>,
+    /// The Cemu sent the command that opens the window, and when, until the
+    /// window shows.
+    asked: Option<(u32, Instant)>,
     /// Windows told to close, and when, until they have gone.
     closing: Vec<(isize, Instant)>,
-    /// Whether `see_to_late_window` is running.
-    watching: bool,
+    /// The Cemu whose windows `watch_windows` looks after.
+    watching: Option<u32>,
 }
 
 impl Quiet {
     /// Whether the command may be sent to `pid`. Not while an earlier one
-    /// is on its way, or a second window would open over the first.
-    fn may_ask(&self, pid: u32) -> bool {
-        self.asked != Some(pid)
+    /// is on its way, or a second window would open over the first, unless
+    /// that one is taken as lost.
+    fn may_ask(&self, pid: u32, now: Instant) -> bool {
+        match self.asked {
+            Some((asked, when)) if asked == pid => now.duration_since(when) >= ASK_AGAIN,
+            _ => true,
+        }
     }
 
     fn answered(&mut self, pid: u32) {
-        if self.asked == Some(pid) {
+        if self.asked.is_some_and(|(asked, _)| asked == pid) {
             self.asked = None;
         }
     }
@@ -492,7 +502,7 @@ static QUIET: Mutex<Quiet> = Mutex::new(Quiet {
     deaf: false,
     asked: None,
     closing: Vec::new(),
-    watching: false,
+    watching: None,
 });
 
 fn quiet() -> MutexGuard<'static, Quiet> {
@@ -513,7 +523,7 @@ fn open_input(pid: u32, quiet: &Quiet) -> Option<HWND> {
 
 /// Waits up to `limit` for the input settings window and puts it out of
 /// sight, as `arrives` does. Stops waiting if the game may hear again
-/// meanwhile; `watch_late` then sees to the window.
+/// meanwhile; `watch_windows` then sees to the window.
 fn keep_when_shown(pid: u32, limit: Duration) -> Result<(), String> {
     let until = Instant::now() + limit;
     loop {
@@ -546,29 +556,30 @@ fn close_shown(pid: u32, quiet: &mut Quiet) {
     }
 }
 
-/// Has a thread see to the window Cemu was asked for and hasn't shown yet.
-fn watch_late(quiet: &mut Quiet) {
-    if quiet.asked.is_some() && !quiet.watching {
-        quiet.watching = true;
-        std::thread::spawn(see_to_late_window);
+/// Has a thread look after `pid`'s input settings windows, once per Cemu.
+fn watch(pid: u32, quiet: &mut Quiet) {
+    if quiet.watching != Some(pid) {
+        quiet.watching = Some(pid);
+        std::thread::spawn(move || watch_windows(pid));
     }
 }
 
-/// Puts the window Cemu shows late out of sight while a menu still wants
-/// the game deaf, and closes it if not. Looks until the window has shown or
-/// Cemu has gone, since Cemu gets to every command in the end.
-fn see_to_late_window() {
+/// Puts an input settings window out of sight while a menu wants the game
+/// deaf, and closes it if not, whenever Cemu shows one, until Cemu has gone
+/// or another Cemu is being looked after.
+fn watch_windows(pid: u32) {
     loop {
         std::thread::sleep(LATE_LOOK);
         let mut quiet = quiet();
-        let Some(pid) = quiet.asked else {
-            quiet.watching = false;
+        if quiet.watching != Some(pid) {
             return;
-        };
+        }
+        if main_window(pid).is_none() {
+            quiet.answered(pid);
+            quiet.watching = None;
+            return;
+        }
         let Some(window) = open_input(pid, &quiet) else {
-            if main_window(pid).is_none() {
-                quiet.answered(pid);
-            }
             continue;
         };
         if quiet.deaf {
@@ -932,22 +943,32 @@ mod tests {
     }
 
     fn quiet_with(closing: Vec<(isize, Instant)>) -> Quiet {
-        Quiet { deaf: true, asked: None, closing, watching: false }
+        Quiet { deaf: true, asked: None, closing, watching: None }
     }
 
     #[test]
     fn the_input_settings_command_goes_once_until_its_window_shows() {
+        let now = Instant::now();
         let mut quiet = quiet_with(Vec::new());
-        assert!(quiet.may_ask(7));
-        quiet.asked = Some(7);
-        assert!(!quiet.may_ask(7));
+        assert!(quiet.may_ask(7, now));
+        quiet.asked = Some((7, now));
+        assert!(!quiet.may_ask(7, now));
         // A Cemu started since is asked afresh, and its window doesn't
         // answer for the other one.
-        assert!(quiet.may_ask(8));
+        assert!(quiet.may_ask(8, now));
         quiet.answered(8);
-        assert!(!quiet.may_ask(7));
+        assert!(!quiet.may_ask(7, now));
         quiet.answered(7);
-        assert!(quiet.may_ask(7));
+        assert!(quiet.may_ask(7, now));
+    }
+
+    #[test]
+    fn a_command_whose_window_never_showed_is_sent_again_in_the_end() {
+        let sent = Instant::now();
+        let mut quiet = quiet_with(Vec::new());
+        quiet.asked = Some((7, sent));
+        assert!(!quiet.may_ask(7, sent + START_WAIT));
+        assert!(quiet.may_ask(7, sent + ASK_AGAIN), "taken as lost, so the game can be hushed again");
     }
 
     #[test]
