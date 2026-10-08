@@ -29,13 +29,13 @@ use serde::Serialize;
 /// classes on an Imaginator's crystal, 1 to 11 (NefariousTechSupport's Runes
 /// docs, `SkylanderFormat.md` lines 1145 to 1160, and Modified_SkyEditGUI's
 /// `frmCrystals.vb` lines 68 to 88, which agree; read 7 October 2026). No
-/// door or level was found open to one class only, and the replies under
-/// skylanderscharacterlist.com's article of 25 November 2016 agree. Each
-/// class has a Sensei Shrine, used by Senseis only, for their Sky-Chi (the
-/// Skylanders wiki's "Battle Classes" and "Sky-Chi"), and the earlier games'
-/// element gates became Sensei Elemental Realms, which only a Sensei of that
-/// element opens (Activision's "Skylanders Imaginators Gameplay FAQ",
-/// question 1). All read 7 October 2026.
+/// door or level was found open to one class only, and the author of
+/// skylanderscharacterlist.com's Imaginators guide agreed in a reply on 25
+/// November 2016. Each class has a Sensei Shrine, used by Senseis only, for
+/// their Sky-Chi (the Skylanders wiki's "Battle Classes" and "Sky-Chi"), and
+/// the earlier games' element gates became Sensei Elemental Realms, which
+/// only a Sensei of that element opens (Activision's "Skylanders Imaginators
+/// Gameplay FAQ", question 1). All read 7 October 2026.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum BattleClass {
