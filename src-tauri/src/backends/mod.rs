@@ -196,6 +196,14 @@ pub trait EmulatorBackend: Sync {
         Vec::new()
     }
 
+    /// Whether Omoio sizes the emulator's picture for the machine
+    /// (`tune_picture`). One whose picture is left as the emulator sets it
+    /// says no, so its games start without the machine being looked over
+    /// first.
+    fn sizes_picture(&self) -> bool {
+        true
+    }
+
     /// Sizes the picture for this machine if it has not been. Returns the
     /// scale that applies, or `None` when the user already chose their own.
     /// The display is the one Omoio's window is on, in pixels.
@@ -556,6 +564,14 @@ mod tests {
         assert!(started.elapsed() < Duration::from_secs(1));
         child.kill().unwrap();
         child.wait().unwrap();
+    }
+
+    #[test]
+    fn only_cemus_picture_is_left_as_it_is() {
+        assert!(!cemu::Cemu.sizes_picture());
+        assert!(rpcs3::Rpcs3.sizes_picture());
+        assert!(dolphin::WII.sizes_picture());
+        assert!(dolphin::GAMECUBE.sizes_picture());
     }
 
     #[test]

@@ -1326,6 +1326,10 @@ pub fn dropped_kind(path: String) -> &'static str {
 /// this takes effect from the second game started. Until then `apply` reports
 /// that there is nothing to change yet and this is tried again next time.
 fn tune_picture(app: &AppHandle, backend: &dyn crate::backends::EmulatorBackend) {
+    // Before the machine is looked over, which takes a moment.
+    if !backend.sizes_picture() {
+        return;
+    }
     let Ok(file) = settings_path(app) else {
         return;
     };

@@ -1046,6 +1046,11 @@ impl super::EmulatorBackend for Cemu {
         controllers::write(app, title_id, players)
     }
 
+    /// Cemu's picture is left as Cemu sets it.
+    fn sizes_picture(&self) -> bool {
+        false
+    }
+
     fn tune_picture(
         &self,
         _app: &AppHandle,
@@ -1053,8 +1058,8 @@ impl super::EmulatorBackend for Cemu {
         _display_height: u32,
         _graphics_memory: u64,
     ) -> Result<Option<u32>, String> {
-        // An error rather than "nothing to do", so Cemu is never noted as
-        // sized: its picture is left as Cemu sets it.
+        // Never asked (`sizes_picture`). An error rather than "nothing to
+        // do", so Cemu would never be noted as sized if it were.
         Err("Omoio does not size Cemu's picture.".to_string())
     }
 
