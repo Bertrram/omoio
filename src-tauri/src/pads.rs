@@ -381,16 +381,32 @@ pub fn held(device: &str) -> Option<Vec<&'static str>> {
 /// `None` for a pad gilrs does not have plugged in, or one whose ids it does
 /// not know.
 pub fn usb_ids(device: &str) -> Option<(u16, u16, usize)> {
+    usb_ids_counting(device, |a, b| a == b)
+}
+
+/// `usb_ids`, counting the pads before it that `same` takes, by their
+/// vendor and product ids, for one of a kind with it. For an emulator that
+/// numbers pads by something two models can share, as Dolphin numbers them
+/// by the name SDL gives them.
+pub fn usb_ids_counting(device: &str, same: impl Fn((u16, u16), (u16, u16)) -> bool) -> Option<(u16, u16, usize)> {
     watch();
     let seen = seen().lock().unwrap();
-    let seen = seen.as_ref()?;
-    let at = seen.iter().position(|s| s.pad.device == device)?;
-    let (vendor, product) = (seen[at].vendor?, seen[at].product?);
-    let before = seen[..at]
-        .iter()
-        .filter(|s| s.vendor == Some(vendor) && s.product == Some(product))
-        .count();
-    Some((vendor, product, before))
+    let listed: Vec<(&str, Option<(u16, u16)>)> =
+        seen.as_ref()?.iter().map(|s| (s.pad.device.as_str(), s.vendor.zip(s.product))).collect();
+    ids_before(&listed, device, same)
+}
+
+/// `usb_ids_counting` among the pads `listed`, with their ids, in the order
+/// gilrs lists them.
+fn ids_before(
+    listed: &[(&str, Option<(u16, u16)>)],
+    device: &str,
+    same: impl Fn((u16, u16), (u16, u16)) -> bool,
+) -> Option<(u16, u16, usize)> {
+    let at = listed.iter().position(|(name, _)| *name == device)?;
+    let ids = listed[at].1?;
+    let before = listed[..at].iter().filter_map(|(_, other)| *other).filter(|other| same(*other, ids)).count();
+    Some((ids.0, ids.1, before))
 }
 
 /// Everything held on any pad plugged in, for a menu any player may use.
@@ -443,6 +459,24 @@ mod tests {
         assert!(answers_through_xinput(Some(0x20D6), true), "a PowerA pad Windows takes for a gamepad");
         assert!(!answers_through_xinput(Some(SONY), false));
         assert!(!answers_through_xinput(None, false));
+    }
+
+    #[test]
+    fn pads_before_one_are_counted_by_what_makes_them_alike() {
+        // Two models of the DualShock 4, then a DualSense.
+        let listed = [
+            ("PS4 Controller 0", Some((SONY, 0x05C4))),
+            ("Mystery Pad 0", None),
+            ("PS4 Controller 1", Some((SONY, 0x09CC))),
+            ("DualSense Wireless Controller 0", Some((SONY, 0x0CE6))),
+        ];
+        let model = |a: (u16, u16), b: (u16, u16)| a == b;
+        let maker = |a: (u16, u16), b: (u16, u16)| a.0 == b.0;
+        assert_eq!(ids_before(&listed, "PS4 Controller 1", model), Some((SONY, 0x09CC, 0)));
+        assert_eq!(ids_before(&listed, "PS4 Controller 1", maker), Some((SONY, 0x09CC, 1)));
+        assert_eq!(ids_before(&listed, "DualSense Wireless Controller 0", maker), Some((SONY, 0x0CE6, 2)));
+        assert_eq!(ids_before(&listed, "Mystery Pad 0", model), None, "no ids");
+        assert_eq!(ids_before(&listed, "Unplugged 0", model), None);
     }
 
     #[test]

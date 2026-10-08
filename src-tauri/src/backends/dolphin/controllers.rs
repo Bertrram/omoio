@@ -219,8 +219,23 @@ fn sdl_name(vendor: u16, product: u16) -> Option<&'static str> {
     })
 }
 
-/// A pad's USB vendor and product ids and how many of that model come
-/// before it, as `pads::usb_ids` gives them.
+/// Whether SDL gives pads of these two USB vendor and product ids the same
+/// name. Dolphin numbers a pad among the pads of its source and name that
+/// came before it (`ControllerInterface::AddDevice`, InputCommon/
+/// ControllerInterface/ControllerInterface.cpp), so the first DualShock 4
+/// and the second model of it are `SDL/0` and `SDL/1` of "PS4 Controller".
+fn same_sdl_name(a: (u16, u16), b: (u16, u16)) -> bool {
+    sdl_name(a.0, a.1).is_some_and(|name| sdl_name(b.0, b.1) == Some(name))
+}
+
+/// How Dolphin numbers the pads: a pad's USB vendor and product ids and how
+/// many pads SDL names the same come before it.
+fn usb_ids(device: &str) -> Option<(u16, u16, usize)> {
+    crate::pads::usb_ids_counting(device, same_sdl_name)
+}
+
+/// A pad's USB vendor and product ids and how many of the same name come
+/// before it, as `usb_ids` gives them.
 type UsbIds<'a> = &'a dyn Fn(&str) -> Option<(u16, u16, usize)>;
 
 /// The XInput slot a pad sits in, counted from 0.
@@ -418,7 +433,7 @@ pub fn write(app: &AppHandle, console: Console, title_id: &str, players: &[Playe
         return Ok(());
     }
     let plugged = crate::pads::connected();
-    let ids = |device: &str| crate::pads::usb_ids(device);
+    let ids = |device: &str| usb_ids(device);
     let usable = |player: &Player| device(&player.pad, &ids).is_some();
     let players = stand_in(players, &plugged, &usable);
     let devices: Vec<Option<String>> = players.iter().map(|player| device(&player.pad, &ids)).collect();
@@ -568,7 +583,7 @@ fn without_own_profiles(text: &str, console: Console, game: &str) -> String {
 /// `stand_in` has had its go with the pads `connected`, worded for the
 /// person about to press Play. `None` when they have one.
 pub fn missing_first_player(players: &[Player], connected: &[Pad]) -> Option<String> {
-    let ids = |device: &str| crate::pads::usb_ids(device);
+    let ids = |device: &str| usb_ids(device);
     missing(players, connected, &|player: &Player| device(&player.pad, &ids).is_some())
 }
 
@@ -731,6 +746,15 @@ mod tests {
         assert_eq!(name("Nintendo Switch Pro Controller 0").as_deref(), Some("SDL/0/Nintendo Switch Pro Controller"));
         assert_eq!(name("8BitDo Something 0"), None, "a name SDL would give some other way");
         assert_eq!(super::device(&pad("XInput Pad #4", "XInput"), &ids).as_deref(), Some("XInput/3/Gamepad"));
+    }
+
+    #[test]
+    fn pads_are_numbered_among_those_sdl_names_the_same() {
+        let (first, second) = ((0x054C, 0x05C4), (0x054C, 0x09CC));
+        assert!(same_sdl_name(first, second), "both models of the DualShock 4");
+        assert!(same_sdl_name(second, second));
+        assert!(!same_sdl_name(first, (0x054C, 0x0CE6)), "a DualSense");
+        assert!(!same_sdl_name((0x2DC8, 0x6001), (0x2DC8, 0x6001)), "a pad SDL names some other way");
     }
 
     #[test]
