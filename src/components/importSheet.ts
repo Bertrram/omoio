@@ -81,7 +81,7 @@ function sheet(dropped?: string[]): void {
     busy = false;
     sheet.innerHTML = `
       <div class="sheet-h">Import a game</div>
-      <div class="sheet-p">Point Omoio at a folder you've already unpacked, a .7z or .zip archive, a Wii U .wua, or a Wii U, Wii or GameCube disc image.</div>
+      <div class="sheet-p">Point Omoio at a folder you've already unpacked, a .7z or .zip archive, a Wii&nbsp;U .wua, or a Wii&nbsp;U, Wii or GameCube disc image.</div>
       ${note ? `<div class="notice" style="margin-top:16px">${note}</div>` : ""}
       <div class="sheet-actions">
         <button class="btn ghost" id="pick-folder">Choose a folder</button>

@@ -21,6 +21,7 @@ import {
   setPortalButton,
   stopFigurePictures,
   CONSOLE_SHORT,
+  EMULATOR_OF,
   type Game,
 } from "../api";
 import { fitCovers, placeholderArt } from "./art";
@@ -261,7 +262,7 @@ function fill(body: HTMLElement, hero: HTMLElement, game: Game): void {
       picturesNote.textContent =
         count > 0
           ? ""
-          : "Shows each figure's own picture in the portal menu, read from your copy of the game. Takes under a minute.";
+          : "Shows each figure's own picture in the portal menu, read from your copy of the game.";
     };
     const countPictures = () =>
       figurePictures(game.title_id)
@@ -297,7 +298,8 @@ function fill(body: HTMLElement, hero: HTMLElement, game: Game): void {
       picturesValue.className = "d-row-v";
       picturesValue.innerHTML = `<span class="pct"></span><span class="d-key">Stop</span>`;
       const pct = picturesValue.querySelector<HTMLElement>(".pct")!;
-      picturesNote.textContent = copy ? "Cemu is making a temporary copy of the game…" : "Reading the pictures from your game…";
+      const copier = EMULATOR_OF[game.console];
+      picturesNote.textContent = copy ? `${copier} is making a temporary copy of the game…` : "Reading the pictures from your game…";
       picturesFill.style.width = "0%";
       picturesBar.classList.remove("gone");
       const unlisten = onFigurePictures((progress) => {
@@ -306,7 +308,7 @@ function fill(body: HTMLElement, hero: HTMLElement, game: Game): void {
         picturesFill.style.width = `${done}%`;
         pct.textContent = `${done}%`;
         picturesNote.textContent =
-          progress.step === "copy" ? "Cemu is making a temporary copy of the game…" : "Reading the pictures from your game…";
+          progress.step === "copy" ? `${copier} is making a temporary copy of the game…` : "Reading the pictures from your game…";
       });
       try {
         const got = await getFigurePictures(game.title_id, copy);
@@ -320,7 +322,7 @@ function fill(body: HTMLElement, hero: HTMLElement, game: Game): void {
             picturesValue.className = "d-row-v ask";
             picturesValue.textContent = "Make a copy";
             sayWithSizes([
-              "Omoio can't read this copy of the game as it is. Cemu can make a temporary copy to read the pictures from, and Omoio deletes it afterwards. It needs ",
+              `Omoio can't read this copy of the game as it is. ${copier} can make a temporary copy to read the pictures from, and Omoio deletes it afterwards. It needs `,
               need,
               " free for a few minutes, and ",
               free,

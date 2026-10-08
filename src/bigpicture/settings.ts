@@ -23,6 +23,7 @@ import {
   setPortalButton,
   setRegion,
   setStartInBigPicture,
+  EMULATOR_OF,
   type Account,
   type ControllerView,
   type EmulatorVersion,
@@ -61,14 +62,6 @@ const CATEGORIES: [Category, string][] = [
   ["controllers", "Controllers"],
   ["system", "System"],
 ];
-
-/// Which emulator runs which console, for the System list.
-const EMULATOR_NAMES: Record<EmulatorVersion["console"], string> = {
-  ps3: "RPCS3",
-  wiiu: "Cemu",
-  wii: "Dolphin",
-  gamecube: "Dolphin",
-};
 
 interface General {
   settings: Settings;
@@ -303,7 +296,7 @@ export function settingsScreen(kit: Kit, cap: (input: string) => string, start: 
     // Dolphin answers for both of its consoles; it is one emulator.
     const listed = new Set<string>();
     for (const emulator of emulators) {
-      const name = EMULATOR_NAMES[emulator.console];
+      const name = EMULATOR_OF[emulator.console];
       if (listed.has(name)) continue;
       listed.add(name);
       rows.push(row(`sys:${emulator.console}`, name, emulator.version ?? "Not installed"));

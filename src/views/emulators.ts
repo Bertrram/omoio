@@ -56,7 +56,7 @@ const NINTENDO_HANDHELD = 268;
 const EMULATORS: Emulator[] = [
   { name: "RPCS3", console: "PlayStation 3", icon: rpcs3Icon, hue: SONY_HOME, runs: "ps3" },
   { name: "PCSX2", console: "PlayStation 2", icon: pcsx2Icon, hue: SONY_HOME, needs: "Your own BIOS" },
-  { name: "Dolphin", console: "GameCube and Wii", icon: dolphinIcon, hue: NINTENDO_HOME, runs: "wii" },
+  { name: "Dolphin", console: "Wii and GameCube", icon: dolphinIcon, hue: NINTENDO_HOME, runs: "wii" },
   { name: "PPSSPP", console: "PSP", icon: ppssppIcon, hue: SONY_HANDHELD },
   { name: "DuckStation", console: "PlayStation", icon: duckstationIcon, hue: SONY_HOME, needs: "Your own BIOS" },
   { name: "Cemu", console: "Wii U", icon: cemuIcon, hue: NINTENDO_HOME, runs: "wiiu" },

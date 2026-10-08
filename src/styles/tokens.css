@@ -83,11 +83,12 @@
 
   /* Each console's tag on a library tile, colours far apart, so the same
      game owned on more than one console tells apart at a glance: silver for
-     the PS3, the light blue of the Wii U's boxes, the white of the Wii's
-     cases, and the GameCube's indigo, lightened. Dark text on all. */
+     the PS3, the light blue of the Wii U's boxes, the GameCube's indigo,
+     lightened, and for the Wii a light red, since its white cases would sit
+     beside the PS3's silver. Dark text on all. */
   --console-ps3: #d4d9e3;
   --console-wiiu: #35c3f0;
-  --console-wii: #f6f7f9;
+  --console-wii: #f5a3c0;
   --console-gamecube: #a99bf5;
   --on-console: #0b0e14;
 

@@ -108,7 +108,7 @@ async function askWhoAndWhere(sheet: HTMLElement): Promise<void> {
     <div class="setting">
       <div>
         <div class="setting-k">Region</div>
-        <div class="setting-hint">Sets the language PS3 games start in. It doesn't change Wii U games.</div>
+        <div class="setting-hint">Sets the language PS3 games start in. It doesn't change games for other consoles.</div>
       </div>
       <div class="row-actions">
         <select class="select" id="setup-region"></select>
@@ -161,8 +161,11 @@ let pendingRegion = "";
 /// emulator could start nothing, so at least one it has to be.
 async function askWhatToPlay(sheet: HTMLElement): Promise<Emulator[]> {
   const versions = await emulatorVersions();
+  // Dolphin answers for the Wii and the GameCube; its row is the Wii's.
   const chosen = new Set<Console>(
-    versions.filter((v) => v.version).map((v) => v.console)
+    versions
+      .filter((v) => v.version && EMULATORS.some((emulator) => emulator.console === v.console))
+      .map((v) => v.console)
   );
 
   sheet.innerHTML = `

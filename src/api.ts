@@ -608,6 +608,9 @@ export type Console = "ps3" | "wiiu" | "wii" | "gamecube";
 /// Each console as it is usually shortened, where room is short.
 export const CONSOLE_SHORT: Record<Console, string> = { ps3: "PS3", wiiu: "Wii U", wii: "Wii", gamecube: "GameCube" };
 
+/// The emulator that runs each console. Dolphin runs two.
+export const EMULATOR_OF: Record<Console, string> = { ps3: "RPCS3", wiiu: "Cemu", wii: "Dolphin", gamecube: "Dolphin" };
+
 export interface Release {
   title_id: string;
   region: string;
