@@ -96,8 +96,10 @@ const SDL_NAMES: [(u16, u16, &str); 8] = [
 /// device"), which only a pad plugged in later takes, so a pad there from the
 /// start must be named exactly. For a pad one of SDL's own drivers reads,
 /// `SDL_GetGamepadName` gives the driver's name: the controller database
-/// RPCS3 ships has no mapping for those drivers' pads, so SDL makes one named
-/// "*" (`SDL_CreateMappingForHIDAPIGamepad`), which means the pad's own name.
+/// RPCS3 ships has no mapping for those drivers' pads (none of its Windows
+/// entries carries their mark, an `h` in the GUID, in the copy installed on 8
+/// October 2026), so SDL makes one named "*"
+/// (`SDL_CreateMappingForHIDAPIGamepad`), which means the pad's own name.
 /// Any other pad goes by its mapping's name in that database, which gilrs
 /// reads too, so gilrs's name stands in for it. One RPCS3 then can't find
 /// is told about after the game starts (`unfound`).
@@ -149,18 +151,45 @@ fn rpcs3_names(plugged: &[Plugged]) -> Vec<(&'static str, String)> {
         .collect()
 }
 
+/// What gilrs 0.11.2 calls Sony's pads on Windows, before their number, with
+/// the RPCS3 handler and slot name for each: its controller list names the
+/// DualSense and the DualSense Edge "PS5 Controller" and every DualShock 4
+/// "PS4 Controller" (`SDL_GameControllerDB/gamecontrollerdb.txt`, read 8
+/// October 2026).
+const SONY_BY_NAME: [(&str, &str, &str); 2] = [
+    ("PS5 Controller", "DualSense", "DualSense Pad #"),
+    ("PS4 Controller", "DualShock 4", "DS4 Pad #"),
+];
+
 /// The handler and device RPCS3 is told a player's pad is. An XInput slot,
 /// or a Sony handler's slot read back from RPCS3's file, is RPCS3's own name
 /// already.
+///
+/// A Sony pad not plugged in as the game starts, such as one switched on a
+/// moment later, is named from the name the layout keeps, "PS5 Controller
+/// 0": its slot exists whether or not a pad is in it, and RPCS3 fills it
+/// when one arrives. Any other pad not plugged in keeps the name it has. A
+/// layout kept by an earlier Omoio may hold the second listing of an
+/// Xbox-style pad from another maker as a player of its own (pads.rs,
+/// `connected`), and named so that RPCS3 could find it, that pad would drive
+/// two players.
 fn rpcs3_pad(pad: &Pad, plugged: &[Plugged]) -> (String, String) {
-    plugged
+    if let Some(at) = plugged
         .iter()
         .position(|p| pad.handler == "SDL" && p.pad.device == pad.device)
-        .map(|at| {
-            let (handler, device) = rpcs3_names(plugged).swap_remove(at);
-            (handler.to_string(), device)
-        })
-        .unwrap_or_else(|| (pad.handler.clone(), pad.device.clone()))
+    {
+        let (handler, device) = rpcs3_names(plugged).swap_remove(at);
+        return (handler.to_string(), device);
+    }
+    let sony = pad
+        .device
+        .rsplit_once(' ')
+        .filter(|_| pad.handler == "SDL")
+        .and_then(|(name, number)| {
+            let (_, handler, prefix) = SONY_BY_NAME.iter().find(|(gilrs, ..)| *gilrs == name)?;
+            Some((handler.to_string(), format!("{prefix}{}", number.parse::<u32>().ok()? + 1)))
+        });
+    sony.unwrap_or_else(|| (pad.handler.clone(), pad.device.clone()))
 }
 
 /// The pad a player in RPCS3's file is on, as Omoio names it: the pad plugged
@@ -436,7 +465,8 @@ fn profile_text(players: &[Player], plugged: &[Plugged]) -> String {
         // and at zero a worn stick drifts. These are the handlers' own
         // numbers: SDL's from its init_config, XInput's the constants in
         // Microsoft's XInput.h, and the DualSense and DualShock 4 handlers'
-        // from theirs, which count to 255.
+        // from theirs, 40 on a stick that counts to 255 (`init_config` in
+        // dualsense_pad_handler.cpp and ds4_pad_handler.cpp at 222754bf).
         let (left, right) = match handler.as_str() {
             "XInput" => (7849, 8689),
             sony if is_sony(sony) => (40, 40),
@@ -573,7 +603,7 @@ fn notice(player: usize, pad_name: &str, why: Unbound) -> String {
     let number = player + 1;
     match why {
         Unbound::Missing => format!(
-            "RPCS3 couldn't find player {number}'s controller, {pad_name}, so the game won't answer it. Stop the game and start it again."
+            "RPCS3 couldn't find player {number}'s controller, {pad_name}, so the game won't answer it. Start the game again. If that doesn't help, the log on the Logs page shows what RPCS3 saw."
         ),
         Unbound::Held => format!(
             "RPCS3 couldn't open player {number}'s controller, {pad_name}. Close any other program using it, such as DS4Windows, then start the game again."
@@ -828,11 +858,19 @@ mod tests {
         assert_eq!(parse_players(&text, &plugged)[0].as_ref().unwrap().pad, plugged[0].pad);
     }
 
+    /// Switched on after Play, a Sony pad still lands in the slot waiting for
+    /// it. Any other pad keeps the name it has.
     #[test]
-    fn a_pad_not_plugged_in_keeps_the_name_it_has() {
+    fn a_sony_pad_not_plugged_in_is_named_where_rpcs3_will_find_it() {
         let away = on_usb("PS5 Controller 1", Some((SONY, 0x0CE6))).pad;
         let text = profile_text(&[Player::on(away)], &[dualsense()]);
-        assert!(text.contains("  Handler: SDL\n  Device: \"PS5 Controller 1\"\n"));
+        assert!(text.contains("  Handler: DualSense\n  Device: \"DualSense Pad #2\"\n"), "{text}");
+        assert!(text.contains("    Cross: \"Cross\"\n"));
+        let ds4 = on_usb("PS4 Controller 0", Some((SONY, 0x09CC))).pad;
+        assert!(profile_text(&[Player::on(ds4)], &[]).contains("  Handler: DualShock 4\n  Device: \"DS4 Pad #1\"\n"));
+        let pro = on_usb("Nintendo Switch Pro Controller 0", Some((0x057E, 0x2009))).pad;
+        assert!(profile_text(&[Player::on(pro)], &[])
+            .contains("  Handler: SDL\n  Device: \"Nintendo Switch Pro Controller 0\"\n"));
     }
 
     #[test]
@@ -890,7 +928,7 @@ mod tests {
     fn the_notice_says_who_and_what_to_do() {
         assert_eq!(
             notice(0, "PS5 Controller", Unbound::Missing),
-            "RPCS3 couldn't find player 1's controller, PS5 Controller, so the game won't answer it. Stop the game and start it again."
+            "RPCS3 couldn't find player 1's controller, PS5 Controller, so the game won't answer it. Start the game again. If that doesn't help, the log on the Logs page shows what RPCS3 saw."
         );
         assert_eq!(
             notice(1, "PS4 Controller", Unbound::Held),
