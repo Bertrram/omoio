@@ -8,8 +8,9 @@
 //! A Wii U or Wii disc image is encrypted, so for one Omoio has the emulator
 //! make a copy it can read (Cemu a .wua, Dolphin's own DolphinTool the
 //! game's files), reads the pictures from that, and deletes the copy at
-//! once. The emulator does the decrypting, never Omoio. The copy is about the
-//! size of the game and takes minutes to make, so it is made only when it
+//! once. The emulator does the decrypting, never Omoio. The copy can be about
+//! the size of the game and take minutes to make (Dolphin copies only the
+//! files the reader needs where they are known), so it is made only when it
 //! fits with room to spare, and only for a game the reader knows. Nothing of
 //! it is kept but the pictures, and a copy left by a run that never finished
 //! goes the next time Omoio starts.

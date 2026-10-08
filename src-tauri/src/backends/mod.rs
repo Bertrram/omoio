@@ -131,9 +131,10 @@ pub trait EmulatorBackend: Sync {
     }
 
     /// The room a readable copy of the game would take, when there may be
-    /// none and the emulator can make one: about the size of the game.
-    /// `None` when the game's own files are read as they are, or the
-    /// emulator can't make a copy.
+    /// none and the emulator can make one: about the size of the game, or
+    /// of the few files the picture reader needs where the emulator copies
+    /// only those. `None` when the game's own files are read as they are,
+    /// or the emulator can't make a copy.
     fn copy_size(&self, _game: &Game) -> Option<u64> {
         None
     }

@@ -250,11 +250,14 @@ impl super::EmulatorBackend for Dolphin {
         game.path.is_dir().then(|| game.path.clone())
     }
 
+    /// The game's own partition, or for a game whose pictures are in a few
+    /// files, just those (copy.rs).
     fn copy_size(&self, game: &Game) -> Option<u64> {
         if game.path.is_dir() || self.console != Console::Wii {
             return None;
         }
-        disc::read(&game.path).ok().map(|found| found.data_size)
+        let found = disc::read(&game.path).ok()?;
+        Some(copy::room_for(figures::game_from_title(&game.title)).unwrap_or(found.data_size))
     }
 
     fn make_copy(
@@ -269,7 +272,8 @@ impl super::EmulatorBackend for Dolphin {
         if !tool.is_file() {
             return Err("Install Dolphin from the Emulators screen first.".to_string());
         }
-        copy::extract(&tool, &game.path, &into.join("game"), progress, cancel)
+        let files = copy::files_for(figures::game_from_title(&game.title));
+        copy::extract(&tool, &game.path, &into.join("game"), files, progress, cancel)
     }
 
     fn button_names(&self) -> &'static [(&'static str, &'static str)] {
