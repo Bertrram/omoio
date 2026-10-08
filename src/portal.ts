@@ -384,11 +384,14 @@ let pictures: {
 /// A figure's picture, or its plain version's when its variant has none of
 /// its own, or failing that any version's: Trap Team names its pictures by
 /// the game's own variants, which Cemu's list doesn't give its Trap Masters.
-/// `null` when Omoio has no picture of it.
+/// `null` when Omoio has no picture of it. A Creation Crystal's variant is
+/// its casing, so another variant's picture would show the wrong one.
 function pictureOf(id: number | null | undefined, variant: number | null | undefined): string | null {
   if (id == null) return null;
   const four = (value: number) => value.toString(16).padStart(4, "0");
-  return fileOf(`${id}-${four(variant ?? 0)}`) ?? fileOf(`${id}-0000`) ?? fileOf(pictures?.firstOf.get(id) ?? "");
+  const own = fileOf(`${id}-${four(variant ?? 0)}`);
+  if (offers.some((offer) => offer.id === id && offer.kind === "crystal")) return own;
+  return own ?? fileOf(`${id}-0000`) ?? fileOf(pictures?.firstOf.get(id) ?? "");
 }
 
 /// For each figure id, the name of its picture with the lowest variant.
@@ -467,6 +470,9 @@ function slotOf(entry: Entry): number {
   if (entry.fresh) return -1;
   const byFile = slotOfFile(entry.figure?.path);
   if (byFile >= 0) return byFile;
+  // A crystal goes by its file only: the crystals of one casing share a
+  // name, each holding an Imaginator of its own.
+  if (entry.kind === "crystal") return -1;
   const name = portalName(entry);
   return onPortal.findIndex((held, slot) => held === name && (Boolean(entry.offer) || !slotFiles[slot]));
 }
@@ -511,8 +517,10 @@ function driverOn(): boolean {
 }
 
 /// Each vehicle on the portal with its own SuperCharger on too, which the
-/// game calls SuperCharged, by slot.
+/// game calls SuperCharged, by slot. None in a game that makes nothing of
+/// the two together.
 function superCharged(): { driver: number; vehicle: number }[] {
+  if (!pairsUp()) return [];
   return vehiclesOn().flatMap((vehicle) => {
     const partner = characterIn(vehicle.slot)?.partner;
     const driver = partner == null ? -1 : slotWith(partner);
@@ -1065,10 +1073,11 @@ const OLDER_PIECES: Partial<Record<FigureKind, string>> = {
 
 /// What a piece from an earlier game does in Imaginators, where every older
 /// toy works (Activision's "Skylanders Imaginators Toy FAQ", question 1,
-/// read 7 October 2026). A magic item or a trap gives gold, an adventure
-/// pack's piece goes into the collection with a little treasure the first
-/// time it goes on (the Skylanders wiki's "Magic Item", "Traps" and
-/// "Adventure Pack"). SuperChargers' vehicles race in Skylanders Racing,
+/// read 7 October 2026). A magic item gives the Skylander on the portal
+/// gold, over 500 (the Skylanders wiki's "Magic Item"), a trap 500 and
+/// nothing else in the story (its "Traps"), and an adventure pack's piece
+/// goes into the collection with a little treasure the first time it goes
+/// on (its "Adventure Pack"). SuperChargers' vehicles race in Skylanders Racing,
 /// which the map opens, and traps work there as in SuperChargers
 /// (Activision's Imaginators FAQ, questions 6 and 7), and a trophy opens its
 /// villains' vehicles for racing (readers' answers on
@@ -1106,7 +1115,7 @@ function renderHead(): HTMLElement {
   const on = placed();
   if (on.length === 0) row.appendChild(node("span", "portal-quiet", "Nothing on the portal."));
   const pairs = superCharged();
-  const unmanned = !driverOn();
+  const unmanned = pairsUp() && !driverOn();
   // A SuperCharged pair sits in one frame, its driver first, with the mark
   // the game's lightning stands for.
   let frame: HTMLElement | null = null;
@@ -1640,15 +1649,20 @@ function casingWords(entry: Entry): string {
 }
 
 /// What the game does when a Sensei or a crystal made now goes on, when the
-/// Signature Patch isn't on in it, and what to do: a box in the card, and
-/// the same words as the notice when one is tried.
+/// Signature Patch isn't on in it, and what to do: a box over the crystals
+/// and the Senseis, and the same words as the notice when one is tried.
 function patchWords(): { title: string; detail: string } | null {
   const pack = made?.pack || "Signature Patch";
   switch (made?.check) {
     case "not_downloaded":
       return {
         title: "Cemu's packs aren't here yet",
-        detail: `Imaginators checks a factory signature that the Senseis and crystals Omoio makes can't carry. Cemu's ${pack}, one of its community packs, takes that check away. ${nameOf(family, "South")} gets them.`,
+        detail: `Imaginators checks a factory signature that the Senseis and crystals Omoio makes can't carry. Cemu's ${pack}, one of its community packs, takes that check away. ${nameOf(family, "South")} on a new Sensei or crystal gets them.`,
+      };
+    case "missing":
+      return {
+        title: `Cemu's packs have no ${pack}`,
+        detail: "Imaginators won't take a Sensei or crystal Omoio makes without it. Download the packs again in this game's Community packs in Omoio, then start the game again.",
       };
     case "off":
       return {
@@ -1687,6 +1701,7 @@ function renderCrystals(): HTMLElement {
   const body = node("div", "portal-body portal-tray portal-crystals");
   const entries = tabs[tab]?.entries ?? [];
   const main = node("div", "portal-tray-main portal-shelf-main");
+  main.dataset.scroll = "crystals";
   const saved = entries.filter((each) => !each.fresh);
   const yours = node("div", "portal-shelf-head");
   yours.append(
@@ -1705,6 +1720,7 @@ function renderCrystals(): HTMLElement {
   const box = patchBox();
   if (box) main.appendChild(box);
   const forge = node("div", "portal-forge");
+  if (entries.length === saved.length) forge.appendChild(node("div", "portal-quiet", asking ? "Getting the characters…" : "None to make here."));
   let index = saved.length;
   for (const row of crystalRows(entries)) {
     if (!row.element) continue;
@@ -1815,6 +1831,7 @@ function renderSenseis(): HTMLElement {
   const body = node("div", "portal-body portal-tray portal-dojo");
   const entries = tabs[tab]?.entries ?? [];
   const main = node("div", "portal-tray-main portal-dojo-main");
+  main.dataset.scroll = "senseis";
   const box = patchBox();
   if (box) main.appendChild(box);
   const classes = node("div", "portal-dojo-classes");
@@ -1843,10 +1860,9 @@ function senseiTile(entry: Entry, index: number): HTMLElement {
   const battle = battleOf(entry);
   const villain = classOf(entry) === "villain_sensei";
   const state = on ? "on the portal" : entry.figure ? "saved" : "new";
-  tile.setAttribute(
-    "aria-label",
-    [entry.name, `${element} ${battle ? BATTLE_CLASSES[battle].words : ""} ${villain ? "Villain Sensei" : "Sensei"}`.replace(/\s+/g, " "), state].join(", ")
-  );
+  // Kaos's class and element are both his own, said once.
+  const kind = [element, battle && battle !== entry.element ? BATTLE_CLASSES[battle].words : "", villain ? "Villain Sensei" : "Sensei"];
+  tile.setAttribute("aria-label", [entry.name, kind.filter(Boolean).join(" "), state].join(", "));
   const art = node("span", `portal-car-art ${tintOf(entry.element, entry.kind)}`);
   const source = pictureOf(entry.offer?.id ?? entry.figure?.id, variantOf(entry));
   if (source) art.appendChild(image(source));
@@ -2020,7 +2036,7 @@ function pairOn(entry: Entry | undefined): boolean {
 /// What the bottom face button does on a tile.
 function southWords(entry: Entry | undefined): string {
   if (entry?.swap) return pickedTop ? "Pick bottom" : "Pick top";
-  if (turnedAway(entry) && made?.check === "not_downloaded") return "Get Cemu's packs";
+  if (turnedAway(entry)) return made?.check === "not_downloaded" ? "Get Cemu's packs" : "See why";
   return entry?.fresh ? "Make crystal" : "Put on";
 }
 
@@ -2389,7 +2405,8 @@ async function takeOff() {
 /// co-op review, read 7 October 2026), and two vehicles on a portal can
 /// leave it showing the figure going on for ever (Activision's Gameplay FAQ,
 /// question 1). So a vehicle already on comes off first too, and the notice
-/// says so. Says whether the figure is on now.
+/// says so. Imaginators races SuperChargers' vehicles (its FAQ, question 6),
+/// and the same is taken to hold there. Says whether the figure is on now.
 async function putOn(name: string, figure: Figure | undefined, offer: Offer | undefined): Promise<boolean> {
   const kind = offer?.kind ?? figure?.kind;
   if (kind === "trap") {
@@ -2562,14 +2579,35 @@ async function choose() {
   const id = entry.offer?.id ?? entry.figure?.id;
   const vehicle = (entry.offer?.kind ?? entry.figure?.kind) === "vehicle";
   const leaving = vehicle ? vehiclesOn().map((each) => each.name) : [];
+  const kept = new Set(mine.map((figure) => figure.path));
   const done = await putOn(entry.name, entry.figure, entry.offer);
   if (done && id != null && pairsUp() && (vehicle || classOf(entry) === "supercharger")) tellDriving(id, leaving);
+  if (!done && entry.fresh) findLostCrystal(kept);
+  // A Sensei or crystal made before goes on whatever the patch, and the
+  // game turns it away the same, so the menu says why.
+  const words = done && signed(entry) ? patchWords() : null;
+  if (words) notify({ kind: "hint", ...words });
+}
+
+/// After making a crystal didn't work: the emulator may have written it
+/// before running into the problem, and then it is under Your Imaginators,
+/// to be put on from there rather than made again.
+function findLostCrystal(kept: Set<string>) {
+  const lost = mine.find((figure) => figure.kind === "crystal" && !kept.has(figure.path));
+  if (!lost) return;
+  notify({
+    kind: "hint",
+    title: `${lost.name} was made, but isn't on the portal`,
+    detail: "It's first under Your Imaginators. Put it on from there rather than make another.",
+  });
 }
 
 /// Says why Imaginators would turn away a Sensei or a crystal made now, and
-/// what to do about it, before one is made. Without Cemu's packs, gets them.
-async function explainPatch() {
-  if (made?.check === "not_downloaded") return getPacks();
+/// what to do about it, before one is made. Without Cemu's packs, gets
+/// them, outside the turn of the press, so other figures still go on while
+/// they come.
+function explainPatch() {
+  if (made?.check === "not_downloaded") return void getPacks();
   const words = patchWords();
   if (words) notify({ kind: "hint", ...words });
 }
@@ -2577,6 +2615,7 @@ async function explainPatch() {
 /// Downloads Cemu's community packs, which bring the Signature Patch, with
 /// the share done in the notice. East stops it.
 async function getPacks() {
+  if (gettingPacks) return;
   gettingPacks = true;
   const getting: Notice = { kind: "working", title: "Getting Cemu's packs…", detail: "Imaginators needs the Signature Patch from them." };
   notify(getting);
@@ -2589,13 +2628,19 @@ async function getPacks() {
   try {
     await refreshCommunity("wiiu");
     made = await portalMadeFigures().catch(() => made);
-    notify({
-      kind: "hint",
-      title: "Cemu's packs are here",
-      detail: "Close the game and start it again, and Imaginators takes the Senseis and crystals made here.",
-    });
+    const words = patchWords();
+    notify(
+      made?.check === "next_start" || !words
+        ? { kind: "hint", title: "Cemu's packs are here", detail: "Close the game and start it again, and Imaginators takes the Senseis and crystals made here." }
+        : { kind: "hint", ...words }
+    );
   } catch (err) {
-    notify(problem(err, "Couldn't get Cemu's packs. Try again."));
+    // Stopped with East: the packs on the computer are as they were.
+    notify(
+      err === "cancelled"
+        ? { kind: "info", title: "Stopped", detail: "The packs you had are as they were." }
+        : problem(err, "Couldn't get Cemu's packs. Try again.")
+    );
   } finally {
     stopListening?.();
     gettingPacks = false;
@@ -2753,9 +2798,9 @@ document.addEventListener("keydown", (event) => {
   const act = keys[event.key];
   if (act) {
     event.preventDefault();
-    // A key held down repeats; only the arrows should, as the pad's
-    // directions do, so a held Enter never makes a second figure.
-    if (event.repeat && !event.key.startsWith("Arrow")) return;
+    // A key held down repeats; only moving through the menu should, the
+    // arrows and the page keys, so a held Enter never makes a second figure.
+    if (event.repeat && !event.key.startsWith("Arrow") && !event.key.startsWith("Page")) return;
     act();
   }
 });

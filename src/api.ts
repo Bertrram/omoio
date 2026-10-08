@@ -934,7 +934,7 @@ export function portalGame(): Promise<SkylandersGame | null> {
 /// checks a factory signature on its own figures, which a made one can't
 /// carry, and a community pack, named in `pack`, takes that check away.
 export interface MadeFigures {
-  check: "none" | "passed" | "next_start" | "off" | "not_downloaded";
+  check: "none" | "passed" | "next_start" | "off" | "not_downloaded" | "missing";
   pack: string;
 }
 
