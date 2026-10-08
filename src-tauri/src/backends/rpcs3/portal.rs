@@ -331,7 +331,7 @@ fn is_message(pid: u32, window: HWND) -> bool {
 /// which window is in front only once it has had the last input, so a press
 /// of Alt, which no window acts on alone, goes first, the way Tauri brings
 /// its own windows forward.
-fn give_back_to_game(pid: u32) {
+pub fn give_back_to_game(pid: u32) {
     let front = unsafe { GetForegroundWindow() };
     if process_of(front) != pid {
         return;
