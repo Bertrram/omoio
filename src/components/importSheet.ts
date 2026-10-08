@@ -20,6 +20,11 @@ import {
 } from "../api";
 import { store } from "../state";
 
+/// Disc images, which are played where they are: the Wii U's, which Cemu
+/// reads with the user's keys, and the Wii's and GameCube's, which Dolphin
+/// reads (backends/dolphin/disc.rs).
+const DISC_IMAGES = ["wud", "wux", "iso", "gcm", "wbfs", "rvz", "wia", "gcz", "ciso", "tgc"];
+
 function formatGB(bytes: number): string {
   return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
 }
@@ -76,7 +81,7 @@ function sheet(dropped?: string[]): void {
     busy = false;
     sheet.innerHTML = `
       <div class="sheet-h">Import a game</div>
-      <div class="sheet-p">Point Omoio at a folder you've already unpacked, a .7z or .zip archive, or a Wii U .wua or disc image.</div>
+      <div class="sheet-p">Point Omoio at a folder you've already unpacked, a .7z or .zip archive, a Wii U .wua, or a Wii U, Wii or GameCube disc image.</div>
       ${note ? `<div class="notice" style="margin-top:16px">${note}</div>` : ""}
       <div class="sheet-actions">
         <button class="btn ghost" id="pick-folder">Choose a folder</button>
@@ -261,11 +266,11 @@ function sheet(dropped?: string[]): void {
       multiple: false,
       directory: false,
       title: "Choose a game file",
-      filters: [{ name: "Game archive, .wua or disc image", extensions: ["7z", "zip", "wua", "wud", "wux"] }],
+      filters: [{ name: "Game archive, .wua or disc image", extensions: ["7z", "zip", "wua", ...DISC_IMAGES] }],
     });
     if (typeof picked !== "string") return;
     // A .wua or disc image is played where it is, as an unpacked folder is.
-    if (/\.(wua|wud|wux)$/i.test(picked)) {
+    if (new RegExp(`\\.(wua|${DISC_IMAGES.join("|")})$`, "i").test(picked)) {
       await importOne(picked, "other");
       return;
     }

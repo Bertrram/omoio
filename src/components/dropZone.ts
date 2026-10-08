@@ -16,7 +16,7 @@ export async function watchForDroppedGames(): Promise<void> {
         <path d="M12 3v12M7 10l5 5 5-5M4 20h16"/>
       </svg>
       <div class="drop-t">Drop to import</div>
-      <div class="drop-s">A game folder, or a .7z or .zip archive.</div>
+      <div class="drop-s">A game folder, a disc image, or a .7z or .zip archive.</div>
     </div>
   `;
   document.body.appendChild(overlay);

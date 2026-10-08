@@ -74,7 +74,7 @@ export interface Game {
   /// Where the cover came from: the dump's own icon, or RAWG.
   cover_source: "dump" | "rawg" | null;
   /// Which console the game is for, and so which emulator runs it.
-  console: "ps3" | "wiiu";
+  console: Console;
   /// What its emulator can do beyond starting it.
   features: {
     updates: boolean;
@@ -192,7 +192,7 @@ export interface Machine {
 
 export interface PlaySession {
   /// Which console it ran on. Sessions kept before this was recorded were PS3.
-  console?: "ps3" | "wiiu";
+  console?: Console;
   title_id: string;
   title: string;
   started: string;
@@ -603,10 +603,10 @@ export function pendingUpdates(): Promise<[boolean, PendingUpdate[]]> {
   return invoke("pending_updates");
 }
 
-export type Console = "ps3" | "wiiu";
+export type Console = "ps3" | "wiiu" | "wii" | "gamecube";
 
 /// Each console as it is usually shortened, where room is short.
-export const CONSOLE_SHORT: Record<Console, string> = { ps3: "PS3", wiiu: "Wii U" };
+export const CONSOLE_SHORT: Record<Console, string> = { ps3: "PS3", wiiu: "Wii U", wii: "Wii", gamecube: "GameCube" };
 
 export interface Release {
   title_id: string;
@@ -1038,7 +1038,7 @@ export function catalogueCover(key: string, name: string, console: Console): Pro
 }
 
 export interface EmulatorVersion {
-  console: "ps3" | "wiiu";
+  console: Console;
   /// Null when it is not installed.
   version: string | null;
 }
@@ -1102,6 +1102,19 @@ export function replaceWithOwnSave(path: string, titleId: string): Promise<void>
 
 export function onCemuInstallProgress(handler: (progress: InstallProgress) => void): Promise<UnlistenFn> {
   return listen<InstallProgress>("cemu-install-progress", (event) => handler(event.payload));
+}
+
+/// Dolphin runs Wii and GameCube games from the same install.
+export function installDolphin(): Promise<string> {
+  return invoke("install_dolphin");
+}
+
+export function cancelDolphinInstall(): Promise<void> {
+  return invoke("cancel_dolphin_install");
+}
+
+export function onDolphinInstallProgress(handler: (progress: InstallProgress) => void): Promise<UnlistenFn> {
+  return listen<InstallProgress>("dolphin-install-progress", (event) => handler(event.payload));
 }
 
 /// An installed emulator with a newer official release.

@@ -7,11 +7,13 @@ import {
   getFirmwareVersion,
   getRpcs3Version,
   installCemu,
+  installDolphin,
   installFirmware,
   installRpcs3,
   listRegions,
   needsSetup,
   onCemuInstallProgress,
+  onDolphinInstallProgress,
   onRpcs3InstallProgress,
   setRegion,
   setUsername,
@@ -46,6 +48,13 @@ type Emulator = {
 const EMULATORS: Emulator[] = [
   { console: "ps3", games: "PS3 games", name: "RPCS3", install: installRpcs3, progress: onRpcs3InstallProgress },
   { console: "wiiu", games: "Wii U games", name: "Cemu", install: installCemu, progress: onCemuInstallProgress },
+  {
+    console: "wii",
+    games: "Wii and GameCube games",
+    name: "Dolphin",
+    install: installDolphin,
+    progress: onDolphinInstallProgress,
+  },
 ];
 
 /// Asked once, on the first run.

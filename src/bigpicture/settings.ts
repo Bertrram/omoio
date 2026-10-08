@@ -63,7 +63,12 @@ const CATEGORIES: [Category, string][] = [
 ];
 
 /// Which emulator runs which console, for the System list.
-const EMULATOR_NAMES: Record<EmulatorVersion["console"], string> = { ps3: "RPCS3", wiiu: "Cemu" };
+const EMULATOR_NAMES: Record<EmulatorVersion["console"], string> = {
+  ps3: "RPCS3",
+  wiiu: "Cemu",
+  wii: "Dolphin",
+  gamecube: "Dolphin",
+};
 
 interface General {
   settings: Settings;
@@ -295,8 +300,13 @@ export function settingsScreen(kit: Kit, cap: (input: string) => string, start: 
       )
     );
     rows.push(heading("Emulators"));
+    // Dolphin answers for both of its consoles; it is one emulator.
+    const listed = new Set<string>();
     for (const emulator of emulators) {
-      rows.push(row(`sys:${emulator.console}`, EMULATOR_NAMES[emulator.console], emulator.version ?? "Not installed"));
+      const name = EMULATOR_NAMES[emulator.console];
+      if (listed.has(name)) continue;
+      listed.add(name);
+      rows.push(row(`sys:${emulator.console}`, name, emulator.version ?? "Not installed"));
     }
     rows.push(row("sys:firmware", "PS3 firmware", store.get().firmwareVersion ?? "Not installed"));
     rows.push(heading("Omoio"), row("sys:omoio", "Version", version));

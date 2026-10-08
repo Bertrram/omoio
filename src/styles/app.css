@@ -1140,6 +1140,12 @@ img.cover-behind {
 .console-tag.wiiu {
   background: var(--console-wiiu);
 }
+.console-tag.wii {
+  background: var(--console-wii);
+}
+.console-tag.gamecube {
+  background: var(--console-gamecube);
+}
 /* One line, whatever the id: a Wii U id is sixteen characters, and a meta
    line that wrapped broke its console chip in two. */
 .meta {
