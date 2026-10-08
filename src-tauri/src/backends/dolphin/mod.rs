@@ -17,12 +17,14 @@ pub mod disc;
 pub mod ini;
 pub mod install;
 pub mod log;
+pub mod packs;
 pub mod portal;
 pub mod release;
 pub mod settings;
 
 pub use install::install;
 
+use crate::core::community::{PackChange, Packs};
 use crate::core::console::{Console, Features};
 use crate::core::figures::{self, Character};
 use crate::core::library::Game;
@@ -73,6 +75,11 @@ fn disc_image(picked: &Path) -> Option<PathBuf> {
         }
     }
     (found.len() == 1).then(|| found.remove(0))
+}
+
+/// The disc's revision, which the library keeps as the game's version.
+fn revision(game: &Game) -> Option<u16> {
+    game.version.as_deref()?.parse().ok()
 }
 
 /// What a dump picked is, for this console: a disc image, or a disc's files
@@ -150,6 +157,7 @@ impl super::EmulatorBackend for Dolphin {
 
     fn features(&self) -> Features {
         Features {
+            packs: true,
             portal: self.console == Console::Wii,
             quiet_behind: true,
             ..Features::default()
@@ -368,5 +376,15 @@ impl super::EmulatorBackend for Dolphin {
     /// from, as a list for each console.
     fn catalogue_source(&self) -> Option<(&'static str, &'static str)> {
         Some(compat::source(self.console))
+    }
+
+    /// The patches and codes Dolphin comes with for the game, for the disc's
+    /// revision as Dolphin matches them (packs.rs).
+    fn community_packs(&self, app: &AppHandle, title_id: &str, game: Option<&Game>) -> Packs {
+        packs::view(app, title_id, game.and_then(revision))
+    }
+
+    fn set_community_pack(&self, app: &AppHandle, game: &Game, change: &PackChange) -> Result<(), String> {
+        packs::set(app, &game.title_id, revision(game), change)
     }
 }

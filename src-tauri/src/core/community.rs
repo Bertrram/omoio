@@ -45,6 +45,11 @@ pub struct Packs {
     /// Why there are none to show, when the emulator knows: a game that has
     /// to be played once first, for instance.
     pub waiting: Option<String>,
+    /// Whether the packs come with the emulator itself, as Dolphin's do:
+    /// there is nothing to download and no newer list to look for, so the
+    /// interface offers neither.
+    #[serde(default)]
+    pub with_emulator: bool,
     pub packs: Vec<Pack>,
 }
 

@@ -304,7 +304,7 @@ fn config_dir(app: &AppHandle) -> Result<PathBuf, String> {
 
 /// The game's id as Dolphin files its settings, the six characters a disc
 /// names itself by, from the library's id, which adds a second disc's number.
-fn game_id(title_id: &str) -> Option<&str> {
+pub(super) fn game_id(title_id: &str) -> Option<&str> {
     title_id.get(..6).filter(|id| id.chars().all(|c| c.is_ascii_alphanumeric()))
 }
 

@@ -584,6 +584,7 @@ impl super::EmulatorBackend for Rpcs3 {
             have_list: patches::have_catalogue(app),
             source: "the RPCS3 community".to_string(),
             waiting: None,
+            with_emulator: false,
             packs: patches::for_title(app, title_id, version).into_iter().map(patches::as_pack).collect(),
         }
     }
