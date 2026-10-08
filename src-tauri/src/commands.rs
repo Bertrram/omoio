@@ -1689,14 +1689,18 @@ pub fn portal_game(app: AppHandle) -> Option<crate::core::figures::Game> {
 }
 
 /// Whether the running game takes the figures its emulator makes, so the
-/// menu can say why before making one the game would turn away.
+/// menu can say why before making one the game would turn away. Off the
+/// interface thread: the first ask after a download reads every pack.
 #[tauri::command]
-pub fn portal_made_figures(app: AppHandle) -> crate::core::community::MadeFigures {
+pub async fn portal_made_figures(app: AppHandle) -> crate::core::community::MadeFigures {
     let Some(playing) = app.state::<Session>().playing() else {
         return crate::core::community::MadeFigures::default();
     };
-    crate::backends::for_console(playing.console)
-        .map(|backend| backend.made_figures(&app, &playing.title))
+    let Some(backend) = crate::backends::for_console(playing.console) else {
+        return crate::core::community::MadeFigures::default();
+    };
+    tauri::async_runtime::spawn_blocking(move || backend.made_figures(&app, &playing.title))
+        .await
         .unwrap_or_default()
 }
 
