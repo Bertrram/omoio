@@ -517,6 +517,30 @@ fn save_icon(mlc: &Path, title_id: &str) -> Option<PathBuf> {
     Some(mlc.join("usr").join("save").join(&id[..8]).join(&id[8..]).join("meta").join("iconTex.tga"))
 }
 
+/// A game's save, as the Wii U lays its storage out (see `save_icon`): one
+/// folder, usr/save/<high half>/<low half>, holding the game's `user` saves
+/// and its `meta`. It is copied whole, as bringing saves over from the
+/// user's own Cemu copies it (own_cemu.rs), and kept under the high half.
+fn save_folders_in(mlc: &Path, title_id: &str) -> Vec<super::SaveFolder> {
+    let id = title_id.to_ascii_lowercase();
+    if id.len() != 16 || !id.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Vec::new();
+    }
+    let high = mlc.join("usr").join("save").join(&id[..8]);
+    let save = high.join(&id[8..]);
+    if !own_cemu::has_files(&save) {
+        return Vec::new();
+    }
+    vec![super::SaveFolder { kept_as: id[..8].to_string(), path: high, saves: vec![save] }]
+}
+
+/// The folder of the high half `kept_as` that a backup's save goes back
+/// into.
+fn save_folder_in(mlc: &Path, kept_as: &str) -> Option<PathBuf> {
+    let is_half = kept_as.len() == 8 && kept_as.chars().all(|c| c.is_ascii_hexdigit());
+    is_half.then(|| mlc.join("usr").join("save").join(kept_as))
+}
+
 /// A game whose dump can't be read, such as a disc image, still gets its
 /// icon once it has been played and saved: Cemu writes it beside the save,
 /// decrypted, as the console does. Omoio only reads what Cemu wrote.
@@ -821,15 +845,17 @@ impl super::EmulatorBackend for Cemu {
 
     fn features(&self) -> Features {
         // Starting games, the Skylanders portal through Cemu's own window,
-        // Cemu's settings for a game and its community's graphic packs.
-        // Nothing else is offered until it has been checked against Cemu the
-        // way RPCS3's was. Cemu reads the
+        // Cemu's settings for a game, its community's graphic packs and
+        // backups of a game's save, which sits where bringing saves over
+        // from the user's own Cemu found them. Nothing else is offered until
+        // it has been checked against Cemu the way RPCS3's was. Cemu reads the
         // pad whatever is in front, so Omoio keeps its input settings window
         // open while a menu is over the game, which stops that (`hush`).
         Features {
             portal: true,
             settings: true,
             packs: true,
+            saves: true,
             quiet_behind: true,
             ..Features::default()
         }
@@ -940,6 +966,19 @@ impl super::EmulatorBackend for Cemu {
     ) -> Result<(), String> {
         let title_id = title_id_for(app, game).ok_or(NOT_PLAYED_YET)?;
         game_profile::write(&install_dir(app)?, &title_id, &game.title, chosen)
+    }
+
+    /// A disc image's title id is known only once Cemu has run it, and a
+    /// game never run has saved nothing.
+    fn save_folders(&self, app: &AppHandle, game: &Game) -> Vec<super::SaveFolder> {
+        let (Some(title_id), Ok(install)) = (title_id_for(app, game), install_dir(app)) else {
+            return Vec::new();
+        };
+        save_folders_in(&mlc_folder(&install.join("portable")), &title_id)
+    }
+
+    fn save_folder(&self, app: &AppHandle, _game: &Game, kept_as: &str) -> Option<PathBuf> {
+        save_folder_in(&mlc_folder(&install_dir(app).ok()?.join("portable")), kept_as)
     }
 
     fn portal_figures(&self, pid: u32) -> Result<Vec<String>, String> {
@@ -1239,6 +1278,28 @@ Deluxe");
         std::fs::write(meta.join("iconTex.tga"), tga_file(8, 8)).unwrap();
         assert_eq!(png_size(&found().unwrap()), (8, 8));
         let _ = std::fs::remove_dir_all(&portable);
+    }
+
+    #[test]
+    fn a_games_save_is_its_folder_under_the_title_ids_two_halves() {
+        let mlc = scratch("save-folder");
+        let high = mlc.join("usr/save/00050000");
+        let save = high.join("10140400");
+        std::fs::create_dir_all(save.join("user/80000001")).unwrap();
+        assert!(save_folders_in(&mlc, "0005000010140400").is_empty(), "no file in it yet");
+
+        std::fs::write(save.join("user/80000001/slot0.dat"), b"save").unwrap();
+        std::fs::create_dir_all(high.join("10101e00/user")).unwrap();
+        std::fs::write(high.join("10101e00/user/other.dat"), b"another game's").unwrap();
+
+        assert_eq!(
+            save_folders_in(&mlc, "0005000010140400"),
+            [super::super::SaveFolder { kept_as: "00050000".to_string(), path: high.clone(), saves: vec![save] }]
+        );
+        assert!(save_folders_in(&mlc, "WUD87E51FD0F7F95").is_empty(), "a disc image's own id is no title id");
+        assert_eq!(save_folder_in(&mlc, "00050000"), Some(high));
+        assert_eq!(save_folder_in(&mlc, "EUR"), None);
+        let _ = std::fs::remove_dir_all(&mlc);
     }
 
     #[test]
