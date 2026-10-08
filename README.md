@@ -29,9 +29,9 @@ really appreciated, so open an issue.
   updated to the newest version Omoio has been tested with.
 - One controller layout for every emulator, set by pressing the buttons, for up
   to four players.
-- A Skylanders portal menu that puts figures, traps and vehicles on the portal
-  from your controller, in Giants, SWAP Force and Trap Team on PS3 and in SWAP
-  Force, Trap Team and SuperChargers on Wii U.
+- A Skylanders portal menu that puts figures, traps, vehicles and crystals on
+  the portal from your controller, in Giants, SWAP Force and Trap Team on PS3
+  and in SWAP Force, Trap Team, SuperChargers and Imaginators on Wii U.
 - Community packs for every game, downloaded with one press: RPCS3's patches
   for PS3 games and Cemu's graphic packs for Wii U games, like 60 fps for
   Skylanders SWAP Force.
@@ -66,15 +66,17 @@ game instead, and these games have it so far:
 - Skylanders SWAP Force on PS3 and Wii U, through RPCS3 and Cemu
 - Skylanders Trap Team on PS3 and Wii U, through RPCS3 and Cemu
 - Skylanders SuperChargers on Wii U, through Cemu
+- Skylanders Imaginators on Wii U, through Cemu
 
 During the game, press your controller's home button (Guide, PS or Home) and
 the menu opens. You can pick another button in the game's panel. Choose a
 character and it goes on the portal, and the same menu takes it off again. The
 first time, the emulator's own figure maker makes the figure, and Omoio saves it
 so the figure keeps what it has earned. Giants and Trap Masters come first in
-each element and Minis last, and in SuperChargers its own SuperChargers come
-before them. Trap Masters, SuperChargers and Minis carry a mark, and Giants
-show the game's own Giant badge once the pictures are read. In
+each element and Minis last, and a newer game's own come before them: the
+SuperChargers in SuperChargers, the Senseis in Imaginators. Trap Masters,
+SuperChargers, Senseis and Minis carry a mark, and Giants show the game's own
+Giant badge once the pictures are read. In
 SWAP Force, swappers can be mixed: pick a top, then a bottom, and each one shows
 how it moves.
 
@@ -97,6 +99,22 @@ the mods you bought for it. Trophies have a tab of their own, and traps, items
 and adventure packs from the earlier games come last, each saying what it does
 in this game.
 
+<!-- A screenshot of the Senseis tab in Imaginators goes here, once it has been
+     played: design/screenshots/portal-senseis.jpg -->
+
+In Imaginators, the Imaginators tab holds your Creation Crystals, the one you
+used last first, and choosing one puts it on. Under them is a blank crystal of
+each element and design. It always makes a new crystal in a new file, and the
+game then asks you to make an Imaginator in it, so a crystal you have is never
+used for another. The Senseis tab has a column for each battle class, so a
+Knight or a Sorcerer is one look away, and each Sensei says which realms it
+opens and what it teaches. Imaginators checks a factory signature on its own
+figures that a figure made by an emulator doesn't have, so Omoio turns on
+Cemu's Signature Patch, a community pack that takes that check away. It shows
+in the game's Community packs, where you can turn it off. Figures, traps,
+items, vehicles and trophies from the earlier games work too, each saying what
+it does in this game.
+
 Omoio doesn't come with the figures' pictures. It reads them from your own copy
 of the game when you press Get pictures once in the game's panel. A Wii U game
 imported as an unpacked folder or a .wua file is read as it is. A disc image
@@ -107,8 +125,8 @@ folder. A small separate program,
 [omoio-portraits](https://github.com/Bertrram/omoio-portraits), does the reading.
 Omoio downloads it only when you ask and checks it before it runs. The pictures
 stay on your computer, and the screenshots above show them as they look once
-read. It can't read SuperChargers' pictures yet, so that game's menu shows
-Omoio's own marks for now.
+read. It can't read SuperChargers' or Imaginators' pictures yet, so those
+games' menus show Omoio's own marks for now.
 
 The other Skylanders games aren't supported yet.
 
