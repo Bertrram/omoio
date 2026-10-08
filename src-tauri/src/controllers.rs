@@ -59,9 +59,10 @@ pub struct Current {
 /// The four players a game plays with: its own layout, else the one for
 /// every game, else who pressing Play would set up.
 pub fn current(app: &AppHandle, title_id: &str, connected: &[Pad]) -> Current {
-    let layouts = load(app);
+    let mut layouts = load(app);
     let own = !title_id.is_empty() && layouts.games.contains_key(title_id);
-    let found = layouts.get(if own { title_id } else { "" }).cloned();
+    let scope = if own { title_id } else { "" };
+    let found = layouts.get(scope).cloned();
     let saved = found.is_some();
     let spare = crate::pads::xinput_slots();
     let mut players = match found {
@@ -69,6 +70,12 @@ pub fn current(app: &AppHandle, title_id: &str, connected: &[Pad]) -> Current {
         None => pad_layout::default_players(connected, &spare),
     };
     pad_layout::refresh(&mut players, connected);
+    // Kept as soon as it happens, so the Controller screen shows the pad as
+    // player 1 rather than leaving it to be picked, and Play agrees with it.
+    if pad_layout::give_lone_pad(&mut players, connected) {
+        layouts.set(scope, players.clone());
+        let _ = store(app, &layouts);
+    }
     Current { players, own, saved }
 }
 
