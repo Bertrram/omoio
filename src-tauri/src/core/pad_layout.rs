@@ -177,6 +177,30 @@ pub fn seat(players: &mut [Player], connected: &[Pad]) -> bool {
     moved
 }
 
+/// Gives player 1 the only pad plugged in when it is one XInput doesn't read,
+/// such as a DualSense or a Switch Pro Controller, and no player has it.
+/// Players otherwise wait on the XInput slots, so a lone PlayStation pad
+/// would sit unused until someone picked it. An Xbox-style pad is left
+/// alone even when it shows up without its XInput slot, as one does for a
+/// moment while it is switched on or off. A pad a player already has is
+/// never moved, and player 1's own pad cannot be plugged in, since this one
+/// is the only one. Their buttons stay as they were. Returns whether player 1
+/// changed.
+pub fn give_lone_pad(players: &mut [Player], connected: &[Pad]) -> bool {
+    let [pad] = connected else {
+        return false;
+    };
+    let xbox = pad.handler == "XInput" || pad.family == "xbox";
+    if xbox || players.iter().any(|p| p.pad.device == pad.device) {
+        return false;
+    }
+    let Some(first) = players.first_mut() else {
+        return false;
+    };
+    first.pad = pad.clone();
+    true
+}
+
 /// Gives player `at` this pad and layout. A pad another player had is swapped
 /// over, so no pad ever drives two players.
 pub fn give(players: &mut [Player], at: usize, player: Player) {
@@ -270,6 +294,47 @@ mod tests {
             ["XInput Pad #1", "DualSense Wireless Controller 0", "XInput Pad #3", "XInput Pad #4"]
         );
         assert!(!seat(&mut players, &connected), "nothing moves the second time");
+    }
+
+    #[test]
+    fn a_lone_playstation_pad_is_player_one() {
+        let mut players = default_players(&[], &slots());
+        let lone = [pad("PS5 Controller 0")];
+        assert!(give_lone_pad(&mut players, &lone));
+        assert_eq!(
+            devices(&players),
+            ["PS5 Controller 0", "XInput Pad #2", "XInput Pad #3", "XInput Pad #4"]
+        );
+        assert!(!give_lone_pad(&mut players, &lone), "nothing moves the second time");
+    }
+
+    #[test]
+    fn a_lone_pad_keeps_player_ones_buttons() {
+        let buttons = BTreeMap::from([("South".to_string(), "East".to_string())]);
+        let mut players = default_players(&[], &slots());
+        players[0] = Player::with_buttons(players[0].pad.clone(), buttons);
+        give_lone_pad(&mut players, &[pad("PS5 Controller 0")]);
+        assert_eq!(players[0].input("South"), "East");
+    }
+
+    #[test]
+    fn a_lone_pad_someone_chose_for_another_player_stays_there() {
+        let mut players = default_players(&[], &slots());
+        give(&mut players, 1, Player::on(pad("PS5 Controller 0")));
+        assert!(!give_lone_pad(&mut players, &[pad("PS5 Controller 0")]));
+        assert_eq!(devices(&players)[..2], ["XInput Pad #1", "PS5 Controller 0"]);
+    }
+
+    #[test]
+    fn a_lone_xbox_pad_and_two_pads_are_left_as_they_are() {
+        let mut players = default_players(&[], &slots());
+        assert!(!give_lone_pad(&mut players, &[pad("XInput Pad #2")]));
+        let mut powera = pad("PowerA Xbox Series X Controller 0");
+        powera.family = "xbox".to_string();
+        assert!(!give_lone_pad(&mut players, &[powera]), "an Xbox-style pad seen without its slot");
+        assert!(!give_lone_pad(&mut players, &[pad("XInput Pad #1"), pad("PS5 Controller 0")]));
+        assert!(!give_lone_pad(&mut players, &[]));
+        assert_eq!(devices(&players), devices(&default_players(&[], &slots())));
     }
 
     #[test]

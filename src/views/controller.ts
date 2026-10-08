@@ -347,7 +347,7 @@ export async function renderController(): Promise<View> {
   const how = document.createElement("div");
   how.className = "note plain";
   how.textContent =
-    "One layout works in every emulator. A pad plugged in that no player has takes the place of the first player whose pad is missing when you press Play.";
+    "One layout works in every emulator. A pad plugged in that no player has takes the place of the first player whose pad is missing when you press Play. Changes take effect the next time a game starts.";
   content.appendChild(how);
 
   if (refocus) {

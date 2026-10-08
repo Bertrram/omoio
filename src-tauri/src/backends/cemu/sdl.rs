@@ -18,6 +18,19 @@
 //! - `h`, which marks SDL's HID drivers, and a last byte that is 0 but for
 //!   Switch pads
 //!
+//! A pad over Bluetooth gets its GUID the same way, from SDL 2.30.3's source
+//! as read on 8 October 2026. On Windows SDL does not know a HID device's
+//! bus: its `SDL_hid_device_info` has no field for one (`SDL_hidapi.h`), and
+//! `hid_enumerate` (`hidapi/windows/hid.c`) reads the ids, the version and
+//! the strings with `HidD_GetAttributes` and `HidD_Get*String` whatever the
+//! connection. `HIDAPI_AddDevice` then writes USB into every GUID, with a note
+//! that it has no way to tell Bluetooth. The PS4 and PS5 drivers learn they
+//! are on Bluetooth only afterwards, from the pad's reports, which changes how
+//! they read the pad and not its name (`HIDAPI_DriverPS4_InitDevice`,
+//! `HIDAPI_DriverPS5_InitDevice`). So over Bluetooth a pad's GUID can differ
+//! from its USB one only in the version, where Windows reports another for
+//! that connection, and Omoio reads the version the way SDL does.
+//!
 //! Which name the CRC is of is up to each driver. The PS5 one renames a Sony
 //! pad "DualSense Wireless Controller", or "DualSense Edge Wireless
 //! Controller", and the PS4 one a Sony pad "PS4 Controller", each taking the
@@ -47,6 +60,21 @@ const KNOWN: [(u16, u16, Kind); 6] = [
 const SONY: u16 = 0x054C;
 const NINTENDO: u16 = 0x057E;
 
+/// What pads.rs calls each of those pads, before its number: the name gilrs
+/// 0.11.2 gives it on Windows. Its Windows.Gaming.Input backend makes a pad's
+/// GUID from the vendor and product ids alone (`Gamepad::new` in gilrs-core
+/// 0.6.8's `windows_wgi/gamepad.rs`), and the SDL controller list gilrs ships
+/// names those GUIDs (`SDL_GameControllerDB/gamecontrollerdb.txt`, read 8
+/// October 2026). The DualSense Edge shares the DualSense's name there.
+const GILRS_NAMES: [(u16, u16, &str); 6] = [
+    (SONY, 0x0CE6, "PS5 Controller"),
+    (SONY, 0x0DF2, "PS5 Controller"),
+    (SONY, 0x05C4, "PS4 Controller"),
+    (SONY, 0x09CC, "PS4 Controller"),
+    (SONY, 0x0BA0, "PS4 Controller"),
+    (NINTENDO, 0x2009, "Nintendo Switch Pro Controller"),
+];
+
 /// What SDL marks its HID drivers' GUIDs with.
 const HIDAPI: u8 = b'h';
 /// What a Pro Controller reports itself as (`k_eSwitchDeviceInfoControllerType_ProController`).
@@ -60,7 +88,8 @@ enum Kind {
 }
 
 /// A HID device as SDL's enumeration on Windows sees it: its attributes and
-/// strings, each string `None` where Windows had none to give.
+/// strings, each string `None` where Windows had none to give. With it,
+/// whether Windows has it over Bluetooth, which SDL 2.30 never asks (`pick`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct HidPad {
     pub vendor: u16,
@@ -68,6 +97,7 @@ pub struct HidPad {
     pub version: u16,
     pub manufacturer: Option<String>,
     pub product_name: Option<String>,
+    pub bluetooth: bool,
 }
 
 /// Cemu's name for a pad, and whether its face buttons go by the letters on
@@ -86,6 +116,39 @@ pub fn find(vendor: u16, product: u16, ordinal: usize, hid: &[HidPad]) -> Option
         .iter()
         .filter(|pad| pad.vendor == vendor && pad.product == product)
         .collect();
+    pick(&ours, ordinal)
+}
+
+/// The `ordinal`th pad, counted from 0, of those pads.rs calls `name`, found
+/// among the HID devices plugged in rather than through gilrs, as Cemu names
+/// it. This is for a pad gilrs has no ids for while Windows still has it
+/// plugged in. pads.rs numbers the pads of one name in the order gilrs found
+/// them, so with one such pad plugged in it is the same pad either way.
+/// `None` for a name none of the pads SDL's HID drivers take in Cemu has.
+pub fn find_named(name: &str, ordinal: usize, hid: &[HidPad]) -> Option<Found> {
+    let ours: Vec<&HidPad> = hid
+        .iter()
+        .filter(|pad| gilrs_name(pad.vendor, pad.product) == Some(name))
+        .collect();
+    pick(&ours, ordinal)
+}
+
+/// The `ordinal`th of `ours`, which are in the order SDL finds them, counting
+/// the pads on a cable first.
+///
+/// SDL gives a pad on Bluetooth no joystick while the same pad is on USB too
+/// ("Prefer the USB device over the Bluetooth device", with
+/// `HIDAPI_HasConnectedUSBDevice`, in the PS4, PS5 and Switch drivers'
+/// `InitDevice`, release-2.30.3, read 8 October 2026). It knows the same pad
+/// by a serial number it asks the pad for, and asking a DualSense over
+/// Bluetooth switches it to reports other programs cannot read until it is
+/// turned off (`HIDAPI_DriverPS5_InitDevice`, `SDL_hints.h`). So Omoio does
+/// not ask, and cannot tell one pad on both from two pads. Counted cable
+/// first, a pad on both is found as its USB self, the one SDL plays, and a
+/// pad on Bluetooth alone is found as before.
+fn pick(ours: &[&HidPad], ordinal: usize) -> Option<Found> {
+    let mut ours = ours.to_vec();
+    ours.sort_by_key(|pad| pad.bluetooth);
     let pad = ours.get(ordinal)?;
     let guid = guid(pad)?;
     // Joysticks of one GUID are counted in the order SDL found them, and the
@@ -93,8 +156,15 @@ pub fn find(vendor: u16, product: u16, ordinal: usize, hid: &[HidPad]) -> Option
     let before = ours[..ordinal].iter().filter(|other| self::guid(other) == Some(guid)).count();
     Some(Found {
         uuid: format!("{before}_{}", hex(&guid)),
-        by_label: kind(vendor, product) == Some(Kind::SwitchPro),
+        by_label: kind(pad.vendor, pad.product) == Some(Kind::SwitchPro),
     })
+}
+
+fn gilrs_name(vendor: u16, product: u16) -> Option<&'static str> {
+    GILRS_NAMES
+        .iter()
+        .find(|(v, p, _)| *v == vendor && *p == product)
+        .map(|(_, _, name)| *name)
 }
 
 fn kind(vendor: u16, product: u16) -> Option<Kind> {
@@ -243,8 +313,9 @@ fn joystick_name(vendor: u16, product: u16, manufacturer: Option<&str>, name: Op
 pub fn hid_pads() -> Vec<HidPad> {
     use windows::core::PCWSTR;
     use windows::Win32::Devices::DeviceAndDriverInstallation::{
-        SetupDiDestroyDeviceInfoList, SetupDiEnumDeviceInfo, SetupDiEnumDeviceInterfaces, SetupDiGetClassDevsW,
-        SetupDiGetDeviceInterfaceDetailW, SetupDiGetDeviceRegistryPropertyW, DIGCF_DEVICEINTERFACE, DIGCF_PRESENT,
+        CM_Get_DevNode_Registry_PropertyW, CM_Get_Parent, SetupDiDestroyDeviceInfoList, SetupDiEnumDeviceInfo,
+        SetupDiEnumDeviceInterfaces, SetupDiGetClassDevsW, SetupDiGetDeviceInterfaceDetailW,
+        SetupDiGetDeviceRegistryPropertyW, CM_DRP_COMPATIBLEIDS, CR_SUCCESS, DIGCF_DEVICEINTERFACE, DIGCF_PRESENT,
         SPDRP_CLASS, SPDRP_DRIVER, SP_DEVICE_INTERFACE_DATA, SP_DEVICE_INTERFACE_DETAIL_DATA_W, SP_DEVINFO_DATA,
     };
     use windows::Win32::Devices::HumanInterfaceDevice::{
@@ -301,6 +372,42 @@ pub fn hid_pads() -> Vec<HidPad> {
         }
     }
 
+    /// Whether Windows has the device over Bluetooth, told by the compatible
+    /// ids of the device it hangs from, as hidapi 0.14 tells a HID device's
+    /// bus (`hid_internal_get_info` in its `windows/hid.c`, read 8 October
+    /// 2026): the first id naming USB makes it USB, the first naming BTHENUM
+    /// or BTHLEDEVICE Bluetooth.
+    fn on_bluetooth(device: u32) -> bool {
+        let mut parent = 0u32;
+        let mut ids = [0u16; 1024];
+        let mut length = std::mem::size_of_val(&ids) as u32;
+        // Calls into Windows with a buffer of the size handed over.
+        let read = unsafe {
+            CM_Get_Parent(&mut parent, device, 0) == CR_SUCCESS
+                && CM_Get_DevNode_Registry_PropertyW(
+                    parent,
+                    CM_DRP_COMPATIBLEIDS,
+                    None,
+                    Some(ids.as_mut_ptr().cast()),
+                    &mut length,
+                    0,
+                ) == CR_SUCCESS
+        };
+        if !read {
+            return false;
+        }
+        for id in ids.split(|&c| c == 0).take_while(|id| !id.is_empty()) {
+            let id = String::from_utf16_lossy(id).to_uppercase();
+            if id.contains("USB") {
+                return false;
+            }
+            if id.contains("BTHENUM") || id.contains("BTHLEDEVICE") {
+                return true;
+            }
+        }
+        false
+    }
+
     let mut found = Vec::new();
     // Calls into Windows. Every buffer handed over is sized as the call asks,
     // and every handle opened is closed.
@@ -331,7 +438,11 @@ pub fn hid_pads() -> Vec<HidPad> {
             let mut buffer = vec![0u32; (size as usize).div_ceil(4)];
             let detail = buffer.as_mut_ptr().cast::<SP_DEVICE_INTERFACE_DETAIL_DATA_W>();
             (*detail).cbSize = std::mem::size_of::<SP_DEVICE_INTERFACE_DETAIL_DATA_W>() as u32;
-            if SetupDiGetDeviceInterfaceDetailW(set, &interface, Some(detail), size, None, None).is_err() {
+            let mut device = SP_DEVINFO_DATA {
+                cbSize: std::mem::size_of::<SP_DEVINFO_DATA>() as u32,
+                ..Default::default()
+            };
+            if SetupDiGetDeviceInterfaceDetailW(set, &interface, Some(detail), size, None, Some(&mut device)).is_err() {
                 continue;
             }
             let path = std::ptr::addr_of!((*detail).DevicePath).cast::<u16>();
@@ -374,6 +485,7 @@ pub fn hid_pads() -> Vec<HidPad> {
                     version: attributes.VersionNumber,
                     manufacturer: read_string(|buffer, length| HidD_GetManufacturerString(handle, buffer, length)),
                     product_name: read_string(|buffer, length| HidD_GetProductString(handle, buffer, length)),
+                    bluetooth: on_bluetooth(device.DevInst),
                 });
             }
             drop(file);
@@ -399,6 +511,7 @@ mod tests {
             version,
             manufacturer: manufacturer.map(str::to_string),
             product_name: name.map(str::to_string),
+            bluetooth: false,
         }
     }
 
@@ -434,6 +547,79 @@ mod tests {
         // the driver gives, so SDL leaves the CRC as it was: none.
         let bare = pad(SONY, 0x0CE6, 0x0100, None, None);
         assert_eq!(hex(&guid(&bare).unwrap()), "030000004c050000e60c000000016800");
+    }
+
+    #[test]
+    fn a_pad_over_bluetooth_differs_from_usb_only_in_what_windows_reports() {
+        // SDL 2.30 writes USB into every GUID it makes from HID and takes the
+        // version and strings Windows reports for the connection, which the
+        // PS4 and PS5 drivers then rename (`HIDAPI_AddDevice`,
+        // `HIDAPI_SetDeviceName`). Whatever strings come over Bluetooth, the
+        // name is the driver's, so only another version tells the two apart.
+        for (product, usb) in [
+            (0x0CE6, "030057564c050000e60c000000016800"),
+            (0x05C4, "03008fe54c050000c405000000016800"),
+            (0x09CC, "03008fe54c050000cc09000000016800"),
+        ] {
+            let cable = pad(SONY, product, 0x0100, Some("Sony Interactive Entertainment"), Some("Wireless Controller"));
+            assert_eq!(hex(&guid(&cable).unwrap()), usb);
+            let same_version = pad(SONY, product, 0x0100, None, Some("Wireless Controller"));
+            assert_eq!(guid(&same_version), guid(&cable), "other strings, the same name once renamed");
+            let other_version = hex(&guid(&pad(SONY, product, 0x0211, None, Some("Wireless Controller"))).unwrap());
+            assert_eq!(other_version[..4], *"0300", "still USB");
+            assert_eq!(other_version[..24], usb[..24]);
+            assert_eq!(other_version[24..28], *"1102", "its own version, little-endian");
+            assert_eq!(other_version[28..], *"6800");
+        }
+    }
+
+    fn over_bluetooth(mut pad: HidPad, version: u16) -> HidPad {
+        pad.bluetooth = true;
+        pad.version = version;
+        pad
+    }
+
+    #[test]
+    fn a_pad_on_cable_and_bluetooth_at_once_is_found_as_its_usb_self() {
+        // SDL plays only the USB one of a pad on both, and Windows may list
+        // the Bluetooth one first.
+        let hid = [over_bluetooth(dualsense(), 0x0000), dualsense()];
+        assert_eq!(find(SONY, 0x0CE6, 0, &hid).unwrap().uuid, "0_030057564c050000e60c000000016800");
+        assert_eq!(find(SONY, 0x0CE6, 1, &hid).unwrap().uuid, "0_030057564c050000e60c000000006800");
+        assert_eq!(find_named("PS5 Controller", 0, &hid), find(SONY, 0x0CE6, 0, &hid));
+
+        let ps4 = pad(SONY, 0x09CC, 0x0100, Some("Sony Interactive Entertainment"), Some("Wireless Controller"));
+        let hid = [over_bluetooth(ps4.clone(), 0x0000), ps4];
+        assert_eq!(find(SONY, 0x09CC, 0, &hid).unwrap().uuid, "0_03008fe54c050000cc09000000016800");
+    }
+
+    #[test]
+    fn a_pad_on_bluetooth_alone_is_found_as_it_is() {
+        let hid = [over_bluetooth(dualsense(), 0x0000)];
+        assert_eq!(find(SONY, 0x0CE6, 0, &hid).unwrap().uuid, "0_030057564c050000e60c000000006800");
+        assert_eq!(find_named("PS5 Controller", 0, &hid), find(SONY, 0x0CE6, 0, &hid));
+    }
+
+    #[test]
+    fn a_ps4_pad_with_no_strings_keeps_the_crc_it_had() {
+        // The name then comes from the kind, "PS4 Controller", which is what
+        // the driver renames it to, so SDL leaves the CRC as it was: none.
+        let bare = pad(SONY, 0x09CC, 0x0100, None, None);
+        assert_eq!(hex(&guid(&bare).unwrap()), "030000004c050000cc09000000016800");
+    }
+
+    #[test]
+    fn a_pad_is_found_by_the_name_gilrs_gives_it() {
+        let edge = pad(SONY, 0x0DF2, 0x0100, Some("Sony Interactive Entertainment"), Some("DualSense Edge Wireless Controller"));
+        let pro = pad(NINTENDO, 0x2009, 0x0210, Some("Nintendo Co., Ltd."), Some("Pro Controller"));
+        let hid = [pro, edge, dualsense()];
+        assert_eq!(find_named("PS5 Controller", 0, &hid), find(SONY, 0x0DF2, 0, &hid), "an Edge has a DualSense's name");
+        assert_eq!(find_named("PS5 Controller", 1, &hid), find(SONY, 0x0CE6, 0, &hid));
+        assert_eq!(find_named("PS5 Controller", 2, &hid), None, "only two are plugged in");
+        let found = find_named("Nintendo Switch Pro Controller", 0, &hid).unwrap();
+        assert_eq!(found.uuid, "0_0300bb977e0500000920000010026803");
+        assert!(found.by_label);
+        assert_eq!(find_named("Wireless Controller", 0, &hid), None, "not a name gilrs gives any of them");
     }
 
     #[test]

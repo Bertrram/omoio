@@ -11,10 +11,11 @@ import {
   onGameFullscreen,
   onGameStarted,
   onGameStopped,
+  onPadNotFound,
   playingGame,
 } from "./api";
 import { renderBigPicture } from "./bigpicture/bigPicture";
-import { renderPlayingBar } from "./components/playingBar";
+import { renderPlayingBar, showPlayingNote } from "./components/playingBar";
 import { openSetupIfNeeded } from "./components/setupSheet";
 import { updateEmulatorsInBackground } from "./components/emulatorUpdates";
 import { startUpdateChecks } from "./components/omoioUpdate";
@@ -182,6 +183,7 @@ void watchForDroppedGames();
 
 onGameStarted((playing) => store.setPlaying(playing));
 onGameFullscreen((on) => store.setGameFullscreen(on));
+onPadNotFound(showPlayingNote);
 onGameStopped(() => {
   store.setGameFullscreen(false);
   store.setPlaying(null);

@@ -175,6 +175,25 @@ button {
 .nav-item.on .nav-ico {
   color: var(--brand);
 }
+/* While a game runs. Marked rather than disabled, so the keyboard still
+   reaches them and a screen reader says they can't be used. */
+.nav-item[aria-disabled="true"] {
+  opacity: 0.45;
+  cursor: default;
+}
+.nav-item[aria-disabled="true"]:hover {
+  background: none;
+  color: var(--mute);
+}
+.nav-item[aria-disabled="true"]:active {
+  transform: none;
+}
+.nav-note {
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--dim);
+  padding: 10px 8px 0;
+}
 .nav-ico {
   width: 15px;
   height: 15px;
@@ -959,6 +978,13 @@ button {
   font-size: 13.5px;
   font-weight: 600;
   letter-spacing: -0.01em;
+}
+.playing-note {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--warn);
 }
 .playing-actions {
   margin-left: auto;

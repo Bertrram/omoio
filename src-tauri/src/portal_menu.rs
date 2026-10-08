@@ -375,10 +375,14 @@ pub fn close(app: &AppHandle) {
 
 /// Puts the menu back in front after the emulator's own windows took it for
 /// a figure, so the game stays deaf to the pad until the menu closes, and
-/// Omoio may hand the game the keyboard then.
+/// Omoio may hand the game the keyboard then. With the menu closed while
+/// the figure went on, the game is let hear again instead: those windows
+/// may have taken the keyboard from it after the menu handed it over.
 pub fn take_front(app: &AppHandle) {
     if let Some(window) = app.get_webview_window(LABEL).filter(|_| showing(app)) {
         let _ = window.set_focus();
+    } else {
+        crate::session::quiet_game(app);
     }
 }
 

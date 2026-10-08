@@ -396,24 +396,200 @@ pub fn tidy(pid: u32) {
 /// Devices, and a figure loads and clears with it open (tried on a running
 /// game, 27 September 2026). It is a dialog of the same kind as Cemu's
 /// messages, so `is_message` has to leave it out.
+///
+/// Cemu opens the window whenever it gets to the menu command, however
+/// late: a posted command reaches the frame with or without the menu bar on
+/// the window (wxWidgets 3.2.5, which Cemu 2.6 is built with, `frame.cpp`,
+/// `wxFrame::HandleCommand`, then `framecmn.cpp`, `ProcessCommand`), and each
+/// one opens a window of its own (`MainWindow.cpp`, `OnOptionsInput`, v2.6;
+/// both read 8 October 2026). One that opened after the menu had closed kept
+/// the game deaf until the menu was opened and closed again (reported October
+/// 2026). So the command is sent only when none is still on its way, and from
+/// the first one on, Cemu's input settings windows are watched for as long as
+/// it runs and kept as the menus want them. `ProcessCommand` drops a command
+/// for a menu item that is turned off, so one that hasn't shown after
+/// `ASK_AGAIN` is taken as lost and sent again.
 pub fn hush(pid: u32, hushed: bool) -> Result<(), String> {
-    let open_now = windows_of(pid).into_iter().find(|&w| title(w) == INPUT_SETTINGS);
     if !hushed {
-        if let Some(window) = open_now {
-            close(window);
+        let mut quiet = quiet();
+        quiet.deaf = false;
+        close_shown(pid, &mut quiet);
+        return Ok(());
+    }
+    quiet().deaf = true;
+    // A window told to close lets the game hear only once Cemu deletes it,
+    // the next time it has nothing else to do, even if a new one has opened
+    // by then (`InputSettings2.cpp`, `~InputSettings2`, v2.6; wxWidgets
+    // 3.2.5, `toplvcmn.cpp`, `wxTopLevelWindowBase::Destroy`; read 8 October
+    // 2026). So a new one is asked for once the old one has gone.
+    until(GONE_WAIT, || quiet().settled(Instant::now(), exists));
+    let ask = {
+        let quiet = quiet();
+        open_input(pid, &quiet).is_none() && quiet.may_ask(pid, Instant::now())
+    };
+    if ask {
+        let main = main_window(pid).ok_or("Cemu isn't answering.")?;
+        let input = command_when_ready(pid, INPUT_SETTINGS).ok_or("Cemu isn't ready yet.")?;
+        let mut quiet = quiet();
+        if !quiet.deaf {
+            return Ok(());
         }
-        return Ok(());
+        unsafe { PostMessageW(Some(main), WM_COMMAND, WPARAM(input as usize), LPARAM(0)) }
+            .map_err(|_| "Cemu isn't answering.".to_string())?;
+        quiet.asked = Some((pid, Instant::now()));
+        watch(pid, &mut quiet);
     }
-    if let Some(window) = open_now {
-        out_of_sight(window);
-        return Ok(());
+    keep_when_shown(pid, START_WAIT)
+}
+
+/// How long a window told to close is waited for, at most, before a new
+/// one is asked for.
+const GONE_WAIT: Duration = Duration::from_secs(2);
+/// How long a command whose window hasn't shown is waited for before it is
+/// sent again: three times `START_WAIT`, the longest Cemu has been seen to
+/// take.
+const ASK_AGAIN: Duration = Duration::from_secs(60);
+/// How often Cemu's input settings windows are looked at: soon enough that
+/// one shown late is barely seen, seldom enough to cost nothing while the
+/// game runs.
+const LATE_LOOK: Duration = Duration::from_millis(250);
+
+/// What the menus want of Cemu's input settings window, kept between one
+/// call to `hush` and the next.
+struct Quiet {
+    /// Whether the game is to be deaf, as last asked.
+    deaf: bool,
+    /// The Cemu sent the command that opens the window, and when, until the
+    /// window shows.
+    asked: Option<(u32, Instant)>,
+    /// Windows told to close, and when, until they have gone.
+    closing: Vec<(isize, Instant)>,
+    /// The Cemu whose windows `watch_windows` looks after.
+    watching: Option<u32>,
+}
+
+impl Quiet {
+    /// Whether the command may be sent to `pid`. Not while an earlier one
+    /// is on its way, or a second window would open over the first, unless
+    /// that one is taken as lost.
+    fn may_ask(&self, pid: u32, now: Instant) -> bool {
+        match self.asked {
+            Some((asked, when)) if asked == pid => now.duration_since(when) >= ASK_AGAIN,
+            _ => true,
+        }
     }
-    let main = main_window(pid).ok_or("Cemu isn't answering.")?;
-    let input = command_when_ready(pid, INPUT_SETTINGS).ok_or("Cemu isn't ready yet.")?;
-    let _ = unsafe { PostMessageW(Some(main), WM_COMMAND, WPARAM(input as usize), LPARAM(0)) };
-    arrives(pid, INPUT_SETTINGS, START_WAIT)
-        .map(|_| ())
-        .ok_or("Cemu's input settings didn't open.".to_string())
+
+    fn answered(&mut self, pid: u32) {
+        if self.asked.is_some_and(|(asked, _)| asked == pid) {
+            self.asked = None;
+        }
+    }
+
+    fn told_to_close(&self, window: isize) -> bool {
+        self.closing.iter().any(|&(told, _)| told == window)
+    }
+
+    /// Whether every window told to close in the last `GONE_WAIT` has gone,
+    /// forgetting those that have. One still there after that isn't waited
+    /// for again.
+    fn settled(&mut self, now: Instant, exists: impl Fn(isize) -> bool) -> bool {
+        self.closing.retain(|&(window, _)| exists(window));
+        self.closing.iter().all(|&(_, when)| now.duration_since(when) >= GONE_WAIT)
+    }
+}
+
+static QUIET: Mutex<Quiet> = Mutex::new(Quiet {
+    deaf: false,
+    asked: None,
+    closing: Vec::new(),
+    watching: None,
+});
+
+fn quiet() -> MutexGuard<'static, Quiet> {
+    QUIET.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+fn exists(window: isize) -> bool {
+    use windows::Win32::UI::WindowsAndMessaging::IsWindow;
+    unsafe { IsWindow(Some(HWND(window as *mut _))) }.as_bool()
+}
+
+/// The input settings window showing, unless it was told to close.
+fn open_input(pid: u32, quiet: &Quiet) -> Option<HWND> {
+    windows_of(pid)
+        .into_iter()
+        .find(|&w| title(w) == INPUT_SETTINGS && !quiet.told_to_close(w.0 as isize))
+}
+
+/// Waits up to `limit` for the input settings window and puts it out of
+/// sight, as `arrives` does. Stops waiting if the game may hear again
+/// meanwhile; `watch_windows` then sees to the window.
+fn keep_when_shown(pid: u32, limit: Duration) -> Result<(), String> {
+    let until = Instant::now() + limit;
+    loop {
+        let mut quiet = quiet();
+        if !quiet.deaf {
+            return Ok(());
+        }
+        if let Some(window) = open_input(pid, &quiet) {
+            quiet.answered(pid);
+            drop(quiet);
+            out_of_sight(window);
+            return Ok(());
+        }
+        drop(quiet);
+        if Instant::now() >= until {
+            return Err("Cemu's input settings didn't open.".to_string());
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// Tells each input settings window showing to close, should there be more
+/// than one.
+fn close_shown(pid: u32, quiet: &mut Quiet) {
+    let now = Instant::now();
+    while let Some(window) = open_input(pid, quiet) {
+        close(window);
+        quiet.closing.push((window.0 as isize, now));
+        quiet.answered(pid);
+    }
+}
+
+/// Has a thread look after `pid`'s input settings windows, once per Cemu.
+fn watch(pid: u32, quiet: &mut Quiet) {
+    if quiet.watching != Some(pid) {
+        quiet.watching = Some(pid);
+        std::thread::spawn(move || watch_windows(pid));
+    }
+}
+
+/// Puts an input settings window out of sight while a menu wants the game
+/// deaf, and closes it if not, whenever Cemu shows one, until Cemu has gone
+/// or another Cemu is being looked after.
+fn watch_windows(pid: u32) {
+    loop {
+        std::thread::sleep(LATE_LOOK);
+        let mut quiet = quiet();
+        if quiet.watching != Some(pid) {
+            return;
+        }
+        if main_window(pid).is_none() {
+            quiet.answered(pid);
+            quiet.watching = None;
+            return;
+        }
+        let Some(window) = open_input(pid, &quiet) else {
+            continue;
+        };
+        if quiet.deaf {
+            quiet.answered(pid);
+            drop(quiet);
+            out_of_sight(window);
+        } else {
+            close_shown(pid, &mut quiet);
+        }
+    }
 }
 
 /// The Emulated USB Devices window, opened if it is not already, and put out
@@ -764,6 +940,49 @@ mod tests {
         // A figure Cemu doesn't know stays as Cemu put it.
         assert_eq!(shown("Unknown (999 0)"), "Unknown (999 0)");
         assert_eq!(unknown("Unknown Spyro"), None);
+    }
+
+    fn quiet_with(closing: Vec<(isize, Instant)>) -> Quiet {
+        Quiet { deaf: true, asked: None, closing, watching: None }
+    }
+
+    #[test]
+    fn the_input_settings_command_goes_once_until_its_window_shows() {
+        let now = Instant::now();
+        let mut quiet = quiet_with(Vec::new());
+        assert!(quiet.may_ask(7, now));
+        quiet.asked = Some((7, now));
+        assert!(!quiet.may_ask(7, now));
+        // A Cemu started since is asked afresh, and its window doesn't
+        // answer for the other one.
+        assert!(quiet.may_ask(8, now));
+        quiet.answered(8);
+        assert!(!quiet.may_ask(7, now));
+        quiet.answered(7);
+        assert!(quiet.may_ask(7, now));
+    }
+
+    #[test]
+    fn a_command_whose_window_never_showed_is_sent_again_in_the_end() {
+        let sent = Instant::now();
+        let mut quiet = quiet_with(Vec::new());
+        quiet.asked = Some((7, sent));
+        assert!(!quiet.may_ask(7, sent + START_WAIT));
+        assert!(quiet.may_ask(7, sent + ASK_AGAIN), "taken as lost, so the game can be hushed again");
+    }
+
+    #[test]
+    fn a_window_told_to_close_is_waited_for_a_while_and_never_kept() {
+        let told = Instant::now();
+        let mut quiet = quiet_with(vec![(1, told)]);
+        assert!(!quiet.settled(told, |_| true));
+        // Still there after its time: not waited for again, nor kept.
+        assert!(quiet.settled(told + GONE_WAIT, |_| true));
+        assert!(quiet.told_to_close(1));
+        assert!(!quiet.told_to_close(2));
+        // Gone, and forgotten.
+        assert!(quiet.settled(told, |_| false));
+        assert!(!quiet.told_to_close(1));
     }
 
     /// Needs a Cemu running and a figure file, so it runs only by hand:

@@ -20,6 +20,16 @@
 //! before every game, with the pads plugged in then. Any other pad gets none
 //! in Cemu: its GUID would be a guess.
 //!
+//! Cemu reads these files once, as it starts (`CemuCommonInit` calls
+//! `InputManager::load`, v2.6), so what Omoio writes during a game counts from
+//! the next one. A pad that goes and comes back during a game is found again
+//! by Cemu itself: SDL reports it added, and each player's SDL pad looks again
+//! for a joystick of its GUID and number (`SDLControllerProvider::event_thread`,
+//! `InputManager::on_device_changed`, `SDLController::connect`). That holds
+//! for a pad back the way it went. Back over the other of cable and
+//! Bluetooth, it has the same GUID only if Windows gives it the same version
+//! there (sdl.rs), and otherwise plays again from the next game.
+//!
 //! Player 1 is the one every game answers, so they are never left without a
 //! pad while an XInput one is plugged in (`stand_in`), and Play says so before
 //! a game starts with nobody to answer it (`missing_first_player`).
@@ -228,6 +238,14 @@ type UsbIds<'a> = &'a dyn Fn(&str) -> Option<(u16, u16, usize)>;
 /// How Cemu reads this player's pad, with `hid` the HID devices plugged in
 /// and `ids` what gilrs knows of the pads it reads. `None` for a pad Cemu
 /// cannot be told about: neither XInput nor one sdl.rs finds.
+///
+/// A pad gilrs has no ids for may still be plugged in. gilrs keeps what it
+/// first learnt of each pad for as long as Omoio runs (`handle_event` in
+/// gilrs-core 0.6.8's `windows_wgi/gamepad.rs`), and a pad that went away and
+/// came back, by cable or over Bluetooth, has needed Omoio started again
+/// before Cemu answered it (reported 8 October 2026). The HID devices are
+/// read afresh each time, so such a pad is looked for there, by the name and
+/// number it has in the layout.
 fn reader_for(player: &Player, hid: &[sdl::HidPad], ids: UsbIds) -> Option<Reader> {
     if let Some(slot) = xinput_slot(&player.pad) {
         return Some(Reader::XInput(slot));
@@ -235,8 +253,16 @@ fn reader_for(player: &Player, hid: &[sdl::HidPad], ids: UsbIds) -> Option<Reade
     if player.pad.handler != "SDL" {
         return None;
     }
-    let (vendor, product, ordinal) = ids(&player.pad.device)?;
-    sdl::find(vendor, product, ordinal, hid).map(Reader::Sdl)
+    let found = match ids(&player.pad.device) {
+        Some((vendor, product, ordinal)) => sdl::find(vendor, product, ordinal, hid),
+        None => sdl::find_named(&player.pad.name, number(&player.pad)?, hid),
+    };
+    found.map(Reader::Sdl)
+}
+
+/// The number pads.rs puts after a pad's name, the 0 of "PS5 Controller 0".
+fn number(pad: &Pad) -> Option<usize> {
+    pad.device.strip_prefix(pad.name.as_str())?.strip_prefix(' ')?.parse().ok()
 }
 
 /// The HID devices plugged in, as `find` lists them, for naming SDL pads in
@@ -669,6 +695,7 @@ mod tests {
             version: 0x0100,
             manufacturer: Some("Sony Interactive Entertainment".to_string()),
             product_name: Some("Wireless Controller".to_string()),
+            bluetooth: false,
         }
     }
 
@@ -795,6 +822,94 @@ mod tests {
         assert!(why.is_some_and(|why| why.contains("PS5 Controller")));
 
         assert!(hid_for(&players, None, plugged_dualsense).is_empty(), "nor a Cemu of no known version");
+    }
+
+    /// gilrs has lost sight of every pad.
+    fn no_ids(_device: &str) -> Option<(u16, u16, usize)> {
+        None
+    }
+
+    #[test]
+    fn a_pad_gilrs_has_no_ids_for_is_found_among_the_hid_devices() {
+        let hid = [dualsense_hid()];
+        let player = Player::on(dualsense());
+        assert_eq!(reader_for(&player, &hid, &no_ids), Some(sdl_dualsense()), "the same name as through gilrs");
+        let mut second = dualsense();
+        second.device = "PS5 Controller 1".to_string();
+        assert_eq!(reader_for(&Player::on(second), &hid, &no_ids), None, "only one is plugged in");
+        assert_eq!(reader_for(&player, &[], &no_ids), None, "nor when Windows has none either");
+
+        let mut players = vec![Player::on(dualsense())];
+        players.extend((1..=3).map(|slot| Player::on(xinput(slot))));
+        let usable = |player: &Player| reader_for(player, &hid, &no_ids).is_some();
+        assert_eq!(stand_in(&players, &[xinput(1)], &usable), players, "player 1 keeps the pad");
+        assert_eq!(missing(&players, &[], &usable), None, "and Play says nothing");
+    }
+
+    #[test]
+    fn a_switch_pad_gilrs_has_no_ids_for_keeps_its_buttons_by_letter() {
+        let pro = sdl::HidPad {
+            vendor: 0x057E,
+            product: 0x2009,
+            version: 0x0210,
+            manufacturer: Some("Nintendo Co., Ltd.".to_string()),
+            product_name: Some("Pro Controller".to_string()),
+            bluetooth: true,
+        };
+        assert_eq!(reader_for(&Player::on(switch_pro()), &[pro], &no_ids), Some(sdl_switch_pro()));
+    }
+
+    #[test]
+    fn a_pad_named_otherwise_is_not_looked_for_by_its_name() {
+        let mut pad = dualsense();
+        pad.name = "Wireless Controller".to_string();
+        pad.device = "Wireless Controller 0".to_string();
+        assert_eq!(reader_for(&Player::on(pad), &[dualsense_hid()], &no_ids), None);
+    }
+
+    #[test]
+    fn an_xinput_players_files_are_what_cemu_has_always_been_given() {
+        // Every byte, so nothing done for other pads changes an Xbox pad's.
+        fn text(kind: &str, controller: u32, entries: &[(u64, u64)]) -> String {
+            let entries: String = entries
+                .iter()
+                .map(|(mapping, button)| {
+                    format!("\t\t\t<entry>\n\t\t\t\t<mapping>{mapping}</mapping>\n\t\t\t\t<button>{button}</button>\n\t\t\t</entry>\n")
+                })
+                .collect();
+            format!(
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<emulated_controller>\n\t<type>{kind}</type>\n\t<controller>\n\
+                 \t\t<api>XInput</api>\n\t\t<uuid>{controller}</uuid>\n\t\t<display_name>Controller {}</display_name>\n\
+                 \t\t<mappings>\n{entries}\t\t</mappings>\n\t</controller>\n</emulated_controller>\n",
+                controller + 1
+            )
+        }
+        let gamepad = text(
+            "Wii U GamePad",
+            0,
+            &[
+                (1, 13), (2, 12), (3, 15), (4, 14), (5, 8), (6, 9), (7, 42), (8, 43), (9, 4), (10, 5), (11, 0), (12, 1),
+                (13, 2), (14, 3), (15, 6), (16, 7), (17, 39), (18, 45), (19, 44), (20, 38), (21, 41), (22, 47), (23, 46),
+                (24, 40),
+            ],
+        );
+        let pro = text(
+            "Wii U Pro Controller",
+            1,
+            &[
+                (1, 13), (2, 12), (3, 15), (4, 14), (5, 8), (6, 9), (7, 42), (8, 43), (9, 4), (10, 5), (12, 0), (13, 1),
+                (14, 2), (15, 3), (16, 6), (17, 7), (18, 39), (19, 45), (20, 44), (21, 38), (22, 41), (23, 47), (24, 46),
+                (25, 40),
+            ],
+        );
+        let dir = scratch("xinput-bytes");
+        let players: Vec<Player> = (1..=4).map(|slot| Player::on(xinput(slot))).collect();
+        let readers: Vec<Option<Reader>> = players.iter().map(|p| reader_for(p, &[dualsense_hid()], &no_ids)).collect();
+        write_all(&dir, &players, &readers).unwrap();
+        assert_eq!(std::fs::read_to_string(dir.join("controller0.xml")).unwrap(), gamepad);
+        assert_eq!(std::fs::read_to_string(dir.join(FIRST_AS_GAMEPAD)).unwrap(), gamepad);
+        assert_eq!(std::fs::read_to_string(dir.join("controller1.xml")).unwrap(), pro);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -428,6 +428,19 @@ impl super::EmulatorBackend for Rpcs3 {
         portal::tidy(pid, game);
     }
 
+    /// Omoio's menus keep the game deaf by taking the keyboard from its
+    /// window, since Omoio switches its background input off (launch.rs,
+    /// `keep_pad_to_the_game`). When it may hear again, the game gets the
+    /// keyboard back if one of RPCS3's own windows has it, as the portal's
+    /// file windows take it, which Omoio's own hand-over can't take back
+    /// from them.
+    fn hush(&self, pid: u32, hushed: bool) -> Result<(), String> {
+        if !hushed {
+            portal::give_back_to_game(pid);
+        }
+        Ok(())
+    }
+
     /// A PS3 game is a folder of plain files, which is all the picture
     /// reader needs.
     fn readable_copy(
@@ -496,6 +509,10 @@ impl super::EmulatorBackend for Rpcs3 {
         players: &[crate::core::pad_layout::Player],
     ) -> Result<(), String> {
         controllers::write(app, title_id, players)
+    }
+
+    fn unfound_pad(&self, app: &AppHandle, title_id: &str) -> Option<String> {
+        controllers::unfound(app, title_id)
     }
 
     fn forget_layout(&self, app: &AppHandle, title_id: &str) -> Result<(), String> {

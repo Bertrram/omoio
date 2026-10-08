@@ -176,6 +176,12 @@ export function onGameFullscreen(handler: (on: boolean) => void): Promise<Unlist
   return listen<boolean>("game-fullscreen", (event) => handler(event.payload));
 }
 
+/// Once a game has started, when its emulator couldn't find a player's
+/// controller. The message is worded for the person playing.
+export function onPadNotFound(handler: (message: string) => void): Promise<UnlistenFn> {
+  return listen<string>("pad-not-found", (event) => handler(event.payload));
+}
+
 export interface Machine {
   rpcs3: string | null;
   cpu: string | null;

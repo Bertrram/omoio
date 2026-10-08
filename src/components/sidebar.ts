@@ -60,7 +60,9 @@ function navButton(item: NavItem): HTMLButtonElement {
     <svg class="nav-ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">${item.icon}</svg>
     <span>${item.label}</span>
   `;
-  btn.onclick = () => store.setView(item.id);
+  btn.onclick = () => {
+    if (!store.get().playing) store.setView(item.id);
+  };
   return btn;
 }
 
@@ -85,6 +87,14 @@ export function renderSidebar(): HTMLElement {
   side.appendChild(navLabel("Maintenance"));
   MAINTENANCE_NAV.forEach((item) => side.appendChild(navButton(item)));
 
+  // While a game runs, its picture fills the space every page opens in. A
+  // page that looked chosen and showed nothing read as a fault, so the pages
+  // dim and this says why.
+  const away = document.createElement("div");
+  away.className = "nav-note gone";
+  away.textContent = "Pages open again when the game stops.";
+  side.appendChild(away);
+
   const foot = document.createElement("div");
   foot.className = "side-foot";
   foot.innerHTML = `
@@ -102,8 +112,12 @@ export function renderSidebar(): HTMLElement {
   foot.querySelector<HTMLButtonElement>("#import-game")!.onclick = openImportSheet;
 
   store.subscribe((state) => {
+    const playing = state.playing !== null;
+    away.classList.toggle("gone", !playing);
     side.querySelectorAll<HTMLButtonElement>(".nav-item").forEach((btn) => {
-      btn.classList.toggle("on", btn.dataset.view === state.view);
+      btn.classList.toggle("on", !playing && btn.dataset.view === state.view);
+      if (playing) btn.setAttribute("aria-disabled", "true");
+      else btn.removeAttribute("aria-disabled");
     });
     rpcs3Stat.textContent = installedVersion(state.rpcs3Version);
     firmwareStat.textContent = installedVersion(state.firmwareVersion);
