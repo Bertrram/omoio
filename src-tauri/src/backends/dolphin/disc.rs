@@ -859,7 +859,7 @@ impl Wia {
 /// Dolphin names partition folders. Dolphin 2609a, DiscIO/DirectoryBlob.cpp,
 /// IsValidDirectoryBlob and ParsePartitionDirectoryName, and
 /// DolphinTool/ExtractCommand.cpp, HandleExtractPartition.
-fn partition_root(dir: &Path) -> Option<PathBuf> {
+pub fn partition_root(dir: &Path) -> Option<PathBuf> {
     if is_partition_root(dir) {
         return Some(dir.to_path_buf());
     }
@@ -1574,6 +1574,10 @@ mod tests {
         let data = dir.join("DATA");
         assert_eq!(read_folder(&data).unwrap().game_id, "SSPP52");
         assert_eq!(gamecube_banner_png(&dir), None);
+        // The picture reader is given the partition's folder either way.
+        assert_eq!(partition_root(&dir), Some(data.clone()));
+        assert_eq!(partition_root(&data), Some(data.clone()));
+        assert_eq!(partition_root(&data.join("sys").join("boot.bin")), None, "a file");
 
         // P0 is the game partition's other name.
         std::fs::rename(&data, dir.join("P0")).unwrap();

@@ -304,10 +304,13 @@ impl super::EmulatorBackend for Dolphin {
         portal::ready(pid)
     }
 
-    /// A game unpacked into a folder is read as it is. A disc image needs a
-    /// copy first (`make_copy`): a Wii disc's files are encrypted.
+    /// A game unpacked into a folder is read as it is, from the folder of its
+    /// game partition, which holds `files`: the same folder a copy gives the
+    /// reader (copy.rs), whether the folder picked was that one or a whole
+    /// disc's around it. A disc image needs a copy first (`make_copy`): a Wii
+    /// disc's files are encrypted.
     fn readable_copy(&self, _app: &AppHandle, game: &Game, _title_of: &dyn Fn(&Path) -> Option<String>) -> Option<PathBuf> {
-        game.path.is_dir().then(|| game.path.clone())
+        disc::partition_root(&game.path)
     }
 
     /// The game's own partition, or for a game whose pictures are in a few
