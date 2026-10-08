@@ -125,8 +125,7 @@ folder. A small separate program,
 [omoio-portraits](https://github.com/Bertrram/omoio-portraits), does the reading.
 Omoio downloads it only when you ask and checks it before it runs. The pictures
 stay on your computer, and the screenshots above show them as they look once
-read. It can't read SuperChargers' pictures yet, so that game's menu shows
-Omoio's own marks for now.
+read.
 
 The other Skylanders games aren't supported yet.
 
