@@ -1900,6 +1900,64 @@ body {
   }
 }
 
+/* A saved figure held to be deleted: a bar fills its picture over the five
+   seconds, slowly while held and running back fast when let go. */
+.portal-hold {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border-radius: inherit;
+  background: color-mix(in srgb, var(--void) 50%, transparent);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 200ms var(--ease-out);
+}
+
+.portal-hold.held {
+  opacity: 1;
+}
+
+.portal-hold i {
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--bad) 55%, transparent);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 200ms var(--ease-out);
+}
+
+.portal-hold.held i {
+  transition: transform 60ms linear;
+}
+
+.portal-hold b {
+  position: relative;
+  padding: 5px 12px;
+  border-radius: 99px;
+  background: var(--glass);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .portal-hold i,
+  .portal-hold.held i {
+    transition: none;
+  }
+}
+
+/* Scrollbars thin and in the panel's own colours rather than Windows'
+   white, in every game's menu. */
+.portal-body,
+.portal-tray-main,
+.portal-villain-card,
+.portal-garage-column {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line2) transparent;
+}
+
 /* ---- buttons ---- */
 
 /* The buttons sit on the left, so the corner is free for notices. */

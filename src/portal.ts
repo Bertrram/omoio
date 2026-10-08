@@ -4,6 +4,7 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import {
   cancelCommunity,
   closePortalMenu,
+  deleteFigure,
   figureCharacters,
   figurePictures,
   figures as listFigures,
@@ -330,6 +331,8 @@ interface Tab {
   crystals?: true;
   /// Imaginators' Senseis, a column to each battle class.
   senseis?: true;
+  /// The user's saved figures.
+  mine?: true;
 }
 
 /// The tray's columns, one to each element, as the villains fit the traps,
@@ -618,6 +621,7 @@ function buildTabs() {
   const characters = offers.filter((offer) => offer.kind === "character" && !offer.half);
   const saved: Tab = {
     label: "Saved",
+    mine: true,
     entries: mine.map((figure) => ({ name: figure.name, element: figure.element, kind: figure.kind, figure })),
   };
   const traps = offers.filter((offer) => offer.kind === "trap").map(entry).sort(byName);
@@ -2063,7 +2067,8 @@ function renderFoot(): HTMLElement {
     hints.push(["South", southWords(entry)]);
     if (entry && isOn(entry)) hints.push(["West", "Take off"]);
     const pair = pairOf(entry);
-    if (entry && pair && !pairOn(entry)) hints.push(["North", pairWords(entry, pair.other)]);
+    if (deletable(entry)) hints.push(["North", "Hold to delete"]);
+    else if (entry && pair && !pairOn(entry)) hints.push(["North", pairWords(entry, pair.other)]);
   }
   hints.push(["East", gettingPacks ? "Stop" : pickedTop ? "Back" : "Close"]);
   const row = node("div", "portal-hints");
@@ -2101,6 +2106,7 @@ function render() {
     .querySelector(".portal-item.sel, .portal-villain.sel, .portal-car.sel, .portal-blank.sel, .portal-sensei.sel")
     ?.scrollIntoView({ block: "nearest" });
   panel.querySelector(".portal-tab.sel")?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  drawHold();
 }
 
 // ---- notices ----
@@ -2739,6 +2745,8 @@ async function readPads(): Promise<Set<string>> {
 }
 
 function press(input: string) {
+  // Anything else pressed lets go of a figure being held to delete it.
+  if (holding && input !== "North") stopHold();
   const move = MOVES[input];
   if (move) {
     if (zone === "portal") return movePortal(move);
@@ -2760,7 +2768,10 @@ function press(input: string) {
   }
   if (input === "South") void act(choose);
   else if (input === "West") void act(takeOff);
-  else if (input === "North") void act(pairUp);
+  else if (input === "North") {
+    if (deletable(tabs[tab]?.entries[at])) startHold("pad");
+    else void act(pairUp);
+  }
 }
 
 window.setInterval(async () => {
@@ -2783,12 +2794,106 @@ window.setInterval(async () => {
       }
     }
     held = now;
+    if (holding) {
+      const still = holding.by === "pad" ? now.has("North") : keyHeld;
+      if (!still) stopHold();
+      else if (time - holding.since >= HOLD_TO_DELETE) void finishHold();
+      else drawHold();
+    }
   } finally {
     reading = false;
   }
 }, 50);
 
+// ---- deleting a saved figure ----
+
+/// How long the top face button is held on a saved figure to delete it:
+/// long enough that it never happens by chance, as a child pressing every
+/// button would otherwise make it.
+const HOLD_TO_DELETE = 5000;
+
+/// A saved figure being held to be deleted: its file, since when, and what
+/// holds it, the pad or the keyboard's Y.
+let holding: { path: string; name: string; since: number; by: "pad" | "key" } | null = null;
+let keyHeld = false;
+
+/// Whether holding the top face button deletes the selected tile's figure:
+/// one of the user's own, in the Saved tab or among their crystals, where
+/// the button has nothing else to do.
+function deletable(entry: Entry | undefined): entry is Entry & { figure: Figure } {
+  const current = tabs[tab];
+  return zone === "grid" && Boolean(entry?.figure && !entry.fresh && (current?.mine || current?.crystals));
+}
+
+/// Starts the hold, unless the figure is on the portal: the emulator writes
+/// to a figure's file while it is on.
+function startHold(by: "pad" | "key") {
+  const entry = tabs[tab]?.entries[at];
+  if (!deletable(entry) || holding || acting) return;
+  if (isOn(entry)) {
+    notify({ kind: "info", title: `Take ${entry.name} off the portal first`, detail: `Then hold ${nameOf(family, "North")} on it to delete it.` });
+    return;
+  }
+  holding = { path: entry.figure.path, name: entry.name, since: Date.now(), by };
+  drawHold();
+}
+
+/// Let go before the time is up: nothing happens.
+function stopHold() {
+  holding = null;
+  drawHold();
+}
+
+/// The bar over the selected tile's picture that fills while its figure is
+/// held, and runs back when let go.
+function drawHold() {
+  const art = root.querySelector<HTMLElement>(".portal-item.sel .portal-art");
+  if (!art) return;
+  let bar = art.querySelector<HTMLElement>(".portal-hold");
+  if (!bar) {
+    bar = node("span", "portal-hold");
+    bar.append(node("i", ""), node("b", "", "Keep holding to delete"));
+    art.appendChild(bar);
+  }
+  const share = holding ? Math.min(1, (Date.now() - holding.since) / HOLD_TO_DELETE) : 0;
+  bar.classList.toggle("held", Boolean(holding));
+  bar.querySelector<HTMLElement>("i")!.style.transform = `scaleX(${share})`;
+}
+
+/// Held long enough: the figure goes to the Recycle Bin, from where it can
+/// be put back.
+async function finishHold() {
+  if (!holding) return;
+  const { path, name } = holding;
+  holding = null;
+  await act(async () => {
+    try {
+      await deleteFigure(path);
+      mine = await listFigures(true).catch(() => mine);
+      buildTabs();
+      render();
+      notify({ kind: "done", title: `${name} is in the Recycle Bin`, detail: "Restore it from there to get it back." });
+    } catch (err) {
+      render();
+      notify(problem(err, "Couldn't delete that figure."));
+    }
+  });
+}
+
+document.addEventListener("keyup", (event) => {
+  if (event.key === "y" || event.key === "Y") keyHeld = false;
+});
+
 document.addEventListener("keydown", (event) => {
+  // Y held deletes a saved figure, as the pad's top face button does.
+  if (event.key === "y" || event.key === "Y") {
+    event.preventDefault();
+    if (!event.repeat) {
+      keyHeld = true;
+      if (deletable(tabs[tab]?.entries[at])) startHold("key");
+    }
+    return;
+  }
   const keys: Record<string, () => void> = {
     ArrowUp: () => press("Up"),
     ArrowDown: () => press("Down"),
@@ -2848,6 +2953,9 @@ async function show() {
 void onPortalMenu((state) => {
   family = state.family as PadFamily;
   if (state.open) void show();
-  else shown = false;
+  else {
+    shown = false;
+    holding = null;
+  }
 });
 void show();
