@@ -79,6 +79,14 @@ fn disc_image(picked: &Path) -> Option<PathBuf> {
     (found.len() == 1).then(|| found.remove(0))
 }
 
+/// Where a Wii game's save keeps its banner in Dolphin's copy of the Wii's
+/// storage, from the library's id, whose first four characters are the
+/// title's (`disc::nand_title_folder`).
+fn save_banner(user: &Path, title_id: &str) -> Option<PathBuf> {
+    let title = disc::nand_title_folder(title_id)?;
+    Some(user.join("Wii").join("title").join(title).join("data").join("banner.bin"))
+}
+
 /// The disc's revision, which the library keeps as the game's version.
 fn revision(game: &Game) -> Option<u16> {
     game.version.as_deref()?.parse().ok()
@@ -232,16 +240,13 @@ impl super::EmulatorBackend for Dolphin {
     /// A GameCube disc's own banner, which is plain on the disc. A Wii disc's
     /// is inside its encrypted part, so a Wii game gets the banner its save
     /// carries once it has been played and saved: the game writes it into
-    /// Dolphin's copy of the Wii's storage, which Dolphin keeps plain.
+    /// Dolphin's copy of the Wii's storage, which Dolphin keeps plain. The
+    /// library asks on every load until there is one, so it is found by the
+    /// game's id, without opening the dump (`save_banner`).
     fn icon(&self, app: &AppHandle, game: &Game) -> Option<Vec<u8>> {
         match self.console {
             Console::GameCube => disc::gamecube_banner_png(&game.path),
-            _ => {
-                let found = find(&game.path)?.1;
-                let title = disc::nand_title_folder(&found.game_id)?;
-                let banner = install::user_dir(app).ok()?.join("Wii").join("title").join(title).join("data").join("banner.bin");
-                disc::save_banner_png(&banner)
-            }
+            _ => disc::save_banner_png(&save_banner(&install::user_dir(app).ok()?, &game.title_id)?),
         }
     }
 
@@ -555,5 +560,14 @@ mod tests {
         assert_eq!(names(2), ["third.iso", "first.iso", "second.iso"]);
         assert_eq!(names(3), ["another.iso"], "a game of one disc");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_wii_games_save_banner_is_found_by_its_id_alone() {
+        let user = Path::new("User");
+        let banner = user.join("Wii").join("title").join("00010000/53535050").join("data").join("banner.bin");
+        assert_eq!(save_banner(user, "SSPP52"), Some(banner));
+        assert_eq!(save_banner(user, "SSPP52D2"), save_banner(user, "SSPP52"), "a second disc's save is the game's");
+        assert_eq!(save_banner(user, "SS-P52"), None);
     }
 }

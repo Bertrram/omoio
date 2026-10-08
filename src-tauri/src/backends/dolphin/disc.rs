@@ -94,9 +94,10 @@ pub struct Disc {
     pub title: String,
     /// How much data the disc holds, for working out room: the size the
     /// image records for the disc where it keeps one (WIA, RVZ, GCZ), how far
-    /// its stored blocks reach where it keeps only those (WBFS, CISO), the
-    /// image less its own header otherwise, and what the files take for an
-    /// extracted folder.
+    /// its stored blocks reach where it keeps only those (WBFS, CISO), and
+    /// the image less its own header otherwise. 0 for an extracted folder,
+    /// which isn't measured here: its files are read where they are, so it
+    /// needs no room, and measuring means walking every file in it.
     pub data_size: u64,
 }
 
@@ -160,7 +161,8 @@ pub fn read(path: &Path) -> Result<Disc, String> {
 /// Reads an extracted disc, laid out as Dolphin's DirectoryBlob takes one
 /// and DolphinTool's `extract` writes one: `sys/boot.bin`, `sys/main.dol`
 /// and `files/` in the folder itself, or, for a whole Wii disc, in its DATA
-/// folder beside the others. `None` when the folder isn't one.
+/// folder beside the others. `None` when the folder isn't one. Only the
+/// few files that hold the header are read; the folder isn't measured.
 pub fn read_folder(dir: &Path) -> Option<Disc> {
     let root = partition_root(dir)?;
     let header = folder_header(&root)?;
@@ -169,7 +171,7 @@ pub fn read_folder(dir: &Path) -> Option<Disc> {
         Platform::GameCube => Some(folder_region(&root)),
         Platform::Wii => None,
     };
-    Some(disc_from(&header, platform, region, folder_size(dir)))
+    Some(disc_from(&header, platform, region, 0))
 }
 
 /// A GameCube game's banner, as the bytes of a PNG file, from an image or an
@@ -927,26 +929,6 @@ fn read_start(path: &Path, most: usize) -> Option<Vec<u8>> {
     Some(bytes)
 }
 
-/// What the files under `dir` take, all the way down.
-fn folder_size(dir: &Path) -> u64 {
-    let mut total = 0;
-    let mut folders = vec![dir.to_path_buf()];
-    while let Some(folder) = folders.pop() {
-        let Ok(entries) = std::fs::read_dir(&folder) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            // A link is neither, so one pointing back up is never followed.
-            match entry.file_type() {
-                Ok(kind) if kind.is_dir() => folders.push(entry.path()),
-                Ok(kind) if kind.is_file() => total += entry.metadata().map_or(0, |metadata| metadata.len()),
-                _ => {}
-            }
-        }
-    }
-    total
-}
-
 /// opening.bnr from a GameCube image, found through the disc's file table.
 fn banner_in_image(path: &Path) -> Option<Vec<u8>> {
     let mut image = Image::open(path).ok()?;
@@ -1564,9 +1546,9 @@ mod tests {
         written(&dir, "sys/main.dol", &[0; 0x100]);
         written(&dir, "files/audio/a.dsp", &[0; 0x10]);
         written(&dir, "files/OPENING.BNR", &banner(b"BNR2"));
-        let size = (HEADER_SIZE + 0x2000 + 0x100 + 0x10 + BNR2_SIZE) as u64;
-        expect_gamecube(&read_folder(&dir).unwrap(), size);
-        expect_gamecube(&read(&dir).unwrap(), size);
+        // Read from its header alone, never measured.
+        expect_gamecube(&read_folder(&dir).unwrap(), 0);
+        expect_gamecube(&read(&dir).unwrap(), 0);
         expect_banner(gamecube_banner_png(&dir));
 
         // Without main.dol it is only a folder.
@@ -1587,8 +1569,7 @@ mod tests {
         written(&dir, "DATA/sys/main.dol", &[0; 0x10]);
         written(&dir, "DATA/disc/header.bin", &wii_disc(HEADER_SIZE)[..0x100]);
         written(&dir, "DATA/files/opening.bnr", &[0; 0x20]);
-        let size = (2 * HEADER_SIZE + 2 * 0x10 + 0x100 + 0x20) as u64;
-        expect_wii(&read_folder(&dir).unwrap(), size);
+        expect_wii(&read_folder(&dir).unwrap(), 0);
         // The partition's folder on its own reads the same game.
         let data = dir.join("DATA");
         assert_eq!(read_folder(&data).unwrap().game_id, "SSPP52");

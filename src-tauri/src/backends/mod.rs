@@ -37,8 +37,9 @@ pub trait EmulatorBackend: Sync {
 
     fn features(&self) -> Features;
 
-    /// Whether this looks like one of this console's dumps. It must not read
-    /// or measure the dump: every backend is asked about every import.
+    /// Whether this looks like one of this console's dumps. It must not
+    /// measure the dump, or read more of it than the few bytes that say what
+    /// it is: every backend is asked about every import.
     fn recognises(&self, path: &Path) -> bool;
 
     fn identify(&self, path: &Path) -> Result<Game, String>;
