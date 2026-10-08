@@ -21,6 +21,7 @@ pub mod mods;
 pub mod packs;
 pub mod portal;
 pub mod release;
+pub mod saves;
 pub mod settings;
 
 pub use install::install;
@@ -160,6 +161,7 @@ impl super::EmulatorBackend for Dolphin {
         Features {
             packs: true,
             portal: self.console == Console::Wii,
+            saves: true,
             quiet_behind: true,
             ..Features::default()
         }
@@ -275,6 +277,30 @@ impl super::EmulatorBackend for Dolphin {
         }
         let files = copy::files_for(figures::game_from_title(&game.title));
         copy::extract(&tool, &game.path, &into.join("game"), files, progress, cancel)
+    }
+
+    fn save_folders(&self, app: &AppHandle, game: &Game) -> Vec<super::SaveFolder> {
+        let Ok(user) = install::user_dir(app) else {
+            return Vec::new();
+        };
+        match self.console {
+            Console::GameCube => saves::gamecube_folders(&user, &game.title_id),
+            _ => saves::wii_folders(&user, &game.title_id),
+        }
+    }
+
+    fn save_folder(&self, app: &AppHandle, game: &Game, kept_as: &str) -> Option<PathBuf> {
+        let user = install::user_dir(app).ok()?;
+        match self.console {
+            Console::GameCube => saves::gamecube_folder(&user, kept_as),
+            _ => saves::wii_folder(&user, &game.title_id, kept_as),
+        }
+    }
+
+    /// A GameCube save is known by what it holds, and a file of the same
+    /// save under another name would be loaded in place of the one put back.
+    fn is_same_save(&self, kept: &Path, saved: &Path) -> bool {
+        self.console == Console::GameCube && saves::same_gamecube_save(kept, saved)
     }
 
     fn button_names(&self) -> &'static [(&'static str, &'static str)] {
