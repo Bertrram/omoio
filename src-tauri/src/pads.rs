@@ -208,7 +208,20 @@ struct Seen {
     pad: Pad,
     vendor: Option<u16>,
     product: Option<u16>,
+    /// Whether Windows takes it for an Xbox-style pad, which XInput reads
+    /// too.
+    xbox_like: bool,
     held: Vec<&'static str>,
+}
+
+/// Whether a pad gilrs reads is one XInput also answers for. Microsoft's own
+/// are, and so is any pad Windows.Gaming.Input takes for a gamepad, such as a
+/// PowerA or PDP Xbox pad: gilrs gives exactly those no uuid
+/// (`Gamepad::new`, `Uuid::nil()` when `WgiGamepad::FromGameController`
+/// succeeds, gilrs-core 0.6.8's `windows_wgi/gamepad.rs`, read 8 October
+/// 2026). Listed twice, the second one took a player of its own.
+fn answers_through_xinput(vendor: Option<u16>, xbox_like: bool) -> bool {
+    vendor == Some(MICROSOFT) || xbox_like
 }
 
 /// `None` until gilrs has had its first look.
@@ -266,15 +279,17 @@ fn watch() {
                         let at = named.entry(name.clone()).or_insert(0);
                         let device = format!("{name} {at}");
                         *at += 1;
+                        let xbox_like = pad.uuid() == [0; 16];
                         Seen {
                             pad: Pad {
                                 device,
                                 name,
                                 handler: "SDL".to_string(),
-                                family: family_of(pad.vendor_id()).to_string(),
+                                family: if xbox_like { "xbox" } else { family_of(pad.vendor_id()) }.to_string(),
                             },
                             vendor: pad.vendor_id(),
                             product: pad.product_id(),
+                            xbox_like,
                             held: sdl_held(&pad),
                         }
                     })
@@ -324,11 +339,11 @@ pub fn connected() -> Vec<Pad> {
     let mut found: Vec<Pad> = slots.iter().map(|&slot| xinput_slot(slot)).collect();
     watch();
     if let Some(seen) = seen().lock().unwrap().as_ref() {
-        // Microsoft's pads already answered through XInput, so they are not
-        // listed a second time.
+        // Pads XInput answers for were listed through it already, so they are
+        // not listed a second time.
         found.extend(
             seen.iter()
-                .filter(|s| slots.is_empty() || s.vendor != Some(MICROSOFT))
+                .filter(|s| slots.is_empty() || !answers_through_xinput(s.vendor, s.xbox_like))
                 .map(|s| s.pad.clone()),
         );
     }
@@ -414,6 +429,14 @@ mod tests {
         assert_eq!(family_of(Some(0x045E)), "xbox");
         assert_eq!(family_of(Some(0x2DC8)), "generic");
         assert_eq!(family_of(None), "generic");
+    }
+
+    #[test]
+    fn a_pad_xinput_answers_for_is_known_whoever_made_it() {
+        assert!(answers_through_xinput(Some(MICROSOFT), false));
+        assert!(answers_through_xinput(Some(0x20D6), true), "a PowerA pad Windows takes for a gamepad");
+        assert!(!answers_through_xinput(Some(SONY), false));
+        assert!(!answers_through_xinput(None, false));
     }
 
     #[test]

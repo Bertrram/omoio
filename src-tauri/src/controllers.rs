@@ -54,15 +54,21 @@ pub struct Current {
     /// Whether the players shown have been kept, rather than being who
     /// pressing Play would set up.
     pub saved: bool,
+    /// Whether player 1 took the only pad plugged in (`give_lone_pad`),
+    /// which is kept once Play is pressed or a player is changed.
+    pub lone: bool,
 }
 
 /// The four players a game plays with: its own layout, else the one for
-/// every game, else who pressing Play would set up.
+/// every game, else who pressing Play would set up. A lone PlayStation or
+/// Switch pad is player 1 here already, so the Controller screen shows it
+/// there rather than leaving it to be picked. Nothing is kept from just
+/// looking: a pad seen for a moment while it is switched on or off must not
+/// change the layout.
 pub fn current(app: &AppHandle, title_id: &str, connected: &[Pad]) -> Current {
-    let mut layouts = load(app);
+    let layouts = load(app);
     let own = !title_id.is_empty() && layouts.games.contains_key(title_id);
-    let scope = if own { title_id } else { "" };
-    let found = layouts.get(scope).cloned();
+    let found = layouts.get(if own { title_id } else { "" }).cloned();
     let saved = found.is_some();
     let spare = crate::pads::xinput_slots();
     let mut players = match found {
@@ -70,13 +76,8 @@ pub fn current(app: &AppHandle, title_id: &str, connected: &[Pad]) -> Current {
         None => pad_layout::default_players(connected, &spare),
     };
     pad_layout::refresh(&mut players, connected);
-    // Kept as soon as it happens, so the Controller screen shows the pad as
-    // player 1 rather than leaving it to be picked, and Play agrees with it.
-    if pad_layout::give_lone_pad(&mut players, connected) {
-        layouts.set(scope, players.clone());
-        let _ = store(app, &layouts);
-    }
-    Current { players, own, saved }
+    let lone = pad_layout::give_lone_pad(&mut players, connected);
+    Current { players, own, saved, lone }
 }
 
 /// Gives player `number`, counted from 1, this pad and layout. A game's first
@@ -151,10 +152,10 @@ fn warning(
 pub fn before_launch(app: &AppHandle, backend: &dyn EmulatorBackend, title_id: &str) {
     crate::pads::rescan();
     let connected = crate::pads::connected();
-    let Current { mut players, own, saved } = current(app, title_id, &connected);
+    let Current { mut players, own, saved, lone } = current(app, title_id, &connected);
     let moved = pad_layout::seat(&mut players, &connected);
     let scope = if own { title_id } else { "" };
-    if moved || !saved {
+    if moved || lone || !saved {
         let mut layouts = load(app);
         layouts.set(scope, players.clone());
         let _ = store(app, &layouts);
@@ -180,6 +181,7 @@ mod tests {
             players: vec![Player::on(pad("PS5 Controller 0", "SDL"))],
             own,
             saved: true,
+            lone: false,
         }
     }
 
