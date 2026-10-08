@@ -272,21 +272,63 @@ fn lines(console: Console, player: &Player, device: Option<&str>, emulated: bool
     lines
 }
 
-/// The whole of GCPadNew.ini or WiimoteNew.ini for these players.
-fn file(console: Console, players: &[Player], devices: &[Option<String>], emulated: &[bool]) -> String {
+/// GCPadNew.ini or WiimoteNew.ini, `before`, with these players in it: each
+/// player's section written afresh, but for those `left` to the user
+/// (`left_alone`), and every other section as it was, such as the Balance
+/// Board's.
+fn file(
+    console: Console,
+    before: &str,
+    players: &[Player],
+    devices: &[Option<String>],
+    emulated: &[bool],
+    left: &[bool],
+) -> String {
     let section = if console == Console::GameCube { "GCPad" } else { "Wiimote" };
-    let mut text = String::new();
-    for (at, player) in players.iter().enumerate().take(PLAYERS) {
-        text.push_str(&format!("[{section}{}]\r\n", at + 1));
-        let device = devices.get(at).and_then(Option::as_deref);
-        let on = emulated.get(at).copied().unwrap_or(false);
-        for line in lines(console, player, device, on) {
-            text.push_str(&line);
-            text.push_str("\r\n");
-        }
-    }
-    text
+    let sections: Vec<(String, Vec<String>)> = players
+        .iter()
+        .enumerate()
+        .take(PLAYERS)
+        .filter(|(at, _)| !left.get(*at).copied().unwrap_or(false))
+        .map(|(at, player)| {
+            let device = devices.get(at).and_then(Option::as_deref);
+            let on = emulated.get(at).copied().unwrap_or(false);
+            (format!("{section}{}", at + 1), lines(console, player, device, on))
+        })
+        .collect();
+    ini::replace_sections(before, &sections)
 }
+
+/// Which players' places Omoio leaves as the user set them up in Dolphin,
+/// from WiimoteNew.ini for the Wii or Dolphin.ini for the GameCube: a real
+/// Wii Remote (`Source = 2`, `WiimoteSource::Real` in Core/HW/Wiimote.h and
+/// `WIIMOTE_1_SOURCE` and on in Core/Config/WiimoteSettings.cpp), and a
+/// GameCube port given a device other than a standard pad, such as a
+/// steering wheel or a dance mat, whose buttons are set up for it
+/// (`port_device`). Both are the user's own choice: Omoio only ever
+/// switches a remote between emulated and none, and fills an empty port
+/// with a standard pad (`standard_controllers`).
+fn left_alone(console: Console, settings: &str) -> Vec<bool> {
+    (0..PLAYERS)
+        .map(|at| match console {
+            Console::GameCube => ![0, STANDARD_PAD].contains(&port_device(settings, at)),
+            _ => {
+                let source = ini::get(settings, &format!("Wiimote{}", at + 1), "Source");
+                source.and_then(|value| value.parse::<u32>().ok()) == Some(REAL_REMOTE)
+            }
+        })
+        .collect()
+}
+
+/// `left_alone` from the file it is read from.
+fn left_alone_in(console: Console, config: &Path) -> std::io::Result<Vec<bool>> {
+    let name = if console == Console::GameCube { "Dolphin.ini" } else { "WiimoteNew.ini" };
+    Ok(left_alone(console, &ini::read(&config.join(name))?))
+}
+
+/// Dolphin's number for a real Wii Remote as a player's source
+/// (`WiimoteSource`, Core/HW/Wiimote.h).
+const REAL_REMOTE: u32 = 2;
 
 /// The same player in a profile of Dolphin's, for one game.
 fn profile(console: Console, player: &Player, device: Option<&str>) -> String {
@@ -367,7 +409,9 @@ fn stand_in(players: &[Player], plugged: &[Pad], usable: &dyn Fn(&Player) -> boo
 /// console's games only, since every emulator is handed it. A Wii Remote is
 /// switched on for player 1 and for every player whose pad is plugged in;
 /// one switched on with nothing to answer it would look to a game like a
-/// player who never presses anything.
+/// player who never presses anything. A real Wii Remote, the Balance Board
+/// and a GameCube port given another device stay as the user set them up
+/// in Dolphin (`file`, `left_alone`).
 pub fn write(app: &AppHandle, console: Console, title_id: &str, players: &[Player]) -> Result<(), String> {
     let config = config_dir(app)?;
     if !super::install::exe_path(app)?.is_file() {
@@ -385,8 +429,13 @@ pub fn write(app: &AppHandle, console: Console, title_id: &str, players: &[Playe
         .collect();
     let failed = |_| "Couldn't save the controller settings for Dolphin.".to_string();
     if title_id.is_empty() {
-        let name = if console == Console::GameCube { "GCPadNew.ini" } else { "WiimoteNew.ini" };
-        ini::write(&config.join(name), &file(console, &players, &devices, &emulated)).map_err(failed)?;
+        let left = left_alone_in(console, &config).map_err(failed)?;
+        let path = config.join(if console == Console::GameCube { "GCPadNew.ini" } else { "WiimoteNew.ini" });
+        let before = ini::read(&path).map_err(failed)?;
+        let after = file(console, &before, &players, &devices, &emulated, &left);
+        if after != before {
+            ini::write(&path, &after).map_err(failed)?;
+        }
         if console == Console::GameCube {
             standard_controllers(&config.join("Dolphin.ini")).map_err(failed)?;
         }
@@ -395,10 +444,16 @@ pub fn write(app: &AppHandle, console: Console, title_id: &str, players: &[Playe
     let Some(game) = game_id(title_id).filter(|_| is_own_game(app, console, title_id)) else {
         return Ok(());
     };
+    let left = left_alone_in(console, &config).map_err(failed)?;
     let (folder, key) = profile_kind(console);
     let profiles = config.join("Profiles").join(folder);
     let mut settings: Vec<(String, String)> = Vec::new();
     for (at, player) in players.iter().enumerate().take(PLAYERS) {
+        // Not even for one game: the game's settings would win over the
+        // user's real remote or their device in that port.
+        if left[at] {
+            continue;
+        }
         let name = profile_name(game, at);
         let text = profile(console, player, devices[at].as_deref());
         ini::write(&profiles.join(format!("{name}.ini")), &text).map_err(failed)?;
@@ -551,7 +606,7 @@ mod tests {
     fn an_xbox_pad_on_the_wii_is_a_remote_with_a_nunchuk() {
         let player = Player::on(crate::pads::xinput_slot(0));
         let devices = [device(&player.pad, &no_ids)];
-        let text = file(Console::Wii, &[player], &devices, &[true]);
+        let text = file(Console::Wii, "", &[player], &devices, &[true], &[]);
         assert_eq!(
             text,
             "[Wiimote1]\r\n\
@@ -591,7 +646,7 @@ mod tests {
     fn an_xbox_pad_on_the_gamecube_follows_dolphins_own_gamepad_profile() {
         let player = Player::on(crate::pads::xinput_slot(1));
         let devices = [device(&player.pad, &no_ids)];
-        let text = file(Console::GameCube, &[player], &devices, &[true]);
+        let text = file(Console::GameCube, "", &[player], &devices, &[true], &[]);
         assert_eq!(
             text,
             "[GCPad1]\r\n\
@@ -622,6 +677,33 @@ mod tests {
              C-Stick/Calibration = 100.00\r\n\
              Rumble/Motor = `Motor L` | `Motor R`\r\n"
         );
+    }
+
+    #[test]
+    fn a_real_remote_and_the_balance_board_are_left_as_the_user_set_them() {
+        let before = "[Wiimote1]\r\nSource = 1\r\nDevice = Keyboard\r\n\
+                      [Wiimote2]\r\nSource = 2\r\nButtons/A = `Click 0`\r\n\
+                      [BalanceBoard]\r\nSource = 2\r\n";
+        let left = left_alone(Console::Wii, before);
+        assert_eq!(left, [false, true, false, false]);
+        let players = vec![Player::on(crate::pads::xinput_slot(0)), Player::on(crate::pads::xinput_slot(1))];
+        let devices: Vec<Option<String>> = players.iter().map(|player| device(&player.pad, &no_ids)).collect();
+        let after = file(Console::Wii, before, &players, &devices, &[true, true], &left);
+        assert!(after.starts_with("[Wiimote1]\r\nDevice = XInput/0/Gamepad\r\n"), "{after}");
+        assert!(
+            after.ends_with("[Wiimote2]\r\nSource = 2\r\nButtons/A = `Click 0`\r\n[BalanceBoard]\r\nSource = 2\r\n"),
+            "{after}"
+        );
+        // A remote Omoio switched off is Omoio's to switch on again.
+        assert_eq!(left_alone(Console::Wii, "[Wiimote2]\r\nSource = 0\r\n"), [false; 4]);
+    }
+
+    #[test]
+    fn a_gamecube_port_given_another_device_keeps_its_buttons() {
+        // A dance mat in port 2 and a GameCube adapter in port 4.
+        let dolphin_ini = "[Core]\r\nSIDevice0 = 6\r\nSIDevice1 = 9\r\nSIDevice2 = 0\r\nSIDevice3 = 12\r\n";
+        assert_eq!(left_alone(Console::GameCube, dolphin_ini), [false, true, false, true]);
+        assert_eq!(left_alone(Console::GameCube, ""), [false; 4]);
     }
 
     #[test]

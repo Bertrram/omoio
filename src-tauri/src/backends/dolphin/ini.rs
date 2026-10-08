@@ -223,6 +223,51 @@ pub fn remove_line(text: &str, section: &str, line: &str) -> String {
     out
 }
 
+/// The text with each of `sections`, a name and its lines, written afresh in
+/// place of the section of that name, or added at the end, and every other
+/// section as it was. A second section of a replaced one's name goes, since
+/// Dolphin would read its values over the new ones (`IniFile::Load` adds a
+/// section of a name it has met to that one). A new file gets Windows' line
+/// endings, as Dolphin writes its files there.
+pub fn replace_sections(text: &str, sections: &[(String, Vec<String>)]) -> String {
+    let ending = if text.contains('\n') { line_ending(text) } else { "\r\n" };
+    let wanted = |name: &str| sections.iter().position(|(wanted, _)| wanted.eq_ignore_ascii_case(name));
+    let mut written = vec![false; sections.len()];
+    let mut out: Vec<String> = Vec::new();
+    // Whether the lines met now belong to a section being replaced.
+    let mut replacing = false;
+    let add = |out: &mut Vec<String>, at: usize, written: &mut Vec<bool>| {
+        if !written[at] {
+            written[at] = true;
+            out.push(format!("[{}]", sections[at].0));
+            out.extend(sections[at].1.iter().cloned());
+        }
+    };
+    for line in text.lines() {
+        if let Some(name) = section_name(line) {
+            replacing = match wanted(name) {
+                Some(at) => {
+                    add(&mut out, at, &mut written);
+                    true
+                }
+                None => false,
+            };
+            if replacing {
+                continue;
+            }
+        } else if replacing {
+            continue;
+        }
+        out.push(line.to_string());
+    }
+    for at in 0..sections.len() {
+        add(&mut out, at, &mut written);
+    }
+    let mut out = out.join(ending);
+    out.push_str(ending);
+    out
+}
+
 /// Reads a settings file, sets every value in `values` as (section, key,
 /// value), and writes it back only if anything changed. A file that isn't
 /// there yet is made; one that can't be read is left alone (`read`).
@@ -411,6 +456,22 @@ mod tests {
         let text = remove_line(&text, "OnFrame_Enabled", "$Two");
         assert_eq!(text, "[Controls]\nWiimoteSource0 = 1\n[Gecko_Enabled]\n$One\n");
         assert_eq!(remove_line("[Gecko_Enabled]\n$One\n\n", "Gecko_Enabled", "$One"), "");
+    }
+
+    #[test]
+    fn whole_sections_are_written_afresh_and_the_rest_kept() {
+        let text = "# A comment\r\n[A]\r\nOld = 1\r\n\r\n[B]\r\nMine = 2\r\n[a]\r\nOld = 3\r\n";
+        let sections = [
+            ("A".to_string(), vec!["New = 1".to_string()]),
+            ("C".to_string(), vec!["Added = 1".to_string()]),
+        ];
+        assert_eq!(
+            replace_sections(text, &sections),
+            "# A comment\r\n[A]\r\nNew = 1\r\n[B]\r\nMine = 2\r\n[C]\r\nAdded = 1\r\n",
+            "the second [a] would have been read over the new one"
+        );
+        assert_eq!(replace_sections("", &sections[..1]), "[A]\r\nNew = 1\r\n");
+        assert_eq!(replace_sections("[B]\nMine = 2\n", &sections[..1]), "[B]\nMine = 2\n[A]\nNew = 1\n");
     }
 
     fn scratch(name: &str) -> std::path::PathBuf {
