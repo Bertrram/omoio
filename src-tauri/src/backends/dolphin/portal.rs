@@ -521,4 +521,35 @@ mod tests {
         assert_eq!(shown("Unknown (Id:999 Var:0)"), "Unknown (Id:999 Var:0)");
         assert_eq!(unknown("Unknown (Id:16 Var:6145)"), Some((16, 0x1801)));
     }
+
+    /// Needs a Dolphin running with its main window there, started with
+    /// `QT_QPA_PLATFORM` set as `launch` sets it, and a figure file, so it
+    /// runs only by hand:
+    /// `OMOIO_DOLPHIN_PID=<pid> OMOIO_FIGURE=<file> cargo test portal_on_a_running_dolphin -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn portal_on_a_running_dolphin() {
+        use std::time::Instant;
+        let pid: u32 = std::env::var("OMOIO_DOLPHIN_PID").unwrap().parse().unwrap();
+        let figure = std::env::var("OMOIO_FIGURE").unwrap();
+        let started = Instant::now();
+        let before = figures(pid).unwrap();
+        println!("opened and read in {:?}: {before:?}", started.elapsed());
+        assert_eq!(before.len(), SLOTS);
+        let started = Instant::now();
+        let loaded = load(pid, 0, Path::new(&figure)).unwrap();
+        println!("load took {:?}: {loaded:?}", started.elapsed());
+        assert!(!loaded[0].is_empty(), "slot 1 holds the figure: {loaded:?}");
+        let started = Instant::now();
+        let cleared = clear(pid, 0).unwrap();
+        println!("clear took {:?}", started.elapsed());
+        assert!(cleared[0].is_empty(), "slot 1 is empty again: {cleared:?}");
+        let made = Path::new(&figure).with_file_name(format!("omoio-made-{}.sky", std::process::id()));
+        let started = Instant::now();
+        let after = create(pid, 1, &Character { name: "Spyro".into(), id: 16, variant: 0 }, &made).unwrap();
+        println!("create took {:?}: {after:?}", started.elapsed());
+        assert_eq!(after[1], "Spyro");
+        clear(pid, 1).unwrap();
+        let _ = std::fs::remove_file(made);
+    }
 }

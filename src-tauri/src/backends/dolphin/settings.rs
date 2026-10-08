@@ -25,7 +25,12 @@ use std::path::Path;
 /// - The game draws in a window of its own, which Omoio takes into its own
 ///   window, and not full screen: Omoio places the picture itself.
 /// - Dolphin's notices over the picture are off, as Cemu's are.
-pub const EVERY_GAME: [(&str, &str, &str); 7] = [
+/// - Dolphin speaks English, whatever Windows does. It otherwise takes the
+///   language of Windows (`Translation.cpp`), and its Danish names the
+///   Tools menu, which the portal window is opened from, "Værktøjer".
+/// - Dolphin warns before an NKit image starts (`NKitWarningDialog`); such
+///   an image plays, and the warning would stand in front of it.
+pub const EVERY_GAME: [(&str, &str, &str); 9] = [
     ("Analytics", "PermissionAsked", "True"),
     ("AutoUpdate", "UpdateTrack", ""),
     ("Interface", "ConfirmStop", "False"),
@@ -33,6 +38,8 @@ pub const EVERY_GAME: [(&str, &str, &str); 7] = [
     ("Display", "RenderToMain", "False"),
     ("Display", "Fullscreen", "False"),
     ("Interface", "OnScreenDisplayMessages", "False"),
+    ("Interface", "LanguageCode", "en"),
+    ("Interface", "SkipNKitWarning", "True"),
 ];
 
 /// Dolphin.ini, with what a game needs set: `EVERY_GAME`, and the Skylanders

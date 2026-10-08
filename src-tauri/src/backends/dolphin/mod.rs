@@ -294,7 +294,10 @@ impl super::EmulatorBackend for Dolphin {
     /// window is opened from, hidden the moment it shows. Every other game
     /// starts in batch mode, where Dolphin never shows its main window and
     /// closes once the game has (`--batch`, `MainWindow::OnStopComplete`,
-    /// DolphinQt). `--exec` names the game (UICommon/CommandLineParse.cpp).
+    /// DolphinQt). `--exec` names the game and `--user` the folder Dolphin
+    /// keeps everything in (UICommon/CommandLineParse.cpp); named outright,
+    /// no setting of another Dolphin's in the registry can send it elsewhere
+    /// (`UICommon::SetUserDirectory`).
     fn launch(&self, app: &AppHandle, game: &Game) -> Result<u32, String> {
         let exe = install::exe_path(app)?;
         if !exe.is_file() {
@@ -306,6 +309,7 @@ impl super::EmulatorBackend for Dolphin {
         install::end_running(&exe);
         let portal = self.wants_portal(game);
         let mut command = install::command(&exe);
+        command.arg("--user").arg(install::user_dir(app)?);
         if portal {
             command.env("QT_QPA_PLATFORM", portal::QT_PLATFORM);
         } else {

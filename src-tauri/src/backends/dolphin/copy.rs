@@ -34,6 +34,7 @@ pub fn extract(
     progress: &dyn Fn(u32),
     cancel: &AtomicBool,
 ) -> Result<PathBuf, String> {
+    std::fs::create_dir_all(into).map_err(|_| "Couldn't make room for a copy of the game.".to_string())?;
     let mut child = super::install::command(tool)
         .arg("extract")
         .arg("-i")
@@ -41,6 +42,10 @@ pub fn extract(
         .arg("-o")
         .arg(into)
         .args(["-g", "-s", "/"])
+        // DolphinTool looks for a keys file in the folder it runs in before
+        // using the keys built into it (`IOSC::LoadDefaultEntries`), so it
+        // runs in the empty folder made for the copy.
+        .current_dir(into)
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()

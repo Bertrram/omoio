@@ -199,3 +199,26 @@ pub fn end_running(exe: &Path) {
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Needs the release archive on disk, so it runs only by hand:
+    /// `OMOIO_DOLPHIN_7Z=<dolphin-2609a-x64.7z> cargo test unpacks_the_release -- --ignored`
+    #[test]
+    #[ignore]
+    fn unpacks_the_release() {
+        let archive = PathBuf::from(std::env::var("OMOIO_DOLPHIN_7Z").unwrap());
+        let dest = std::env::temp_dir().join(format!("omoio-dolphin-unpack-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dest);
+        let started = std::time::Instant::now();
+        unpack(&archive, &dest).unwrap();
+        println!("unpacked in {:?}", started.elapsed());
+        assert!(dest.join("Dolphin.exe").is_file());
+        assert!(dest.join("DolphinTool.exe").is_file());
+        assert!(dest.join("Sys").join("GameSettings").is_dir());
+        assert!(!dest.join(release::TOP_FOLDER).exists(), "the top folder is dropped");
+        let _ = std::fs::remove_dir_all(&dest);
+    }
+}
