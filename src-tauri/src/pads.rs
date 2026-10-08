@@ -233,6 +233,8 @@ fn seen() -> &'static Mutex<Option<Vec<Seen>>> {
 /// Set by `rescan` to have gilrs started again before its next look, and
 /// cleared once that look is published.
 static LOOK_AGAIN: AtomicBool = AtomicBool::new(false);
+/// Set when gilrs couldn't start at all, so nothing waits for it to look.
+static NO_GILRS: AtomicBool = AtomicBool::new(false);
 
 /// Starts the thread that owns gilrs the first time a pad is asked about, and
 /// waits a moment for its first look so that question gets a real answer.
@@ -253,6 +255,7 @@ fn watch() {
         std::thread::spawn(|| {
             let start = || gilrs::GilrsBuilder::new().with_force_feedback(false).build();
             let Ok(mut gilrs) = start() else {
+                NO_GILRS.store(true, Ordering::SeqCst);
                 *seen().lock().unwrap() = Some(Vec::new());
                 return;
             };
@@ -318,6 +321,9 @@ fn watch() {
 /// front may not have been heard of.
 pub fn rescan() {
     watch();
+    if NO_GILRS.load(Ordering::SeqCst) {
+        return;
+    }
     LOOK_AGAIN.store(true, Ordering::SeqCst);
     for _ in 0..50 {
         if !LOOK_AGAIN.load(Ordering::SeqCst) {
