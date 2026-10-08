@@ -30,7 +30,10 @@ export function renderPlayingBar(playing: Playing): HTMLElement {
     store.setGameFullscreen(next);
   };
 
-  bar.querySelector<HTMLButtonElement>("#stop-game")!.onclick = async () => {
+  const stopButton = bar.querySelector<HTMLButtonElement>("#stop-game")!;
+  stopButton.onclick = async () => {
+    // Dolphin takes a moment to close, as it writes out the figures first.
+    stopButton.textContent = "Stopping…";
     await stopGame();
     store.setGameFullscreen(false);
     store.setPlaying(null);

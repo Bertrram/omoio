@@ -569,8 +569,20 @@ pub fn launch_warning(app: AppHandle, title_id: String) -> Option<String> {
     crate::controllers::launch_warning(&app, backend, &game.title_id)
 }
 
+/// Off the window's thread: the game before may take a few seconds to close
+/// (`Session::stop`).
 #[tauri::command]
-pub fn launch_game(app: AppHandle, title_id: String) -> Result<(), String> {
+pub async fn launch_game(app: AppHandle, title_id: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || launch(app, &title_id))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn launch(app: AppHandle, title_id: &str) -> Result<(), String> {
+    // One start at a time, as when this ran on the window's thread: two at
+    // once would each start a game, and only one would be known to stop.
+    static ONE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _turn = ONE_AT_A_TIME.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let library = Library::load(&library_path(&app)?);
     let game = library
         .games()
@@ -670,9 +682,10 @@ fn game_and_emulator(
     Ok((backend, game))
 }
 
+/// Off the window's thread, for the same reason as `launch_game`.
 #[tauri::command]
-pub fn stop_game(app: AppHandle) {
-    app.state::<Session>().stop();
+pub async fn stop_game(app: AppHandle) {
+    let _ = tauri::async_runtime::spawn_blocking(move || app.state::<Session>().stop()).await;
 }
 
 /// Where Omoio keeps things, so the Settings screen can point at them and open

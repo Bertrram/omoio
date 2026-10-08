@@ -363,6 +363,22 @@ impl super::EmulatorBackend for Dolphin {
         Ok(pid)
     }
 
+    /// Dolphin writes a figure on the portal through a buffer it never
+    /// empties by itself: each of the game's writes reaches the file only
+    /// with the next one, or as Dolphin quits (`SkylanderPortal::WriteBlock`
+    /// in Core/IOS/USB/Emulated/Skylanders/Skylander.cpp, `SkylanderFigure::Save`,
+    /// `IOFile::WriteArray` in Common/IOFile.h). A GameCube memory card is
+    /// written a second after the game's last change, or as the game stops
+    /// (`GCMemcardDirectory`, Core/HW/GCMemcard/GCMemcardDirectory.cpp).
+    /// Ended at once, Dolphin would lose both.
+    fn closes_when_asked(&self) -> bool {
+        true
+    }
+
+    fn ask_to_close(&self, pid: u32) -> bool {
+        portal::ask_to_close(pid)
+    }
+
     fn detect_version(&self, app: &AppHandle) -> Option<String> {
         install::detect_version(app)
     }

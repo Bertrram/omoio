@@ -186,10 +186,15 @@ pub fn command(exe: &Path) -> std::process::Command {
 
 /// Ends every copy of Omoio's Dolphin still running before a game starts:
 /// the game before, still on its way out, or one whose window Omoio lost,
-/// with its main window hidden and nothing to close it by.
+/// with its main window hidden and nothing to close it by. Each is asked to
+/// close first, as Omoio's Stop asks, so it writes out what it holds
+/// (`backends::close`), and ended if it doesn't.
 pub fn end_running(exe: &Path) {
     let (system, ours) = copies(exe);
     for pid in &ours {
+        if crate::backends::close(&super::WII, pid.as_u32()) {
+            continue;
+        }
         if let Some(process) = system.process(*pid) {
             process.kill();
         }

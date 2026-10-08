@@ -18,7 +18,10 @@ use crate::core::figures::Character;
 use crate::core::pad_layout::{Pad, Player};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
+use std::time::Duration;
 use tauri::AppHandle;
+use windows::Win32::Foundation::{CloseHandle, HANDLE, WAIT_OBJECT_0};
+use windows::Win32::System::Threading::{OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE};
 
 pub trait EmulatorBackend: Sync {
     fn console(&self) -> Console;
@@ -203,6 +206,20 @@ pub trait EmulatorBackend: Sync {
     /// Starts the game and returns the emulator's process id.
     fn launch(&self, app: &AppHandle, game: &Game) -> Result<u32, String>;
 
+    /// Whether a game is stopped by asking the emulator to close the way its
+    /// own Stop does (`ask_to_close`), rather than by ending its process at
+    /// once: one that holds what the game wrote and writes it out only as it
+    /// closes. Asking takes seconds (`close`).
+    fn closes_when_asked(&self) -> bool {
+        false
+    }
+
+    /// Asks the emulator running as `pid` to stop its game and close, and
+    /// says whether it was asked.
+    fn ask_to_close(&self, _pid: u32) -> bool {
+        false
+    }
+
     /// The installed version, or `None` when it is not installed.
     fn detect_version(&self, app: &AppHandle) -> Option<String>;
 
@@ -353,6 +370,60 @@ pub fn for_console(console: Console) -> Option<&'static dyn EmulatorBackend> {
     all().iter().copied().find(|backend| backend.console() == console)
 }
 
+/// How long an emulator asked to close has before it is asked again, and
+/// before it is ended anyway. Dolphin takes the first ask, for a Wii game,
+/// as a press of the console's power button, and the game shuts down by
+/// itself; asked again, Dolphin stops it outright (`MainWindow::RequestStop`
+/// in DolphinQt/MainWindow.cpp, Dolphin 2609a). Either way it then writes
+/// everything out and quits.
+const ASK_AGAIN: Duration = Duration::from_secs(3);
+const GIVE_UP: Duration = Duration::from_secs(8);
+
+/// Asks the emulator running as `pid` to close, when it is one that is
+/// asked (`closes_when_asked`), and waits for it to. Says whether it closed;
+/// one that didn't is left for the caller to end. Takes up to `GIVE_UP`, so
+/// it is never done on the window's thread.
+pub fn close(backend: &dyn EmulatorBackend, pid: u32) -> bool {
+    backend.closes_when_asked() && close_within(pid, &|| backend.ask_to_close(pid), ASK_AGAIN, GIVE_UP)
+}
+
+fn close_within(pid: u32, ask: &dyn Fn() -> bool, ask_again: Duration, give_up: Duration) -> bool {
+    // Held from before the ask, so the wait is for this process even if its
+    // id passes to another once it has gone.
+    let Some(process) = Process::open(pid) else {
+        return false;
+    };
+    if !ask() {
+        return false;
+    }
+    if process.ends_within(ask_again) {
+        return true;
+    }
+    ask();
+    process.ends_within(give_up.saturating_sub(ask_again))
+}
+
+/// A process held by its handle, for waiting on its end.
+struct Process(HANDLE);
+
+impl Process {
+    fn open(pid: u32) -> Option<Self> {
+        unsafe { OpenProcess(PROCESS_SYNCHRONIZE, false, pid) }.ok().map(Self)
+    }
+
+    fn ends_within(&self, limit: Duration) -> bool {
+        let millis = u32::try_from(limit.as_millis()).unwrap_or(u32::MAX);
+        let ended = unsafe { WaitForSingleObject(self.0, millis) };
+        ended == WAIT_OBJECT_0
+    }
+}
+
+impl Drop for Process {
+    fn drop(&mut self) {
+        let _ = unsafe { CloseHandle(self.0) };
+    }
+}
+
 /// Works out which console a dump is for and reads it with that emulator.
 pub fn identify(path: &Path) -> Result<Game, String> {
     match all().iter().find(|backend| backend.recognises(path)) {
@@ -431,6 +502,64 @@ mod tests {
             unknown_dump(["PS3", "Wii U", "PS2"].into_iter()),
             "This doesn't look like a game Omoio can play. It takes PS3, Wii U and PS2 games."
         );
+    }
+
+    /// A process that would run for half a minute, standing in for an
+    /// emulator.
+    fn long_process() -> std::process::Child {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        std::process::Command::new("ping")
+            .args(["-n", "30", "127.0.0.1"])
+            .stdout(std::process::Stdio::null())
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn()
+            .unwrap()
+    }
+
+    #[test]
+    fn an_emulator_that_closes_when_asked_is_waited_for() {
+        let child = std::sync::Mutex::new(long_process());
+        let pid = child.lock().unwrap().id();
+        let asked = std::cell::Cell::new(0);
+        let ask = || {
+            asked.set(asked.get() + 1);
+            child.lock().unwrap().kill().is_ok()
+        };
+        assert!(close_within(pid, &ask, Duration::from_secs(5), Duration::from_secs(10)));
+        assert_eq!(asked.get(), 1);
+    }
+
+    #[test]
+    fn one_still_running_is_asked_again_then_left_to_be_ended() {
+        let mut child = long_process();
+        let asked = std::cell::Cell::new(0);
+        let ask = || {
+            asked.set(asked.get() + 1);
+            true
+        };
+        assert!(!close_within(child.id(), &ask, Duration::from_millis(50), Duration::from_millis(150)));
+        assert_eq!(asked.get(), 2);
+        child.kill().unwrap();
+        child.wait().unwrap();
+    }
+
+    #[test]
+    fn one_that_couldnt_be_asked_is_left_at_once() {
+        let mut child = long_process();
+        let started = std::time::Instant::now();
+        assert!(!close_within(child.id(), &|| false, Duration::from_secs(5), Duration::from_secs(10)));
+        assert!(started.elapsed() < Duration::from_secs(1));
+        child.kill().unwrap();
+        child.wait().unwrap();
+    }
+
+    #[test]
+    fn only_dolphin_is_asked_to_close() {
+        assert!(!rpcs3::Rpcs3.closes_when_asked());
+        assert!(!cemu::Cemu.closes_when_asked());
+        assert!(dolphin::WII.closes_when_asked());
+        assert!(dolphin::GAMECUBE.closes_when_asked());
     }
 
     #[test]

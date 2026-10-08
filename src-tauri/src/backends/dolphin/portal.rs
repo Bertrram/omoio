@@ -293,6 +293,25 @@ pub fn tidy(pid: u32, game: isize) {
     }
 }
 
+/// Asks Dolphin to stop the game and quit, as closing one of its windows
+/// would, and says whether a window was asked. Dolphin takes a close of its
+/// main window or of the game's as its Stop (`MainWindow::eventFilter`,
+/// which calls `RequestStop`), with no question while `ConfirmStop` is off
+/// (settings.rs). After a close of the main window it quits once the game
+/// has stopped, and in batch mode it quits after the game whichever window
+/// was closed (`MainWindow::OnStopComplete`; DolphinQt/MainWindow.cpp,
+/// Dolphin 2609a). So the main window is asked when there is one, hidden or
+/// not, and the game's otherwise; never the Skylanders Manager, which would
+/// only close itself.
+pub fn ask_to_close(pid: u32) -> bool {
+    let window = main_window(pid).or_else(|| {
+        all_windows(pid)
+            .into_iter()
+            .find(|&window| !owned_by(pid, window) && is_game_title(&title(window)))
+    });
+    window.is_some_and(|window| unsafe { PostMessageW(Some(window), WM_CLOSE, WPARAM(0), LPARAM(0)) }.is_ok())
+}
+
 fn check(slot: usize) -> Result<(), String> {
     if slot < SLOTS {
         Ok(())
