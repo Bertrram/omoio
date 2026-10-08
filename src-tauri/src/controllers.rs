@@ -122,6 +122,7 @@ pub fn forget(app: &AppHandle, title_id: &str) -> Result<(), String> {
 /// `before_launch` would set the players up, or `None`. A game with its own
 /// layout is not asked about: the emulator may keep that layout apart.
 pub fn launch_warning(app: &AppHandle, backend: &dyn EmulatorBackend, title_id: &str) -> Option<String> {
+    crate::pads::rescan();
     let connected = crate::pads::connected();
     warning(current(app, title_id, &connected), &connected, |players, connected| {
         backend.missing_first_player(app, players, connected)
@@ -148,6 +149,7 @@ fn warning(
 /// not there, buttons someone chose never change, and the layout goes to the
 /// game's emulator.
 pub fn before_launch(app: &AppHandle, backend: &dyn EmulatorBackend, title_id: &str) {
+    crate::pads::rescan();
     let connected = crate::pads::connected();
     let Current { mut players, own, saved } = current(app, title_id, &connected);
     let moved = pad_layout::seat(&mut players, &connected);

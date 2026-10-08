@@ -9,10 +9,12 @@
 //! Every other pad, a DualSense or a Switch Pro or an 8BitDo, is read with
 //! gilrs, which names buttons by place the way layouts do. gilrs keeps its
 //! picture of each pad current as events arrive, so one thread owns it for as
-//! long as Omoio runs and publishes what it sees.
+//! long as Omoio runs and publishes what it sees, starting it again whenever a
+//! pad leaves and before a game starts (`watch`, `rescan`).
 
 use crate::core::pad_layout::Pad;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
@@ -215,18 +217,43 @@ fn seen() -> &'static Mutex<Option<Vec<Seen>>> {
     SEEN.get_or_init(|| Mutex::new(None))
 }
 
+/// Set by `rescan` to have gilrs started again before its next look, and
+/// cleared once that look is published.
+static LOOK_AGAIN: AtomicBool = AtomicBool::new(false);
+
 /// Starts the thread that owns gilrs the first time a pad is asked about, and
 /// waits a moment for its first look so that question gets a real answer.
+///
+/// gilrs keeps every pad it has seen for as long as it lives. One that leaves
+/// stays on its list, unconnected, and when that connection comes back it is
+/// matched by the id Windows gives the connection and keeps the controller
+/// object it had the first time, which its ids are read from (`handle_event`
+/// and `Gamepad::vendor_id` in gilrs-core 0.6.8's `windows_wgi/gamepad.rs`).
+/// So once a pad leaves, or `rescan` asks, gilrs is started again, and every
+/// pad plugged in is seen as new, as it is when Omoio starts. The old one
+/// stops its own thread as it goes (its `Drop`). Rumble is left off: Omoio
+/// never rumbles a pad, and gilrs 0.11.2's rumble thread runs on after its
+/// gilrs is gone (`ff/server.rs`).
 fn watch() {
     static STARTED: OnceLock<()> = OnceLock::new();
     STARTED.get_or_init(|| {
         std::thread::spawn(|| {
-            let Ok(mut gilrs) = gilrs::Gilrs::new() else {
+            let start = || gilrs::GilrsBuilder::new().with_force_feedback(false).build();
+            let Ok(mut gilrs) = start() else {
                 *seen().lock().unwrap() = Some(Vec::new());
                 return;
             };
             loop {
-                while gilrs.next_event().is_some() {}
+                let asked = LOOK_AGAIN.load(Ordering::SeqCst);
+                let mut left = false;
+                while let Some(event) = gilrs.next_event() {
+                    left |= matches!(event.event, gilrs::EventType::Disconnected);
+                }
+                if left || asked {
+                    if let Ok(fresh) = start() {
+                        gilrs = fresh;
+                    }
+                }
                 // Pads of the same name are numbered from zero, which tells
                 // two identical controllers apart in the saved layout. RPCS3
                 // names them its own way; backends/rpcs3/controllers.rs turns
@@ -253,12 +280,32 @@ fn watch() {
                     })
                     .collect();
                 *seen().lock().unwrap() = Some(now);
+                if asked {
+                    LOOK_AGAIN.store(false, Ordering::SeqCst);
+                }
                 std::thread::sleep(Duration::from_millis(16));
             }
         });
     });
     for _ in 0..50 {
         if seen().lock().unwrap().is_some() {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// Has gilrs look at the pads plugged in afresh, as it does when Omoio
+/// starts, and waits a moment for that look. Asked before a game starts:
+/// gilrs hears of pads coming and going through Windows.Gaming.Input, whose
+/// events gilrs notes need a window of Omoio's in focus (gilrs 0.11.2,
+/// `lib.rs`, on Windows), so a pad that came or went while a game was in
+/// front may not have been heard of.
+pub fn rescan() {
+    watch();
+    LOOK_AGAIN.store(true, Ordering::SeqCst);
+    for _ in 0..50 {
+        if !LOOK_AGAIN.load(Ordering::SeqCst) {
             return;
         }
         std::thread::sleep(Duration::from_millis(10));
