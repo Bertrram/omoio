@@ -46,7 +46,7 @@ unsafe extern "system" fn visit(window: HWND, state: LPARAM) -> BOOL {
 /// game.
 fn is_game_window(window: HWND, is_game: &dyn Fn(&str) -> bool) -> bool {
     let owned = unsafe { GetWindow(window, GW_OWNER) }.is_ok();
-    !owned && is_game(&super::portal::title(window))
+    !owned && is_game(&crate::backends::qt::title(window))
 }
 
 /// The emulator's game window for a given process. Called on a timer while

@@ -17,30 +17,23 @@
 //! like the rest. Nothing moves the mouse. How this was proven is in
 //! docs/what-we-verified.md, "Skylanders".
 
+use crate::backends::qt::{
+    self, all_windows, arrives, class, gone, hide, key, name, open_menus, out_of_sight, process_of, showing, soon,
+    title, value, visible, Automation as Qt, WAIT,
+};
 use crate::core::figures::{self, Character};
-use std::mem::ManuallyDrop;
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard, PoisonError};
-use std::time::{Duration, Instant};
-use windows::core::{Interface, BOOL, BSTR};
+use std::time::Duration;
+#[cfg(test)]
+use std::time::Instant;
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
-use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED};
-use windows::Win32::System::Variant::{VariantClear, VARIANT, VT_BSTR, VT_I4};
-use windows::Win32::UI::Accessibility::{
-    CUIAutomation8, IUIAutomation, IUIAutomation2, IUIAutomationCondition, IUIAutomationElement,
-    IUIAutomationExpandCollapsePattern, IUIAutomationInvokePattern, IUIAutomationValuePattern, TreeScope_Descendants,
-    UIA_AutomationIdPropertyId, UIA_ControlTypePropertyId, UIA_ExpandCollapsePatternId, UIA_InvokePatternId,
-    UIA_MenuItemControlTypeId, UIA_NamePropertyId, UIA_ValuePatternId, UIA_PROPERTY_ID,
-};
+use windows::Win32::UI::Accessibility::IUIAutomationElement;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    MapVirtualKeyW, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,
-    MAPVK_VK_TO_VSC_EX, VIRTUAL_KEY, VK_DOWN, VK_ESCAPE, VK_LMENU, VK_RETURN, VK_SPACE, VK_UP,
+    SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, VK_DOWN, VK_ESCAPE,
+    VK_LMENU, VK_RETURN, VK_UP,
 };
-use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetClassNameW, GetForegroundWindow, GetWindow, GetWindowTextW, GetWindowThreadProcessId, IsWindow,
-    IsWindowVisible, PostMessageW, SetForegroundWindow, SetWindowPos, ShowWindow, GW_OWNER, SWP_NOACTIVATE,
-    SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, WM_CLOSE, WM_KEYDOWN, WM_KEYUP,
-};
+use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, IsWindow, PostMessageW, SetForegroundWindow, WM_CLOSE};
 
 /// How many figures RPCS3's portal window holds (`UI_SKY_NUM`).
 pub const SLOTS: usize = 8;
@@ -81,7 +74,6 @@ const NOT_READY: &str = "RPCS3's portal isn't ready yet. Try again in a moment."
 const LOAD_FAILED: &str = "RPCS3 couldn't put that figure on the portal. It may be on it already.";
 const MAKE_FAILED: &str = "RPCS3 couldn't make that figure. Try again.";
 
-const WAIT: Duration = Duration::from_secs(5);
 /// How long RPCS3 may take to show its main window after it starts.
 const START_WAIT: Duration = Duration::from_secs(30);
 /// How long one step through the figure maker's list may take to show. The
@@ -101,217 +93,51 @@ fn turn() -> MutexGuard<'static, ()> {
     ONE_AT_A_TIME.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// UI Automation for the thread that asks. Each thread starts COM for itself;
-/// one that already has it keeps the kind it has.
-struct Automation(IUIAutomation);
+/// UI Automation, with RPCS3's words for what goes wrong in its windows.
+struct Automation(Qt);
 
 impl Automation {
     fn new() -> Result<Self, String> {
-        unsafe {
-            let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
-            let automation: IUIAutomation = CoCreateInstance(&CUIAutomation8, None, CLSCTX_INPROC_SERVER)
-                .map_err(|_| "Couldn't reach RPCS3's windows.".to_string())?;
-            // A window that stops answering is given up on rather than waited for.
-            if let Ok(newer) = automation.cast::<IUIAutomation2>() {
-                let _ = newer.SetConnectionTimeout(2000);
-                let _ = newer.SetTransactionTimeout(5000);
-            }
-            Ok(Self(automation))
-        }
+        Qt::new().map(Self).ok_or_else(|| "Couldn't reach RPCS3's windows.".to_string())
     }
 
     fn window(&self, window: HWND) -> Result<IUIAutomationElement, String> {
-        unsafe { self.0.ElementFromHandle(window) }.map_err(|_| LOOKS_DIFFERENT.to_string())
+        self.0.window(window).ok_or_else(|| LOOKS_DIFFERENT.to_string())
     }
 
-    /// The widgets in `within` with this id, in the order Qt made them.
     fn all(&self, within: &IUIAutomationElement, id: &str) -> Vec<IUIAutomationElement> {
-        let found = self
-            .text_is(UIA_AutomationIdPropertyId, id)
-            .and_then(|condition| unsafe { within.FindAll(TreeScope_Descendants, &condition) });
-        let Ok(found) = found else {
-            return Vec::new();
-        };
-        let count = unsafe { found.Length() }.unwrap_or(0);
-        (0..count).filter_map(|at| unsafe { found.GetElement(at) }.ok()).collect()
+        self.0.all(within, id)
     }
 
-    /// The first widget in `within` with this id, waited for: Qt shows a
-    /// window a moment before its widgets answer.
     fn first(&self, within: &IUIAutomationElement, id: &str) -> Result<IUIAutomationElement, String> {
-        soon(WAIT, || self.all(within, id).into_iter().next()).ok_or_else(|| LOOKS_DIFFERENT.to_string())
+        self.0.first(within, id).ok_or_else(|| LOOKS_DIFFERENT.to_string())
     }
 
     fn menu_item(&self, within: &IUIAutomationElement, label: &str) -> Option<IUIAutomationElement> {
-        let by_name = self.text_is(UIA_NamePropertyId, label).ok()?;
-        let by_kind = self.number_is(UIA_ControlTypePropertyId, UIA_MenuItemControlTypeId.0).ok()?;
-        let both = unsafe { self.0.CreateAndCondition(&by_name, &by_kind) }.ok()?;
-        unsafe { within.FindFirst(TreeScope_Descendants, &both) }.ok()
+        self.0.menu_item(within, label)
     }
-
-    fn text_is(&self, property: UIA_PROPERTY_ID, text: &str) -> windows::core::Result<IUIAutomationCondition> {
-        let mut value = VARIANT::default();
-        unsafe {
-            let inner = &mut *value.Anonymous.Anonymous;
-            inner.vt = VT_BSTR;
-            inner.Anonymous.bstrVal = ManuallyDrop::new(BSTR::from(text));
-            let condition = self.0.CreatePropertyCondition(property, &value);
-            let _ = VariantClear(&mut value);
-            condition
-        }
-    }
-
-    fn number_is(&self, property: UIA_PROPERTY_ID, number: i32) -> windows::core::Result<IUIAutomationCondition> {
-        let mut value = VARIANT::default();
-        unsafe {
-            let inner = &mut *value.Anonymous.Anonymous;
-            inner.vt = VT_I4;
-            inner.Anonymous.lVal = number;
-            self.0.CreatePropertyCondition(property, &value)
-        }
-    }
-}
-
-fn name(element: &IUIAutomationElement) -> String {
-    unsafe { element.CurrentName() }.map(|name| name.to_string()).unwrap_or_default()
-}
-
-fn value(element: &IUIAutomationElement) -> String {
-    unsafe { element.GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId) }
-        .and_then(|pattern| unsafe { pattern.CurrentValue() })
-        .map(|value| value.to_string())
-        .unwrap_or_default()
 }
 
 fn set_value(element: &IUIAutomationElement, text: &str) -> Result<(), String> {
-    let text = BSTR::from(text);
-    unsafe { element.GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId) }
-        .and_then(|pattern| unsafe { pattern.SetValue(&text) })
-        .map_err(|_| LOOKS_DIFFERENT.to_string())
+    qt::set_value(element, text).ok_or_else(|| LOOKS_DIFFERENT.to_string())
 }
 
-/// UI Automation's own press. For a Qt button it lands a tenth of a second
-/// late, but it leaves the keyboard where it is.
 fn invoke(element: &IUIAutomationElement) -> Result<(), String> {
-    unsafe { element.GetCurrentPatternAs::<IUIAutomationInvokePattern>(UIA_InvokePatternId) }
-        .and_then(|pattern| unsafe { pattern.Invoke() })
-        .map_err(|_| LOOKS_DIFFERENT.to_string())
+    qt::invoke(element).ok_or_else(|| LOOKS_DIFFERENT.to_string())
 }
 
-/// Presses a button the way the keyboard does: focused, then the space bar
-/// sent to its window. Posted, so a press that opens a window waiting for an
-/// answer doesn't wait here.
 fn press(button: &IUIAutomationElement, window: HWND) -> Result<(), String> {
-    unsafe { button.SetFocus() }.map_err(|_| LOOKS_DIFFERENT.to_string())?;
-    key(window, VK_SPACE);
-    Ok(())
-}
-
-/// A key going down and up in `window`, for whichever of its widgets has the
-/// keyboard. Qt reads the scan code too, so it comes along as Windows gives it.
-fn key(window: HWND, key: VIRTUAL_KEY) {
-    let scan = unsafe { MapVirtualKeyW(u32::from(key.0), MAPVK_VK_TO_VSC_EX) } as isize;
-    let extended = isize::from(scan & 0xFF00 == 0xE000) << 24;
-    let down = 1 | ((scan & 0xFF) << 16) | extended;
-    let up = down | 0xC000_0000;
-    unsafe {
-        let _ = PostMessageW(Some(window), WM_KEYDOWN, WPARAM(usize::from(key.0)), LPARAM(down));
-        let _ = PostMessageW(Some(window), WM_KEYUP, WPARAM(usize::from(key.0)), LPARAM(up));
-    }
-}
-
-/// Asks `ready` every millisecond until it has an answer or `limit` is up.
-fn soon<T>(limit: Duration, mut ready: impl FnMut() -> Option<T>) -> Option<T> {
-    let until = Instant::now() + limit;
-    loop {
-        if let Some(found) = ready() {
-            return Some(found);
-        }
-        if Instant::now() >= until {
-            return None;
-        }
-        std::thread::sleep(Duration::from_millis(1));
-    }
-}
-
-unsafe extern "system" fn collect(window: HWND, list: LPARAM) -> BOOL {
-    let list = unsafe { &mut *(list.0 as *mut Vec<HWND>) };
-    list.push(window);
-    BOOL(1)
-}
-
-/// RPCS3's windows, shown or hidden, in the order Windows keeps them.
-fn all_windows(pid: u32) -> Vec<HWND> {
-    let mut all: Vec<HWND> = Vec::new();
-    let _ = unsafe { EnumWindows(Some(collect), LPARAM(&mut all as *mut Vec<HWND> as isize)) };
-    all.into_iter().filter(|&window| process_of(window) == pid).collect()
-}
-
-fn showing(pid: u32) -> Vec<HWND> {
-    all_windows(pid).into_iter().filter(|&window| visible(window)).collect()
-}
-
-fn visible(window: HWND) -> bool {
-    unsafe { IsWindowVisible(window) }.as_bool()
-}
-
-pub fn title(window: HWND) -> String {
-    let mut buffer = [0u16; 256];
-    let length = unsafe { GetWindowTextW(window, &mut buffer) };
-    String::from_utf16_lossy(&buffer[..length.max(0) as usize])
-}
-
-fn class(window: HWND) -> String {
-    let mut buffer = [0u16; 128];
-    let length = unsafe { GetClassNameW(window, &mut buffer) };
-    String::from_utf16_lossy(&buffer[..length.max(0) as usize])
-}
-
-/// Far off the screen, where it still works but nobody sees it.
-fn out_of_sight(window: HWND) {
-    let _ = unsafe {
-        SetWindowPos(window, None, -32000, -32000, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE)
-    };
-}
-
-fn hide(window: HWND) {
-    let _ = unsafe { ShowWindow(window, SW_HIDE) };
-}
-
-/// Waits until a window has closed, and says whether it did.
-fn gone(window: HWND) -> bool {
-    soon(WAIT, || (!visible(window)).then_some(())).is_some()
-}
-
-/// RPCS3's window titled `wanted`, put out of sight as soon as it shows.
-/// Looked for every millisecond, so it is gone before it can be seen.
-fn arrives(pid: u32, wanted: &str) -> Option<HWND> {
-    soon(WAIT, || {
-        let window = showing(pid).into_iter().find(|&w| title(w) == wanted)?;
-        out_of_sight(window);
-        Some(window)
-    })
+    qt::press(button, window).ok_or_else(|| LOOKS_DIFFERENT.to_string())
 }
 
 fn main_window(pid: u32) -> Option<HWND> {
     all_windows(pid).into_iter().find(|&window| title(window).starts_with(MAIN_TITLE))
 }
 
-/// Qt's menus each open as a window of their own, over everything else.
-fn open_menus(pid: u32) -> Vec<HWND> {
-    showing(pid).into_iter().filter(|&window| class(window).contains("Popup")).collect()
-}
-
-fn process_of(window: HWND) -> u32 {
-    let mut pid = 0u32;
-    unsafe { GetWindowThreadProcessId(window, Some(&mut pid)) };
-    pid
-}
-
 /// Whether another of RPCS3's windows owns this one, as it owns its dialogs.
 /// The game's window has no owner until it sits in Omoio's, which then owns it.
 fn owned_by_rpcs3(pid: u32, window: HWND) -> bool {
-    unsafe { GetWindow(window, GW_OWNER) }.is_ok_and(|owner| process_of(owner) == pid)
+    qt::owned_by(pid, window)
 }
 
 /// A window RPCS3 put up by itself, such as an error: one of its dialogs
@@ -411,9 +237,7 @@ fn manager(automation: &Automation, pid: u32) -> Result<HWND, String> {
 fn open_manager(automation: &Automation, pid: u32, menus: &IUIAutomationElement) -> Result<(), String> {
     for label in &MENU[..2] {
         let item = find_menu_item(automation, pid, menus, label).ok_or(LOOKS_DIFFERENT)?;
-        unsafe { item.GetCurrentPatternAs::<IUIAutomationExpandCollapsePattern>(UIA_ExpandCollapsePatternId) }
-            .and_then(|menu| unsafe { menu.Expand() })
-            .map_err(|_| LOOKS_DIFFERENT.to_string())?;
+        qt::expand(&item).ok_or(LOOKS_DIFFERENT)?;
         for menu in open_menus(pid) {
             out_of_sight(menu);
         }

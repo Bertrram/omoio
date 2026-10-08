@@ -5,6 +5,7 @@
 //! implementation and a line in `all`, not touching the library or a screen.
 
 pub mod cemu;
+pub mod qt;
 pub mod rpcs3;
 
 use crate::core::community::{MadeFigures, PackChange, Packs};
