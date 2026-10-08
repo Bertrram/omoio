@@ -7,11 +7,13 @@ import {
   getFirmwareVersion,
   getRpcs3Version,
   installCemu,
+  installDolphin,
   installFirmware,
   installRpcs3,
   listRegions,
   needsSetup,
   onCemuInstallProgress,
+  onDolphinInstallProgress,
   onRpcs3InstallProgress,
   setRegion,
   setUsername,
@@ -46,6 +48,13 @@ type Emulator = {
 const EMULATORS: Emulator[] = [
   { console: "ps3", games: "PS3 games", name: "RPCS3", install: installRpcs3, progress: onRpcs3InstallProgress },
   { console: "wiiu", games: "Wii U games", name: "Cemu", install: installCemu, progress: onCemuInstallProgress },
+  {
+    console: "wii",
+    games: "Wii and GameCube games",
+    name: "Dolphin",
+    install: installDolphin,
+    progress: onDolphinInstallProgress,
+  },
 ];
 
 /// Asked once, on the first run.
@@ -99,7 +108,7 @@ async function askWhoAndWhere(sheet: HTMLElement): Promise<void> {
     <div class="setting">
       <div>
         <div class="setting-k">Region</div>
-        <div class="setting-hint">Sets the language PS3 games start in. It doesn't change Wii U games.</div>
+        <div class="setting-hint">Sets the language PS3 games start in. It doesn't change games for other consoles.</div>
       </div>
       <div class="row-actions">
         <select class="select" id="setup-region"></select>
@@ -152,8 +161,11 @@ let pendingRegion = "";
 /// emulator could start nothing, so at least one it has to be.
 async function askWhatToPlay(sheet: HTMLElement): Promise<Emulator[]> {
   const versions = await emulatorVersions();
+  // Dolphin answers for the Wii and the GameCube; its row is the Wii's.
   const chosen = new Set<Console>(
-    versions.filter((v) => v.version).map((v) => v.console)
+    versions
+      .filter((v) => v.version && EMULATORS.some((emulator) => emulator.console === v.console))
+      .map((v) => v.console)
   );
 
   sheet.innerHTML = `

@@ -21,6 +21,7 @@ import {
   setPortalButton,
   stopFigurePictures,
   CONSOLE_SHORT,
+  EMULATOR_OF,
   type Game,
 } from "../api";
 import { fitCovers, placeholderArt } from "./art";
@@ -68,6 +69,9 @@ function listRow(id: string, paths: string, label: string): string {
   return `<button class="d-row" id="detail-${id}">${icon(paths)}<span class="d-row-k">${label}</span><span class="d-row-v"></span>${icon(ICON.chevron, "d-chev")}</button>`;
 }
 
+/// What to press when a Wii game asks you to move the remote.
+const WII_MOVES = "When a Wii game asks you to move the remote, press RB to shake it or RT to push it forward.";
+
 function fill(body: HTMLElement, hero: HTMLElement, game: Game): void {
   hero.innerHTML = game.cover
     ? `<img class="cover" src="${convertFileSrc(game.cover)}" alt="">`
@@ -95,6 +99,8 @@ function fill(body: HTMLElement, hero: HTMLElement, game: Game): void {
       <span id="detail-compat-note"></span>
       <button class="link-btn gone" id="detail-compat-get"></button>
     </div>
+    <div class="note plain gone" id="detail-wii-moves"></div>
+    <div class="note plain gone" id="detail-no-portal"></div>
     <div class="gone" id="detail-portal">
       <div class="d-group-h">
         <span class="sec-h">Skylanders</span>
@@ -187,6 +193,15 @@ function fill(body: HTMLElement, hero: HTMLElement, game: Game): void {
     askForFirmware();
   }
 
+  // A pad has no motion, so the moves a Wii game asks of the remote are on
+  // buttons (backends/dolphin/controllers.rs, `WII`). Said for every Wii
+  // game, since a game asking for one shows only the remote, not a button.
+  if (game.console === "wii") {
+    const moves = body.querySelector<HTMLElement>("#detail-wii-moves")!;
+    moves.textContent = WII_MOVES;
+    moves.classList.remove("gone");
+  }
+
   reveal.onclick = async () => {
     try {
       await revealFolder(game.path);
@@ -195,9 +210,16 @@ function fill(body: HTMLElement, hero: HTMLElement, game: Game): void {
     }
   };
 
+  // A Skylanders game the menu doesn't work in says so, and which version
+  // it works in, since without figures on the portal it can't be played.
+  if (game.portal_note) {
+    const noPortal = body.querySelector<HTMLElement>("#detail-no-portal")!;
+    noPortal.textContent = game.portal_note;
+    noPortal.classList.remove("gone");
+  }
+
   // The button that opens the portal menu over a Skylanders game, shown only
-  // for a game the menu works in. Other Skylanders games show nothing rather
-  // than a menu that won't open.
+  // for a game the menu works in.
   if (game.portal_menu && game.set_up) {
     body.querySelector("#detail-portal")!.classList.remove("gone");
     const keyRow = body.querySelector<HTMLButtonElement>("#detail-portal-button")!;
@@ -261,7 +283,7 @@ function fill(body: HTMLElement, hero: HTMLElement, game: Game): void {
       picturesNote.textContent =
         count > 0
           ? ""
-          : "Shows each figure's own picture in the portal menu, read from your copy of the game. Takes under a minute.";
+          : "Shows each figure's own picture in the portal menu, read from your copy of the game.";
     };
     const countPictures = () =>
       figurePictures(game.title_id)
@@ -297,7 +319,8 @@ function fill(body: HTMLElement, hero: HTMLElement, game: Game): void {
       picturesValue.className = "d-row-v";
       picturesValue.innerHTML = `<span class="pct"></span><span class="d-key">Stop</span>`;
       const pct = picturesValue.querySelector<HTMLElement>(".pct")!;
-      picturesNote.textContent = copy ? "Cemu is making a temporary copy of the game…" : "Reading the pictures from your game…";
+      const copier = EMULATOR_OF[game.console];
+      picturesNote.textContent = copy ? `${copier} is making a temporary copy of the game…` : "Reading the pictures from your game…";
       picturesFill.style.width = "0%";
       picturesBar.classList.remove("gone");
       const unlisten = onFigurePictures((progress) => {
@@ -306,7 +329,7 @@ function fill(body: HTMLElement, hero: HTMLElement, game: Game): void {
         picturesFill.style.width = `${done}%`;
         pct.textContent = `${done}%`;
         picturesNote.textContent =
-          progress.step === "copy" ? "Cemu is making a temporary copy of the game…" : "Reading the pictures from your game…";
+          progress.step === "copy" ? `${copier} is making a temporary copy of the game…` : "Reading the pictures from your game…";
       });
       try {
         const got = await getFigurePictures(game.title_id, copy);
@@ -320,7 +343,7 @@ function fill(body: HTMLElement, hero: HTMLElement, game: Game): void {
             picturesValue.className = "d-row-v ask";
             picturesValue.textContent = "Make a copy";
             sayWithSizes([
-              "Omoio can't read this copy of the game as it is. Cemu can make a temporary copy to read the pictures from, and Omoio deletes it afterwards. It needs ",
+              `Omoio can't read this copy of the game as it is. ${copier} can make a temporary copy to read the pictures from, and Omoio deletes it afterwards. It needs `,
               need,
               " free for a few minutes, and ",
               free,
@@ -397,7 +420,7 @@ function fill(body: HTMLElement, hero: HTMLElement, game: Game): void {
   };
   if (offers.saves && game.set_up) void showSaves();
   body.querySelector<HTMLButtonElement>("#detail-saves")!.onclick = () =>
-    openSaves(game.title_id, game.title, showSaves);
+    openSaves(game, showSaves);
 
   const compat = body.querySelector<HTMLElement>("#detail-compat")!;
   const badge = body.querySelector<HTMLElement>("#detail-compat-badge")!;
@@ -435,8 +458,10 @@ function fill(body: HTMLElement, hero: HTMLElement, game: Game): void {
     const packs = await communityPacks(game.title_id);
     const value = valueOf("packs");
     // Not downloaded yet, the row offers it rather than reporting a lack.
-    value.classList.toggle("ask", !packs.have_list);
-    value.textContent = packs.have_list ? packCount(packs) : "Download";
+    // Packs that come with the emulator can't be downloaded on their own.
+    const offer = !packs.have_list && !packs.with_emulator;
+    value.classList.toggle("ask", offer);
+    value.textContent = offer ? "Download" : packCount(packs);
   };
   if (offers.packs && game.set_up) void showPackCount();
   body.querySelector<HTMLButtonElement>("#detail-packs")!.onclick = () =>
@@ -486,6 +511,7 @@ function fillListing(body: HTMLElement, hero: HTMLElement, { listing }: Catalogu
       <div class="sec-h">How well it runs</div>
       <div class="compat"><span class="status" id="listing-compat"></span></div>
       <div class="note plain" id="listing-compat-note"></div>
+      <div class="note plain gone" id="listing-no-portal"></div>
     </div>
     <div class="sec gone" id="listing-updates-sec">
       <div class="sec-h">Official updates</div>
@@ -544,6 +570,11 @@ function fillListing(body: HTMLElement, hero: HTMLElement, { listing }: Catalogu
   badge.textContent = listing.status.label || "No result";
   badge.className = `status ${listing.status.tone || "mute"}`;
   compatNote.textContent = listing.status.explanation || "Nobody has reported on this game yet.";
+  if (listing.portal_note) {
+    const noPortal = body.querySelector<HTMLElement>("#listing-no-portal")!;
+    noPortal.textContent = listing.portal_note;
+    noPortal.classList.remove("gone");
+  }
   // Some lists also say when a release's result was last reported.
   if (release && listing.features.compatibility) {
     void gameCompatibility(release.title_id).then((compat) => {
@@ -584,7 +615,7 @@ function fillListing(body: HTMLElement, hero: HTMLElement, { listing }: Catalogu
     const packsNote = body.querySelector<HTMLElement>("#listing-packs")!;
     void communityPacks(release.title_id, listing.console).then(({ have_list, waiting, packs }) => {
       packsNote.textContent = !have_list
-        ? "Not downloaded yet. Open the game from your library to get them."
+        ? (waiting ?? "Not downloaded yet. Open the game from your library to get them.")
         : waiting
           ? waiting
           : packs.length === 0

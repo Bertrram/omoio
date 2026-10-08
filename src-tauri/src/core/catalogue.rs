@@ -5,6 +5,7 @@
 //! list says, and this decides what is shown and in what order.
 
 use crate::core::console::{Console, Features};
+use crate::core::figures::{has_portal_menu, is_skylanders, portal_menu_note};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -69,6 +70,12 @@ pub struct Listing {
     pub owned: bool,
     /// Filled in by the caller, which knows the backends.
     pub features: Features,
+    /// For a Skylanders game, whether Omoio's portal menu works in it, which
+    /// its tile says. `None` for any other game.
+    pub portal_menu: Option<bool>,
+    /// For a Skylanders game the menu doesn't work in, the line saying where
+    /// it does, as a game's page says it.
+    pub portal_note: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -311,6 +318,8 @@ fn listing_of(mut entries: Vec<Entry>) -> Listing {
         demo: is_demo(&first.name),
         owned: false,
         features: Features::default(),
+        portal_menu: is_skylanders(&first.name).then(|| has_portal_menu(first.console, &first.name)),
+        portal_note: portal_menu_note(first.console, &first.name),
     }
 }
 
@@ -393,6 +402,31 @@ mod tests {
 
     fn names(listings: &[Listing]) -> Vec<&str> {
         listings.iter().map(|l| l.name.as_str()).collect()
+    }
+
+    #[test]
+    fn a_skylanders_listing_says_whether_the_portal_menu_works_in_it() {
+        let listings = group(vec![
+            ps3("BLUS31545", "Skylanders SuperChargers", "US", "warn"),
+            ps3("BLES02055", "Skylanders Trap Team", "EU", "warn"),
+            ps3("BLES01784", "Batman: Arkham Origins", "EU", "go"),
+            titled(Console::WiiU, "superchargers", "Skylanders: SuperChargers", vec!["US", "EU"], "go"),
+        ]);
+        let find = |console: Console, name: &str| {
+            listings.iter().find(|l| l.console == console && l.name == name).unwrap()
+        };
+        let superchargers = find(Console::Ps3, "Skylanders SuperChargers");
+        assert_eq!(superchargers.portal_menu, Some(false));
+        assert_eq!(
+            superchargers.portal_note.as_deref(),
+            Some("The portal menu doesn't work in this version yet. It works in the Wii U version.")
+        );
+        let trap_team = find(Console::Ps3, "Skylanders Trap Team");
+        assert_eq!((trap_team.portal_menu, trap_team.portal_note.as_deref()), (Some(true), None));
+        let on_wii_u = find(Console::WiiU, "Skylanders: SuperChargers");
+        assert_eq!((on_wii_u.portal_menu, on_wii_u.portal_note.as_deref()), (Some(true), None));
+        let batman = find(Console::Ps3, "Batman: Arkham Origins");
+        assert_eq!((batman.portal_menu, batman.portal_note.as_deref()), (None, None));
     }
 
     #[test]

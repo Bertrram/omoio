@@ -54,6 +54,20 @@ pub enum Game {
     Imaginators,
 }
 
+impl Game {
+    /// The game's name as its box gives it, for a sentence about it.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Spyro => "Skylanders Spyro's Adventure",
+            Self::Giants => "Skylanders Giants",
+            Self::SwapForce => "Skylanders SWAP Force",
+            Self::TrapTeam => "Skylanders Trap Team",
+            Self::SuperChargers => "Skylanders SuperChargers",
+            Self::Imaginators => "Skylanders Imaginators",
+        }
+    }
+}
+
 /// Skylanders games are the ones with a portal to fill.
 pub fn is_skylanders(title: &str) -> bool {
     title.to_lowercase().contains("skylanders")
@@ -81,13 +95,19 @@ pub fn game_from_title(title: &str) -> Option<Game> {
 /// SuperChargers and Imaginators on the Wii U, where each comes first. Their
 /// PS3 versions follow once they have been played there; Imaginators' once
 /// it is known whether the PS3 game checks its figures' signature too, since
-/// RPCS3 has no patch that takes that check away.
+/// RPCS3 has no patch that takes that check away. Spyro's Adventure on the
+/// PS3 has it too, though in one test on 7 October 2026 a figure made new
+/// there, Voodood, left the game on the portal screen. That was never
+/// settled, and the menu is offered so players can say how it goes. On the
+/// Wii, Spyro's Adventure comes first, through Dolphin; the Wii's other
+/// Skylanders games follow once each has been played there.
 pub fn has_portal_menu(console: Console, title: &str) -> bool {
     is_skylanders(title)
         && matches!(
             (console, game_from_title(title)),
-            (Console::Ps3, Some(Game::Giants | Game::SwapForce | Game::TrapTeam))
+            (Console::Ps3, Some(Game::Spyro | Game::Giants | Game::SwapForce | Game::TrapTeam))
                 | (Console::WiiU, Some(Game::SwapForce | Game::TrapTeam | Game::SuperChargers | Game::Imaginators))
+                | (Console::Wii, Some(Game::Spyro))
         )
 }
 
@@ -96,6 +116,40 @@ pub fn has_portal_menu(console: Console, title: &str) -> bool {
 /// Picture ask this, so neither guesses from the title.
 pub fn offers_portal_menu(features: Features, console: Console, title: &str) -> bool {
     features.portal && has_portal_menu(console, title)
+}
+
+/// For a Skylanders game the portal menu doesn't work in on this console,
+/// the consoles whose version of it has the menu, which may be none. `None`
+/// for a game the menu works in, and for one that isn't Skylanders, which
+/// has no portal. Asked of `has_portal_menu` console by console, so that
+/// stays the one place that says where the menu works.
+pub fn portal_menu_elsewhere(console: Console, title: &str) -> Option<Vec<Console>> {
+    if !is_skylanders(title) || has_portal_menu(console, title) {
+        return None;
+    }
+    Some(Console::ALL.into_iter().filter(|&other| has_portal_menu(other, title)).collect())
+}
+
+/// "the Wii U version", "the PS3 and Wii U versions".
+pub fn versions(consoles: &[Console]) -> String {
+    let names: Vec<&str> = consoles.iter().map(|console| console.short()).collect();
+    match names.as_slice() {
+        [] => String::new(),
+        [one] => format!("the {one} version"),
+        [rest @ .., last] => format!("the {} and {last} versions", rest.join(", ")),
+    }
+}
+
+/// The line a Skylanders game's page shows when the portal menu doesn't
+/// work in it: "The portal menu doesn't work in this version yet. It works
+/// in the Wii U version." `None` when the menu works, or there is no portal.
+pub fn portal_menu_note(console: Console, title: &str) -> Option<String> {
+    let elsewhere = portal_menu_elsewhere(console, title)?;
+    Some(if elsewhere.is_empty() {
+        "The portal menu doesn't work in this game yet.".to_string()
+    } else {
+        format!("The portal menu doesn't work in this version yet. It works in {}.", versions(&elsewhere))
+    })
 }
 
 /// The game a figure id came out with. All eight sidekicks came out with
@@ -778,6 +832,7 @@ mod tests {
 
     #[test]
     fn the_portal_menu_works_in_the_games_played_with_on_each_console() {
+        assert!(has_portal_menu(Console::Ps3, "Skylanders: Spyro's Adventure"));
         assert!(has_portal_menu(Console::Ps3, "Skylanders Giants™"));
         assert!(has_portal_menu(Console::Ps3, "Skylanders SWAP Force"));
         assert!(has_portal_menu(Console::Ps3, "Skylanders Trap Team"));
@@ -787,18 +842,20 @@ mod tests {
         assert!(has_portal_menu(Console::WiiU, "Skylanders: SuperChargers"));
         assert!(has_portal_menu(Console::WiiU, "Skylanders Imaginators"));
         assert!(has_portal_menu(Console::WiiU, "Skylanders: Imaginators"));
+        assert!(has_portal_menu(Console::Wii, "Skylanders Spyro's Adventure"));
 
         assert!(!has_portal_menu(Console::WiiU, "Skylanders: Giants"));
+        assert!(!has_portal_menu(Console::GameCube, "Skylanders Spyro's Adventure"), "no such release");
         assert!(!has_portal_menu(Console::Ps3, "Giants: Citizen Kabuto"), "not a Skylanders game");
     }
 
     #[test]
     fn the_other_skylanders_games_have_no_portal_menu_yet() {
-        // Spyro's Adventure is next, on the PS3. Its Wii U release was sold
-        // in Japan only. SuperChargers and Imaginators have it on the Wii U
-        // only so far.
-        assert!(!has_portal_menu(Console::Ps3, "Skylanders: Spyro's Adventure"));
+        // Spyro's Adventure's Wii U release was sold in Japan only.
+        // SuperChargers and Imaginators have it on the Wii U only so far, and
+        // the Wii's later games wait for a play there.
         assert!(!has_portal_menu(Console::WiiU, "Skylanders Spyro's Adventure"));
+        assert!(!has_portal_menu(Console::Wii, "Skylanders Giants"));
         assert!(!has_portal_menu(Console::Ps3, "Skylanders SuperChargers"));
         assert!(!has_portal_menu(Console::Ps3, "Skylanders: SuperChargers"));
         assert!(!has_portal_menu(Console::Ps3, "Skylanders Imaginators"));
@@ -820,8 +877,51 @@ mod tests {
         assert!(offers_portal_menu(portal, Console::Ps3, "Skylanders Giants"));
         assert!(offers_portal_menu(portal, Console::WiiU, "Skylanders SWAP Force"));
         assert!(!offers_portal_menu(none, Console::Ps3, "Skylanders Giants"));
-        assert!(!offers_portal_menu(portal, Console::Ps3, "Skylanders: Spyro's Adventure"));
+        assert!(!offers_portal_menu(portal, Console::Ps3, "Skylanders SuperChargers"));
         assert!(!offers_portal_menu(portal, Console::WiiU, "Mario Kart 8"));
+    }
+
+    #[test]
+    fn a_game_without_the_menu_names_every_version_that_has_it() {
+        use Console::*;
+        let elsewhere = |console, title| portal_menu_elsewhere(console, title);
+        assert_eq!(elsewhere(Ps3, "Skylanders SuperChargers™"), Some(vec![WiiU]));
+        assert_eq!(elsewhere(Ps3, "Skylanders Imaginators"), Some(vec![WiiU]));
+        assert_eq!(elsewhere(WiiU, "Skylanders: Spyro's Adventure"), Some(vec![Ps3, Wii]));
+        assert_eq!(elsewhere(Wii, "Skylanders Giants"), Some(vec![Ps3]));
+        assert_eq!(elsewhere(Wii, "Skylanders SWAP Force"), Some(vec![Ps3, WiiU]));
+        assert_eq!(elsewhere(Wii, "Skylanders Trap Team"), Some(vec![Ps3, WiiU]));
+        assert_eq!(elsewhere(Wii, "Skylanders SuperChargers Racing"), Some(vec![WiiU]));
+        assert_eq!(elsewhere(Ps3, "Skylanders Battlecast"), Some(vec![]), "a game Omoio can't tell");
+
+        // Where the menu works, or there is no portal, there is nothing to say.
+        assert_eq!(elsewhere(Ps3, "Skylanders Trap Team"), None);
+        assert_eq!(elsewhere(Ps3, "Skylanders Spyro's Adventure"), None);
+        assert_eq!(elsewhere(WiiU, "Skylanders Imaginators"), None);
+        assert_eq!(elsewhere(Wii, "Skylanders Spyro's Adventure"), None);
+        assert_eq!(elsewhere(Ps3, "LittleBigPlanet 3"), None);
+    }
+
+    #[test]
+    fn the_game_page_says_where_the_menu_works() {
+        assert_eq!(
+            portal_menu_note(Console::Ps3, "Skylanders SuperChargers").as_deref(),
+            Some("The portal menu doesn't work in this version yet. It works in the Wii U version.")
+        );
+        assert_eq!(
+            portal_menu_note(Console::Wii, "Skylanders SWAP Force").as_deref(),
+            Some("The portal menu doesn't work in this version yet. It works in the PS3 and Wii U versions.")
+        );
+        assert_eq!(
+            portal_menu_note(Console::Ps3, "Skylanders Battlecast").as_deref(),
+            Some("The portal menu doesn't work in this game yet.")
+        );
+        assert_eq!(portal_menu_note(Console::WiiU, "Skylanders SuperChargers"), None);
+        assert_eq!(portal_menu_note(Console::WiiU, "Mario Kart 8"), None);
+        assert_eq!(
+            versions(&[Console::Ps3, Console::WiiU, Console::Wii]),
+            "the PS3, Wii U and Wii versions"
+        );
     }
 
     #[test]

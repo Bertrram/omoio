@@ -5,6 +5,8 @@
 //! implementation and a line in `all`, not touching the library or a screen.
 
 pub mod cemu;
+pub mod dolphin;
+pub mod qt;
 pub mod rpcs3;
 
 use crate::core::community::{MadeFigures, PackChange, Packs};
@@ -16,7 +18,10 @@ use crate::core::figures::Character;
 use crate::core::pad_layout::{Pad, Player};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
+use std::time::Duration;
 use tauri::AppHandle;
+use windows::Win32::Foundation::{CloseHandle, HANDLE, WAIT_OBJECT_0};
+use windows::Win32::System::Threading::{OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE};
 
 pub trait EmulatorBackend: Sync {
     fn console(&self) -> Console;
@@ -32,8 +37,9 @@ pub trait EmulatorBackend: Sync {
 
     fn features(&self) -> Features;
 
-    /// Whether this looks like one of this console's dumps. It must not read
-    /// or measure the dump: every backend is asked about every import.
+    /// Whether this looks like one of this console's dumps. It must not
+    /// measure the dump, or read more of it than the few bytes that say what
+    /// it is: every backend is asked about every import.
     fn recognises(&self, path: &Path) -> bool;
 
     fn identify(&self, path: &Path) -> Result<Game, String>;
@@ -69,8 +75,12 @@ pub trait EmulatorBackend: Sync {
     fn icon(&self, app: &AppHandle, game: &Game) -> Option<Vec<u8>>;
 
     /// Gets anything the emulator needs ready before `game` starts, apart
-    /// from the controller layout, which `write_layout` hands over.
-    fn prepare(&self, _app: &AppHandle, _game: &Game) {}
+    /// from the controller layout, which `write_layout` hands over. An error
+    /// is why the game can't start as it should, worded for the person
+    /// about to play.
+    fn prepare(&self, _app: &AppHandle, _game: &Game) -> Result<(), String> {
+        Ok(())
+    }
 
     /// The figures on the running game's toy portal, by slot, empty where
     /// there is none. `pid` is the emulator's process.
@@ -92,6 +102,14 @@ pub trait EmulatorBackend: Sync {
     /// Every character the emulator's own figure maker can make.
     fn portal_characters(&self, _pid: u32) -> Result<Vec<Character>, String> {
         Err(NO_PORTAL.to_string())
+    }
+
+    /// Whether the emulator's figure maker lists its characters with their
+    /// numbers, for `portal_characters` to read. One that makes a figure
+    /// from any numbers but names them alone is offered the characters Omoio
+    /// read from the other emulators' makers instead.
+    fn lists_characters(&self) -> bool {
+        true
     }
 
     /// Has the emulator's figure maker make a figure of `character` into
@@ -121,16 +139,18 @@ pub trait EmulatorBackend: Sync {
     }
 
     /// The room a readable copy of the game would take, when there may be
-    /// none and the emulator can make one: about the size of the game.
-    /// `None` when the game's own files are read as they are, or the
-    /// emulator can't make a copy.
+    /// none and the emulator can make one: about the size of the game, or
+    /// of the few files the picture reader needs where the emulator copies
+    /// only those. `None` when the game's own files are read as they are,
+    /// or the emulator can't make a copy.
     fn copy_size(&self, _game: &Game) -> Option<u64> {
         None
     }
 
-    /// Has the emulator make a readable copy of the game at `into`, for the
-    /// figures' pictures. `progress` hears how far it is, out of 100, and
-    /// `cancel` stops it.
+    /// Has the emulator make a readable copy of the game inside the empty
+    /// folder `into`, for the figures' pictures, and returns the copy for the
+    /// picture reader: an archive or a folder in there. `progress` hears how
+    /// far it is, out of 100, and `cancel` stops it.
     fn make_copy(
         &self,
         _app: &AppHandle,
@@ -138,7 +158,7 @@ pub trait EmulatorBackend: Sync {
         _into: &Path,
         _progress: &dyn Fn(u32),
         _cancel: &AtomicBool,
-    ) -> Result<(), String> {
+    ) -> Result<PathBuf, String> {
         Err("This emulator can't make a copy of the game.".to_string())
     }
 
@@ -177,17 +197,41 @@ pub trait EmulatorBackend: Sync {
         Vec::new()
     }
 
+    /// Whether Omoio sizes the emulator's picture for the machine
+    /// (`tune_picture`). One whose picture is left as the emulator sets it
+    /// says no, so its games start without the machine being looked over
+    /// first.
+    fn sizes_picture(&self) -> bool {
+        true
+    }
+
     /// Sizes the picture for this machine if it has not been. Returns the
     /// scale that applies, or `None` when the user already chose their own.
+    /// The display is the one Omoio's window is on, in pixels.
     fn tune_picture(
         &self,
         app: &AppHandle,
+        display_width: u32,
         display_height: u32,
         graphics_memory: u64,
     ) -> Result<Option<u32>, String>;
 
     /// Starts the game and returns the emulator's process id.
     fn launch(&self, app: &AppHandle, game: &Game) -> Result<u32, String>;
+
+    /// Whether a game is stopped by asking the emulator to close the way its
+    /// own Stop does (`ask_to_close`), rather than by ending its process at
+    /// once: one that holds what the game wrote and writes it out only as it
+    /// closes. Asking takes seconds (`close`).
+    fn closes_when_asked(&self) -> bool {
+        false
+    }
+
+    /// Asks the emulator running as `pid` to stop its game and close, and
+    /// says whether it was asked.
+    fn ask_to_close(&self, _pid: u32) -> bool {
+        false
+    }
 
     /// The installed version, or `None` when it is not installed.
     fn detect_version(&self, app: &AppHandle) -> Option<String>;
@@ -231,21 +275,55 @@ pub trait EmulatorBackend: Sync {
         Err("This emulator has no settings of its own for a game.".to_string())
     }
 
+    /// The folders in the emulator's storage that hold this game's saves
+    /// now, each with the saves in it, for backing them up (crate::saves).
+    /// Only folders with at least one save; none when the game has saved
+    /// nothing yet, or when the emulator offers no backups
+    /// (`Features::saves`).
+    fn save_folders(&self, _app: &AppHandle, _game: &Game) -> Vec<SaveFolder> {
+        Vec::new()
+    }
+
+    /// The folder a backup's part kept under `kept_as` goes back into.
+    /// Asked even when the game has nothing there now, so a backup can be
+    /// put back after the emulator's storage was cleared. `None` for a name
+    /// this emulator never keeps a part under.
+    fn save_folder(&self, _app: &AppHandle, _game: &Game, _kept_as: &str) -> Option<PathBuf> {
+        None
+    }
+
+    /// Whether `saved`, one of the game's saves in the emulator's storage
+    /// now, is the save `kept`, from a backup, under another name, so that
+    /// putting the backup back takes it out. A save of the same name is
+    /// always replaced; most emulators know a save by its name alone.
+    fn is_same_save(&self, _kept: &Path, _saved: &Path) -> bool {
+        false
+    }
+
     /// Every title this console's compatibility list knows, or `None` until
     /// the list has been downloaded.
-    fn catalogue(&self, app: &AppHandle) -> Option<Vec<crate::core::catalogue::Entry>>;
+    fn catalogue(&self, _app: &AppHandle) -> Option<Vec<crate::core::catalogue::Entry>> {
+        None
+    }
 
     /// Downloads the list again and returns how many titles it holds. Boxed
     /// because a trait used through `dyn` cannot declare an `async fn`; the
     /// box is where the download's state lives while it runs.
     fn refresh_catalogue<'a>(
         &'a self,
-        app: &'a AppHandle,
-        cancel: &'a std::sync::atomic::AtomicBool,
-    ) -> futures_util::future::BoxFuture<'a, Result<usize, String>>;
+        _app: &'a AppHandle,
+        _cancel: &'a std::sync::atomic::AtomicBool,
+    ) -> futures_util::future::BoxFuture<'a, Result<usize, String>> {
+        Box::pin(async { Err(NO_LIST.to_string()) })
+    }
 
     /// Who publishes the list and where, for the credit under the catalogue.
-    fn catalogue_source(&self) -> (&'static str, &'static str);
+    /// `None` for an emulator with no list Omoio may use, which is then left
+    /// out of the catalogue and its warnings rather than shown as waiting
+    /// for one.
+    fn catalogue_source(&self) -> Option<(&'static str, &'static str)> {
+        None
+    }
 
     /// Switches on the known fixes for this game that have not been applied
     /// before, and returns their ids so none is ever applied twice. Most
@@ -277,16 +355,86 @@ pub trait EmulatorBackend: Sync {
     }
 }
 
+/// One folder in an emulator's storage that holds a game's saves.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SaveFolder {
+    /// The name this folder's part of a backup is kept under, which
+    /// `save_folder` turns back into the folder: the RPCS3 user it belongs
+    /// to, for instance, or the GameCube region.
+    pub kept_as: String,
+    pub path: PathBuf,
+    /// The game's saves in it, files or folders, each copied whole.
+    pub saves: Vec<PathBuf>,
+}
+
 const NO_PORTAL: &str = "Omoio can't reach this emulator's portal yet.";
 const NO_PACKS: &str = "There are no community packs for this emulator.";
+const NO_LIST: &str = "There is no compatibility list for this emulator.";
 
-/// Every emulator Omoio can run, one per console.
+/// Every emulator Omoio can run, one per console. Dolphin runs two consoles
+/// and is listed once for each, so every list kept per console (the
+/// catalogue, the Controller screen's names, the layouts) has it in both.
 pub fn all() -> &'static [&'static dyn EmulatorBackend] {
-    &[&rpcs3::Rpcs3, &cemu::Cemu]
+    static ALL: [&dyn EmulatorBackend; 4] = [&rpcs3::Rpcs3, &cemu::Cemu, &dolphin::WII, &dolphin::GAMECUBE];
+    &ALL
 }
 
 pub fn for_console(console: Console) -> Option<&'static dyn EmulatorBackend> {
     all().iter().copied().find(|backend| backend.console() == console)
+}
+
+/// How long an emulator asked to close has before it is asked again, and
+/// before it is ended anyway. Dolphin takes the first ask, for a Wii game,
+/// as a press of the console's power button, and the game shuts down by
+/// itself; asked again, Dolphin stops it outright (`MainWindow::RequestStop`
+/// in DolphinQt/MainWindow.cpp, Dolphin 2609a). Either way it then writes
+/// everything out and quits.
+const ASK_AGAIN: Duration = Duration::from_secs(3);
+const GIVE_UP: Duration = Duration::from_secs(8);
+
+/// Asks the emulator running as `pid` to close, when it is one that is
+/// asked (`closes_when_asked`), and waits for it to. Says whether it closed;
+/// one that didn't is left for the caller to end. Takes up to `GIVE_UP`, so
+/// it is never done on the window's thread.
+pub fn close(backend: &dyn EmulatorBackend, pid: u32) -> bool {
+    backend.closes_when_asked() && close_within(pid, &|| backend.ask_to_close(pid), ASK_AGAIN, GIVE_UP)
+}
+
+fn close_within(pid: u32, ask: &dyn Fn() -> bool, ask_again: Duration, give_up: Duration) -> bool {
+    // Held from before the ask, so the wait is for this process even if its
+    // id passes to another once it has gone.
+    let Some(process) = Process::open(pid) else {
+        return false;
+    };
+    if !ask() {
+        return false;
+    }
+    if process.ends_within(ask_again) {
+        return true;
+    }
+    ask();
+    process.ends_within(give_up.saturating_sub(ask_again))
+}
+
+/// A process held by its handle, for waiting on its end.
+struct Process(HANDLE);
+
+impl Process {
+    fn open(pid: u32) -> Option<Self> {
+        unsafe { OpenProcess(PROCESS_SYNCHRONIZE, false, pid) }.ok().map(Self)
+    }
+
+    fn ends_within(&self, limit: Duration) -> bool {
+        let millis = u32::try_from(limit.as_millis()).unwrap_or(u32::MAX);
+        let ended = unsafe { WaitForSingleObject(self.0, millis) };
+        ended == WAIT_OBJECT_0
+    }
+}
+
+impl Drop for Process {
+    fn drop(&mut self) {
+        let _ = unsafe { CloseHandle(self.0) };
+    }
 }
 
 /// Works out which console a dump is for and reads it with that emulator.
@@ -369,6 +517,72 @@ mod tests {
         );
     }
 
+    /// A process that would run for half a minute, standing in for an
+    /// emulator.
+    fn long_process() -> std::process::Child {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        std::process::Command::new("ping")
+            .args(["-n", "30", "127.0.0.1"])
+            .stdout(std::process::Stdio::null())
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn()
+            .unwrap()
+    }
+
+    #[test]
+    fn an_emulator_that_closes_when_asked_is_waited_for() {
+        let child = std::sync::Mutex::new(long_process());
+        let pid = child.lock().unwrap().id();
+        let asked = std::cell::Cell::new(0);
+        let ask = || {
+            asked.set(asked.get() + 1);
+            child.lock().unwrap().kill().is_ok()
+        };
+        assert!(close_within(pid, &ask, Duration::from_secs(5), Duration::from_secs(10)));
+        assert_eq!(asked.get(), 1);
+    }
+
+    #[test]
+    fn one_still_running_is_asked_again_then_left_to_be_ended() {
+        let mut child = long_process();
+        let asked = std::cell::Cell::new(0);
+        let ask = || {
+            asked.set(asked.get() + 1);
+            true
+        };
+        assert!(!close_within(child.id(), &ask, Duration::from_millis(50), Duration::from_millis(150)));
+        assert_eq!(asked.get(), 2);
+        child.kill().unwrap();
+        child.wait().unwrap();
+    }
+
+    #[test]
+    fn one_that_couldnt_be_asked_is_left_at_once() {
+        let mut child = long_process();
+        let started = std::time::Instant::now();
+        assert!(!close_within(child.id(), &|| false, Duration::from_secs(5), Duration::from_secs(10)));
+        assert!(started.elapsed() < Duration::from_secs(1));
+        child.kill().unwrap();
+        child.wait().unwrap();
+    }
+
+    #[test]
+    fn only_cemus_picture_is_left_as_it_is() {
+        assert!(!cemu::Cemu.sizes_picture());
+        assert!(rpcs3::Rpcs3.sizes_picture());
+        assert!(dolphin::WII.sizes_picture());
+        assert!(dolphin::GAMECUBE.sizes_picture());
+    }
+
+    #[test]
+    fn only_dolphin_is_asked_to_close() {
+        assert!(!rpcs3::Rpcs3.closes_when_asked());
+        assert!(!cemu::Cemu.closes_when_asked());
+        assert!(dolphin::WII.closes_when_asked());
+        assert!(dolphin::GAMECUBE.closes_when_asked());
+    }
+
     #[test]
     fn every_console_has_at_most_one_emulator() {
         let mut seen = std::collections::HashSet::new();
@@ -377,5 +591,7 @@ mod tests {
         }
         assert!(for_console(Console::Ps3).is_some());
         assert!(for_console(Console::WiiU).is_some());
+        assert_eq!(for_console(Console::Wii).map(|b| b.name()), Some("Dolphin"));
+        assert_eq!(for_console(Console::GameCube).map(|b| b.name()), Some("Dolphin"));
     }
 }

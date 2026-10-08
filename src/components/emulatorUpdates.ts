@@ -1,16 +1,22 @@
 import {
   cancelCemuInstall,
+  cancelDolphinInstall,
   cancelRpcs3Install,
   emulatorUpdates,
   installCemu,
+  installDolphin,
   installRpcs3,
   onCemuInstallProgress,
+  onDolphinInstallProgress,
   onRpcs3InstallProgress,
   type Console,
   type EmulatorUpdate,
   type InstallProgress,
 } from "../api";
 import { store } from "../state";
+
+/// Dolphin runs both of its consoles from one install.
+const dolphin = { install: installDolphin, progress: onDolphinInstallProgress, cancel: cancelDolphinInstall };
 
 /// The same install each emulator gets the first time, so an update is
 /// downloaded, checked and unpacked exactly like a fresh one.
@@ -24,6 +30,8 @@ const INSTALL: Record<
 > = {
   ps3: { install: installRpcs3, progress: onRpcs3InstallProgress, cancel: cancelRpcs3Install },
   wiiu: { install: installCemu, progress: onCemuInstallProgress, cancel: cancelCemuInstall },
+  wii: dolphin,
+  gamecube: dolphin,
 };
 
 const STAGE: Record<InstallProgress["stage"], string> = {

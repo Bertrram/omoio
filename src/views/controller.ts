@@ -332,9 +332,13 @@ export async function renderController(): Promise<View> {
     heading.textContent = group.title;
     box.append(heading);
     for (const place of group.places) {
-      const words = document.createElement("span");
+      // A stick's press is a button of its own on some consoles, the Wii's 2
+      // among them, so it says what it is on each.
+      const pressed = place === "LS" || place === "RS";
+      const words = pressed ? consoleWords(view.consoles, place) : document.createElement("span");
       words.className = "pad-words";
-      words.textContent = DIRECTION[place];
+      if (pressed) words.prepend(`${DIRECTION[place]} `);
+      else words.textContent = DIRECTION[place];
       box.append(target(place, "pad-dir", words));
     }
     dirs.append(box);

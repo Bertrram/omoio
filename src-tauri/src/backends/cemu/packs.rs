@@ -961,6 +961,7 @@ pub fn view(app: &AppHandle, title: Option<&str>) -> Packs {
         have_list,
         source: SOURCE.to_string(),
         waiting: None,
+        with_emulator: false,
         packs: Vec::new(),
     };
     if !have_list {

@@ -478,6 +478,14 @@ impl super::EmulatorBackend for Rpcs3 {
         game_config::write(app, &game.title_id, chosen)
     }
 
+    fn save_folders(&self, app: &AppHandle, game: &crate::core::library::Game) -> Vec<super::SaveFolder> {
+        saves::folders(app, &game.title_id)
+    }
+
+    fn save_folder(&self, app: &AppHandle, _game: &crate::core::library::Game, kept_as: &str) -> Option<PathBuf> {
+        saves::folder(app, kept_as)
+    }
+
     fn recognises(&self, path: &Path) -> bool {
         crate::import::recognises(path)
     }
@@ -526,6 +534,7 @@ impl super::EmulatorBackend for Rpcs3 {
     fn tune_picture(
         &self,
         app: &AppHandle,
+        _display_width: u32,
         display_height: u32,
         graphics_memory: u64,
     ) -> Result<Option<u32>, String> {
@@ -556,8 +565,8 @@ impl super::EmulatorBackend for Rpcs3 {
         Box::pin(compat::refresh(app, cancel))
     }
 
-    fn catalogue_source(&self) -> (&'static str, &'static str) {
-        ("PS3 results from RPCS3", "https://rpcs3.net/compatibility")
+    fn catalogue_source(&self) -> Option<(&'static str, &'static str)> {
+        Some(("PS3 results from RPCS3", "https://rpcs3.net/compatibility"))
     }
 
     fn apply_fixes(
@@ -583,6 +592,7 @@ impl super::EmulatorBackend for Rpcs3 {
             have_list: patches::have_catalogue(app),
             source: "the RPCS3 community".to_string(),
             waiting: None,
+            with_emulator: false,
             packs: patches::for_title(app, title_id, version).into_iter().map(patches::as_pack).collect(),
         }
     }

@@ -178,7 +178,7 @@ fn files(dir: &Path) -> Vec<PathBuf> {
     out
 }
 
-fn has_files(dir: &Path) -> bool {
+pub(super) fn has_files(dir: &Path) -> bool {
     !files(dir).is_empty()
 }
 

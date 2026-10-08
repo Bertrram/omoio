@@ -74,7 +74,7 @@ export interface Game {
   /// Where the cover came from: the dump's own icon, or RAWG.
   cover_source: "dump" | "rawg" | null;
   /// Which console the game is for, and so which emulator runs it.
-  console: "ps3" | "wiiu";
+  console: Console;
   /// What its emulator can do beyond starting it.
   features: {
     updates: boolean;
@@ -92,6 +92,9 @@ export interface Game {
   /// Whether the portal menu works in this game. Omoio's own rule, so the
   /// interface never guesses it from the title.
   portal_menu: boolean;
+  /// For a Skylanders game the menu doesn't work in: "The portal menu
+  /// doesn't work in this version yet. It works in the Wii U version."
+  portal_note: string | null;
 }
 
 export function listGames(): Promise<Game[]> {
@@ -102,15 +105,22 @@ export function importGame(path: string): Promise<Game> {
   return invoke("import_game", { path });
 }
 
-/// What to tell someone before a game that may not run well is imported.
+/// What to tell someone before a game that may not run well, or a Skylanders
+/// game the portal menu doesn't work in, is imported.
 export interface ImportWarning {
   title: string;
   console: Console;
   console_name: string;
-  /// "RPCS3 rates it Ingame: it starts, but you may hit problems before the end."
+  /// "Omoio's portal menu doesn't work in Skylanders SuperChargers on the
+  /// PS3, so you can't put figures on the portal." Said first. Empty when
+  /// the menu works or the game has no portal.
+  portal: string;
+  /// "RPCS3 rates it Ingame: it starts, but you may hit problems before the
+  /// end." Empty when only the portal is warned about.
   rating: string;
-  /// "The Wii U version is rated Playable in Cemu." Empty when no other
-  /// console has a version that plays well.
+  /// "The Wii U version is rated Playable in Cemu.", or with a portal
+  /// warning "The portal menu works in the Wii U version." Empty when there
+  /// is no such version.
   better: string;
 }
 
@@ -192,7 +202,7 @@ export interface Machine {
 
 export interface PlaySession {
   /// Which console it ran on. Sessions kept before this was recorded were PS3.
-  console?: "ps3" | "wiiu";
+  console?: Console;
   title_id: string;
   title: string;
   started: string;
@@ -439,6 +449,9 @@ export interface Packs {
   source: string;
   /// Why none can be shown yet, when there is a reason.
   waiting: string | null;
+  /// They come with the emulator, as Dolphin's do, so there is nothing to
+  /// download or check for.
+  with_emulator: boolean;
   packs: Pack[];
 }
 
@@ -537,7 +550,9 @@ export interface SaveBackup {
   /// Seconds since the epoch, like the session logs use.
   made: number;
   bytes: number;
-  folders: number;
+  /// Not always one: a game can keep several save folders, or several
+  /// files on a GameCube memory card.
+  saves: number;
 }
 
 export function gameSaves(titleId: string): Promise<[boolean, SaveBackup[]]> {
@@ -603,10 +618,13 @@ export function pendingUpdates(): Promise<[boolean, PendingUpdate[]]> {
   return invoke("pending_updates");
 }
 
-export type Console = "ps3" | "wiiu";
+export type Console = "ps3" | "wiiu" | "wii" | "gamecube";
 
 /// Each console as it is usually shortened, where room is short.
-export const CONSOLE_SHORT: Record<Console, string> = { ps3: "PS3", wiiu: "Wii U" };
+export const CONSOLE_SHORT: Record<Console, string> = { ps3: "PS3", wiiu: "Wii U", wii: "Wii", gamecube: "GameCube" };
+
+/// The emulator that runs each console. Dolphin runs two.
+export const EMULATOR_OF: Record<Console, string> = { ps3: "RPCS3", wiiu: "Cemu", wii: "Dolphin", gamecube: "Dolphin" };
 
 export interface Release {
   title_id: string;
@@ -632,6 +650,11 @@ export interface Listing {
   demo: boolean;
   owned: boolean;
   features: Game["features"];
+  /// For a Skylanders game, whether Omoio's portal menu works in it. Null
+  /// for any other game.
+  portal_menu: boolean | null;
+  /// For a Skylanders game the menu doesn't work in, where it does.
+  portal_note: string | null;
 }
 
 export interface CatalogueFilter {
@@ -1038,7 +1061,7 @@ export function catalogueCover(key: string, name: string, console: Console): Pro
 }
 
 export interface EmulatorVersion {
-  console: "ps3" | "wiiu";
+  console: Console;
   /// Null when it is not installed.
   version: string | null;
 }
@@ -1102,6 +1125,19 @@ export function replaceWithOwnSave(path: string, titleId: string): Promise<void>
 
 export function onCemuInstallProgress(handler: (progress: InstallProgress) => void): Promise<UnlistenFn> {
   return listen<InstallProgress>("cemu-install-progress", (event) => handler(event.payload));
+}
+
+/// Dolphin runs Wii and GameCube games from the same install.
+export function installDolphin(): Promise<string> {
+  return invoke("install_dolphin");
+}
+
+export function cancelDolphinInstall(): Promise<void> {
+  return invoke("cancel_dolphin_install");
+}
+
+export function onDolphinInstallProgress(handler: (progress: InstallProgress) => void): Promise<UnlistenFn> {
+  return listen<InstallProgress>("dolphin-install-progress", (event) => handler(event.payload));
 }
 
 /// An installed emulator with a newer official release.

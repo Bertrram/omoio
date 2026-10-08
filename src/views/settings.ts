@@ -188,7 +188,7 @@ export async function renderSettings(): Promise<View> {
   };
   nameRow.right.append(nameSaid, nameInput);
 
-  const regionRow = row("Region", "Sets the language PS3 games start in. It doesn't change Wii U games.");
+  const regionRow = row("Region", "Sets the language PS3 games start in. It doesn't change games for other consoles.");
   const regionSelect = document.createElement("select");
   regionSelect.className = "select";
   for (const choice of regions) {

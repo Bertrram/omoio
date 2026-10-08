@@ -2,10 +2,14 @@ import { open } from "@tauri-apps/plugin-dialog";
 import {
   addCemuKeys,
   cancelCemuInstall,
+  cancelDolphinInstall,
   cemuKeys,
   emulatorVersions,
   installCemu,
+  installDolphin,
   onCemuInstallProgress,
+  onDolphinInstallProgress,
+  type Console,
   type InstallProgress,
 } from "../api";
 import { openOwnCemu } from "../components/ownCemuSheet";
@@ -30,8 +34,9 @@ type Emulator = {
   /// One hue per family, so the grid reads by maker and kind at a glance.
   hue: number;
   needs?: string;
-  /// The console Omoio runs it for, when Omoio can install it.
-  runs?: "ps3" | "wiiu";
+  /// The console Omoio runs it for, when Omoio can install it. Dolphin is
+  /// known by the Wii, the first of its two.
+  runs?: Console;
 };
 
 const SONY_HOME = 222;
@@ -51,7 +56,7 @@ const NINTENDO_HANDHELD = 268;
 const EMULATORS: Emulator[] = [
   { name: "RPCS3", console: "PlayStation 3", icon: rpcs3Icon, hue: SONY_HOME, runs: "ps3" },
   { name: "PCSX2", console: "PlayStation 2", icon: pcsx2Icon, hue: SONY_HOME, needs: "Your own BIOS" },
-  { name: "Dolphin", console: "GameCube and Wii", icon: dolphinIcon, hue: NINTENDO_HOME },
+  { name: "Dolphin", console: "Wii and GameCube", icon: dolphinIcon, hue: NINTENDO_HOME, runs: "wii" },
   { name: "PPSSPP", console: "PSP", icon: ppssppIcon, hue: SONY_HANDHELD },
   { name: "DuckStation", console: "PlayStation", icon: duckstationIcon, hue: SONY_HOME, needs: "Your own BIOS" },
   { name: "Cemu", console: "Wii U", icon: cemuIcon, hue: NINTENDO_HOME, runs: "wiiu" },
@@ -103,8 +108,25 @@ function text(emulator: Emulator): HTMLElement {
   return box;
 }
 
-/// Installs Cemu where the button was, with progress and a way to stop.
-function cemuInstaller(box: HTMLElement): HTMLButtonElement {
+/// The emulators this screen installs itself. RPCS3's installer sits with
+/// its firmware on the System screen.
+const INSTALLERS: Partial<
+  Record<
+    Console,
+    {
+      install: () => Promise<string>;
+      progress: (handler: (progress: InstallProgress) => void) => Promise<() => void>;
+      cancel: () => Promise<void>;
+    }
+  >
+> = {
+  wiiu: { install: installCemu, progress: onCemuInstallProgress, cancel: cancelCemuInstall },
+  wii: { install: installDolphin, progress: onDolphinInstallProgress, cancel: cancelDolphinInstall },
+};
+
+/// Installs an emulator where the button was, with progress and a way to
+/// stop.
+function installer(box: HTMLElement, emulator: Emulator, how: NonNullable<(typeof INSTALLERS)[Console]>): HTMLButtonElement {
   const install = document.createElement("button");
   install.className = "small-btn";
   install.textContent = "Install to Omoio";
@@ -122,12 +144,12 @@ function cemuInstaller(box: HTMLElement): HTMLButtonElement {
     const stop = document.createElement("button");
     stop.className = "link-btn";
     stop.textContent = "Cancel";
-    stop.onclick = () => void cancelCemuInstall();
+    stop.onclick = () => void how.cancel();
     box.querySelector(".note")?.remove();
     install.replaceWith(bar);
     bar.after(stop);
 
-    const unlisten = await onCemuInstallProgress((progress) => {
+    const unlisten = await how.progress((progress) => {
       stage.textContent = STAGE[progress.stage];
       if (progress.stage === "downloading" && progress.total > 0) {
         const done = Math.min(100, Math.round((progress.bytes / progress.total) * 100));
@@ -138,7 +160,7 @@ function cemuInstaller(box: HTMLElement): HTMLButtonElement {
       }
     });
     try {
-      await installCemu();
+      await how.install();
       store.redraw();
     } catch (err) {
       bar.remove();
@@ -150,7 +172,7 @@ function cemuInstaller(box: HTMLElement): HTMLButtonElement {
           ? "Stopped. Nothing was installed."
           : typeof err === "string"
             ? err
-            : "Couldn't install Cemu.";
+            : `Couldn't install ${emulator.name}.`;
       box.append(install, note);
     } finally {
       unlisten();
@@ -281,8 +303,9 @@ export async function renderEmulators(): Promise<View> {
     card.className = "emu-card";
     const words = text(emulator);
     card.append(badge(emulator, "small"), words);
-    if (emulator.runs === "wiiu") {
-      words.appendChild(cemuInstaller(words));
+    const how = emulator.runs && INSTALLERS[emulator.runs];
+    if (how) {
+      words.appendChild(installer(words, emulator, how));
     } else if (emulator.runs === "ps3") {
       // RPCS3's installer sits with its firmware on the System screen.
       const install = document.createElement("button");

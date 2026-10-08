@@ -20,6 +20,12 @@ import {
 } from "../api";
 import { store } from "../state";
 
+/// Disc images, which are played where they are: the Wii U's, which Cemu
+/// reads with the user's keys, and the Wii's and GameCube's, which Dolphin
+/// reads (backends/dolphin/disc.rs). A .bin picked here is one only when its
+/// header says so.
+const DISC_IMAGES = ["wud", "wux", "iso", "gcm", "wbfs", "rvz", "wia", "gcz", "ciso", "tgc", "bin"];
+
 function formatGB(bytes: number): string {
   return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
 }
@@ -76,7 +82,7 @@ function sheet(dropped?: string[]): void {
     busy = false;
     sheet.innerHTML = `
       <div class="sheet-h">Import a game</div>
-      <div class="sheet-p">Point Omoio at a folder you've already unpacked, a .7z or .zip archive, or a Wii U .wua or disc image.</div>
+      <div class="sheet-p">Point Omoio at a folder you've already unpacked, a .7z or .zip archive, a Wii&nbsp;U .wua, or a Wii&nbsp;U, Wii or GameCube disc image.</div>
       ${note ? `<div class="notice" style="margin-top:16px">${note}</div>` : ""}
       <div class="sheet-actions">
         <button class="btn ghost" id="pick-folder">Choose a folder</button>
@@ -125,17 +131,23 @@ function sheet(dropped?: string[]): void {
   }
 
   /// One game's warning, filled in by text so a game's own name never goes
-  /// through innerHTML.
+  /// through innerHTML. A Skylanders game the portal menu doesn't work in
+  /// says that first, then how its emulator rates it, if that is said.
   function warningItem(warning: ImportWarning): HTMLElement {
     const item = document.createElement("li");
     item.className = "warn-item";
     item.innerHTML = `
       <div class="warn-item-h"><span class="warn-item-name"></span><span class="warn-item-console"></span></div>
-      <div class="warn-item-p"></div>
     `;
     item.querySelector<HTMLElement>(".warn-item-name")!.textContent = warning.title;
     item.querySelector<HTMLElement>(".warn-item-console")!.textContent = warning.console_name;
-    item.querySelector<HTMLElement>(".warn-item-p")!.textContent = warning.rating;
+    for (const said of [warning.portal, warning.rating]) {
+      if (!said) continue;
+      const line = document.createElement("div");
+      line.className = "warn-item-p";
+      line.textContent = said;
+      item.appendChild(line);
+    }
     if (warning.better) {
       const better = document.createElement("div");
       better.className = "warn-item-better";
@@ -145,27 +157,38 @@ function sheet(dropped?: string[]): void {
     return item;
   }
 
-  /// Asks before a game that may not run well is imported. True for Import
-  /// anyway; Cancel, Escape and a click outside the sheet are all false.
+  /// Asks before a game that may not run well, or a Skylanders game the
+  /// portal menu doesn't work in, is imported. True for Import anyway;
+  /// Cancel, Escape and a click outside the sheet are all false.
   function confirmWarning(warning: ImportWarning): Promise<boolean> {
     busy = false;
     sheet.setAttribute("role", "alertdialog");
     sheet.setAttribute("aria-labelledby", "warn-title");
-    sheet.setAttribute("aria-describedby", "warn-rating");
+    sheet.setAttribute("aria-describedby", "warn-said");
     sheet.innerHTML = `
-      <div class="warn-kicker">May not run well</div>
+      <div class="warn-kicker"></div>
       <div class="sheet-h" id="warn-title"></div>
       <div class="warn-console"></div>
-      <div class="sheet-p warn-rating" id="warn-rating"></div>
+      <div id="warn-said"></div>
       ${warning.better ? `<div class="warn-better"></div>` : ""}
       <div class="sheet-actions">
         <button class="btn ghost" id="warn-cancel">Cancel</button>
         <button class="btn solid" id="warn-import">Import anyway</button>
       </div>
     `;
+    sheet.querySelector<HTMLElement>(".warn-kicker")!.textContent = warning.portal
+      ? "Not supported in Omoio yet"
+      : "May not run well";
     sheet.querySelector<HTMLElement>("#warn-title")!.textContent = warning.title;
     sheet.querySelector<HTMLElement>(".warn-console")!.textContent = warning.console_name;
-    sheet.querySelector<HTMLElement>("#warn-rating")!.textContent = warning.rating;
+    const said = sheet.querySelector<HTMLElement>("#warn-said")!;
+    for (const words of [warning.portal, warning.rating]) {
+      if (!words) continue;
+      const line = document.createElement("div");
+      line.className = "sheet-p warn-rating";
+      line.textContent = words;
+      said.appendChild(line);
+    }
     const better = sheet.querySelector<HTMLElement>(".warn-better");
     if (better) better.textContent = warning.better;
 
@@ -198,13 +221,16 @@ function sheet(dropped?: string[]): void {
     sheet.innerHTML = `
       <div class="sheet-h"></div>
       ${lines.length > 0 ? `<div class="sheet-p"></div>` : ""}
-      <div class="sec-h warn-list-h">May not run well</div>
+      <div class="sec-h warn-list-h"></div>
       <ul class="warn-list"></ul>
       <div class="sheet-actions">
         <button class="btn solid" id="warn-done">Done</button>
       </div>
     `;
     sheet.querySelector<HTMLElement>(".sheet-h")!.textContent = heading;
+    sheet.querySelector<HTMLElement>(".warn-list-h")!.textContent = warnings.every((warning) => warning.portal)
+      ? "Not supported in Omoio yet"
+      : "May not run well";
     const said = sheet.querySelector<HTMLElement>(".sheet-p");
     if (said) said.textContent = lines.join(" ");
     const list = sheet.querySelector<HTMLElement>(".warn-list")!;
@@ -261,11 +287,11 @@ function sheet(dropped?: string[]): void {
       multiple: false,
       directory: false,
       title: "Choose a game file",
-      filters: [{ name: "Game archive, .wua or disc image", extensions: ["7z", "zip", "wua", "wud", "wux"] }],
+      filters: [{ name: "Game archive, .wua or disc image", extensions: ["7z", "zip", "wua", ...DISC_IMAGES] }],
     });
     if (typeof picked !== "string") return;
     // A .wua or disc image is played where it is, as an unpacked folder is.
-    if (/\.(wua|wud|wux)$/i.test(picked)) {
+    if (new RegExp(`\\.(wua|${DISC_IMAGES.join("|")})$`, "i").test(picked)) {
       await importOne(picked, "other");
       return;
     }

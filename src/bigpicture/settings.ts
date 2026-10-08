@@ -23,6 +23,7 @@ import {
   setPortalButton,
   setRegion,
   setStartInBigPicture,
+  EMULATOR_OF,
   type Account,
   type ControllerView,
   type EmulatorVersion,
@@ -61,9 +62,6 @@ const CATEGORIES: [Category, string][] = [
   ["controllers", "Controllers"],
   ["system", "System"],
 ];
-
-/// Which emulator runs which console, for the System list.
-const EMULATOR_NAMES: Record<EmulatorVersion["console"], string> = { ps3: "RPCS3", wiiu: "Cemu" };
 
 interface General {
   settings: Settings;
@@ -295,8 +293,13 @@ export function settingsScreen(kit: Kit, cap: (input: string) => string, start: 
       )
     );
     rows.push(heading("Emulators"));
+    // Dolphin answers for both of its consoles; it is one emulator.
+    const listed = new Set<string>();
     for (const emulator of emulators) {
-      rows.push(row(`sys:${emulator.console}`, EMULATOR_NAMES[emulator.console], emulator.version ?? "Not installed"));
+      const name = EMULATOR_OF[emulator.console];
+      if (listed.has(name)) continue;
+      listed.add(name);
+      rows.push(row(`sys:${emulator.console}`, name, emulator.version ?? "Not installed"));
     }
     rows.push(row("sys:firmware", "PS3 firmware", store.get().firmwareVersion ?? "Not installed"));
     rows.push(heading("Omoio"), row("sys:omoio", "Version", version));
@@ -457,7 +460,8 @@ export function packsScreen(kit: Kit, game: Game, section: Section): Screen {
     section,
     first: () => {
       const first = found?.packs.find((pack) => pack.applies);
-      return first ? `pack:${first.id}` : "pack:get";
+      if (first) return `pack:${first.id}`;
+      return found?.with_emulator ? "pack:none" : "pack:get";
     },
     draw() {
       const { page, list } = listPage(game.title, "Community packs");
@@ -469,7 +473,7 @@ export function packsScreen(kit: Kit, game: Game, section: Section): Screen {
         list.append(h("div", "bp-quiet", "Reading…"));
         return page;
       }
-      const { have_list, waiting, packs, source } = found;
+      const { have_list, waiting, with_emulator, packs, source } = found;
       list.append(
         h(
           "p",
@@ -477,7 +481,9 @@ export function packsScreen(kit: Kit, game: Game, section: Section): Screen {
           `Made by ${source || "the emulator's community"}. A pack that is on without being asked says why; the rest stay off until you turn them on.`
         )
       );
-      if (!have_list) {
+      if (!have_list && with_emulator) {
+        list.append(row("pack:none", "Not installed", "", undefined, waiting ?? undefined));
+      } else if (!have_list) {
         list.append(row("pack:none", "Not downloaded yet", "", undefined, "Download them to see what has been made for this game."));
       } else if (waiting) {
         list.append(row("pack:none", waiting, ""));
@@ -532,6 +538,8 @@ export function packsScreen(kit: Kit, game: Game, section: Section): Screen {
           }
         }
       }
+      // Packs that come with the emulator have nothing to download.
+      if (with_emulator) return page;
       // Pressed again while it runs, it stops.
       const get = row(
         "pack:get",
@@ -617,7 +625,15 @@ export function savesScreen(kit: Kit, game: Game, section: Section): Screen {
         return page;
       }
       const [hasSaves, backups] = saves;
-      list.append(h("p", "bp-list-note", "A copy is taken by itself before every update. Reinstalling the emulator leaves these alone."));
+      list.append(
+        h(
+          "p",
+          "bp-list-note",
+          game.features.updates
+            ? "A copy is taken by itself before every update. Reinstalling the emulator leaves these alone."
+            : "Reinstalling the emulator leaves these alone."
+        )
+      );
       const now = row("save:now", "Back up now", working ? "Copying…" : "", async () => {
         if (working) return;
         working = true;
@@ -639,7 +655,7 @@ export function savesScreen(kit: Kit, game: Game, section: Section): Screen {
       list.append(heading(backups.length === 1 ? "1 copy kept" : `${backups.length} copies kept`));
       for (const backup of backups) {
         list.append(
-          row(`save:${backup.made}`, formatWhen(backup.made), `${formatBytes(backup.bytes)} · ${backup.folders === 1 ? "1 save" : `${backup.folders} saves`}`, () => {
+          row(`save:${backup.made}`, formatWhen(backup.made), `${formatBytes(backup.bytes)} · ${backup.saves === 1 ? "1 save" : `${backup.saves} saves`}`, () => {
             if (store.get().playing?.title_id === game.title_id) {
               kit.say("Quit the game first, then put the copy back.");
               return;

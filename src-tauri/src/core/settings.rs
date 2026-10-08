@@ -21,13 +21,19 @@ pub struct Settings {
     /// never again; both answers stay changeable in Settings.
     #[serde(default)]
     pub set_up: bool,
-    /// Set once Omoio has sized the picture for this machine. It happens once,
-    /// so a scale the user picks afterwards is never put back.
+    /// Set once Omoio has sized RPCS3's picture for this machine. It happens
+    /// once, so a scale the user picks afterwards is never put back. Kept
+    /// from before each emulator was sized on its own, so RPCS3 is not sized
+    /// a second time.
     #[serde(default)]
     pub tuned: bool,
-    /// The scale that was, for the System screen.
+    /// RPCS3's scale that was, for the System screen.
     #[serde(default)]
     pub tuned_scale: Option<u32>,
+    /// The other emulators Omoio has sized the picture for, by name, each
+    /// once, for the same reason as `tuned`.
+    #[serde(default)]
+    pub tuned_for: Vec<String>,
     /// Real covers from RAWG in place of the generated tiles. Off until the
     /// user turns it on.
     #[serde(default)]
@@ -68,6 +74,7 @@ impl Default for Settings {
             set_up: false,
             tuned: false,
             tuned_scale: None,
+            tuned_for: Vec::new(),
             covers: false,
             rawg_key: None,
             applied_fixes: Default::default(),
@@ -117,6 +124,7 @@ mod tests {
             set_up: true,
             tuned: true,
             tuned_scale: Some(200),
+            tuned_for: vec!["Dolphin".to_string()],
             covers: true,
             rawg_key: Some("k".to_string()),
             applied_fixes: Default::default(),

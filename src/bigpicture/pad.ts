@@ -239,7 +239,15 @@ function directionsScreen(
       for (const place of group.places) {
         const value = h("span", "bp-row-value bp-caps");
         value.innerHTML = `<span class="cap">${capFace(player.pad.family, player.buttons[place])}</span>`;
-        const line = row(`dir:${place}`, DIRECTION[place], value, async () => {
+        // A stick's press is a button of its own on some consoles, the
+        // Wii's 2 among them, so it says what it is on each.
+        const pressed = place === "LS" || place === "RS";
+        const on = known.consoles
+          .filter((console) => console.buttons[place])
+          .map((console) => `${console.buttons[place]} on ${console.name}`)
+          .join(", ");
+        const label = pressed && on ? `${DIRECTION[place]}, ${on}` : DIRECTION[place];
+        const line = row(`dir:${place}`, label, value, async () => {
           await change(place);
           kit.redraw(screen);
         });

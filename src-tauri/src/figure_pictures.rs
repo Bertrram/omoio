@@ -5,14 +5,18 @@
 //! user asks for the pictures, and checks it against the fingerprint below
 //! every time before it runs, so nothing else can stand in for it.
 //!
-//! A Wii U disc image is encrypted, so for one Omoio has Cemu make a copy it
-//! can read, reads the pictures from that, and deletes the copy at once. The
-//! copy is about the size of the game and takes minutes to make, so it is
-//! made only when it fits with room to spare, and only for a game the reader
-//! knows. Nothing of it is kept but the pictures, and a copy left by a run
-//! that never finished goes the next time Omoio starts.
+//! A Wii U or Wii disc image is encrypted, so for one Omoio has the emulator
+//! make a copy it can read (Cemu a .wua, Dolphin's own DolphinTool the
+//! game's files), reads the pictures from that, and deletes the copy at
+//! once. The emulator does the decrypting, never Omoio. The copy can be about
+//! the size of the game and take minutes to make (Dolphin copies only the
+//! files the reader needs where they are known), so it is made only when it
+//! fits with room to spare, and only for a game the reader knows. Nothing of
+//! it is kept but the pictures, and a copy left by a run that never finished
+//! goes the next time Omoio starts.
 
 use crate::backends::EmulatorBackend;
+use crate::core::console::Console;
 use crate::core::figures;
 use crate::core::library::Game;
 use sha2::{Digest, Sha256};
@@ -28,11 +32,13 @@ const READER_URL: &str = "https://github.com/Bertrram/omoio-portraits/releases/d
 const READER_SHA256: &str = "ad5ade731e957f509623aba4e9457b2dc66de81154d33164c13905b5edce820f";
 const READER: &str = "omoio-portraits.exe";
 
-/// The Wii U games whose pictures the reader at `READER_URL` knows (its
-/// README). A copy of a disc image is made only for one of these: for any
-/// other the minutes and gigabytes would come to nothing. SuperChargers
-/// joins them with the reader that reads it.
-const COPIES_FOR: [figures::Game; 2] = [figures::Game::SwapForce, figures::Game::TrapTeam];
+/// The games, on the consoles whose disc images need a copy, whose pictures
+/// the reader at `READER_URL` knows (its README). A copy of a disc image is
+/// made only for one of these: for any other the minutes and gigabytes would
+/// come to nothing. SuperChargers, Imaginators and Spyro's Adventure on the
+/// Wii join them with the reader that reads them.
+const COPIES_FOR: [(Console, figures::Game); 2] =
+    [(Console::WiiU, figures::Game::SwapForce), (Console::WiiU, figures::Game::TrapTeam)];
 
 /// Room left free on the drive on top of the copy, so it is never filled to
 /// the last byte.
@@ -53,8 +59,8 @@ const NOT_YET: &str = "Omoio can't read this game's pictures yet.";
 static RUNNING: Mutex<Option<Child>> = Mutex::new(None);
 /// Asks a copy being made to stop.
 static CANCEL: AtomicBool = AtomicBool::new(false);
-/// Whether the emulator is making a copy, so no game starts in it meanwhile.
-static COPYING: AtomicBool = AtomicBool::new(false);
+/// The emulator making a copy, by name, so no game starts in it meanwhile.
+static COPYING: Mutex<Option<&'static str>> = Mutex::new(None);
 
 fn data_dir(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(app.path().data_dir().map_err(|e| e.to_string())?.join("Omoio"))
@@ -197,7 +203,7 @@ pub enum Got {
 }
 
 fn copies_for(game: &Game) -> bool {
-    figures::game_from_title(&game.title).is_some_and(|which| COPIES_FOR.contains(&which))
+    figures::game_from_title(&game.title).is_some_and(|which| COPIES_FOR.contains(&(game.console, which)))
 }
 
 fn local_dir(app: &AppHandle) -> Result<PathBuf, String> {
@@ -232,10 +238,17 @@ fn most_free(app: &AppHandle, game: &Game) -> u64 {
 
 /// Has the emulator make a copy of the game Omoio can read, `need` bytes
 /// with room to spare, in the first place with room for it, and returns the
-/// folder it is in. The folder is Omoio's alone and goes again after reading.
-fn make_copy(app: &AppHandle, backend: &dyn EmulatorBackend, game: &Game, need: u64) -> Result<PathBuf, String> {
+/// folder it is in and the copy to read inside it. The folder is Omoio's
+/// alone and goes again after reading.
+fn make_copy(
+    app: &AppHandle,
+    backend: &'static dyn EmulatorBackend,
+    game: &Game,
+    need: u64,
+) -> Result<(PathBuf, PathBuf), String> {
     let playing = app.state::<crate::session::Session>().playing();
-    if playing.is_some_and(|playing| playing.console == game.console) {
+    let running = playing.and_then(|playing| crate::backends::for_console(playing.console));
+    if running.is_some_and(|running| running.name() == backend.name()) {
         return Err(format!("Close the game first. {} makes a copy of this one to read the pictures from.", backend.name()));
     }
     let places = copy_places(app, game);
@@ -246,21 +259,23 @@ fn make_copy(app: &AppHandle, backend: &dyn EmulatorBackend, game: &Game, need: 
             gigabytes(most_free(app, game))
         ));
     };
+    let copying = Copying::begin(backend.name(), || {
+        app.state::<crate::commands::InstallState>().is_installing(backend)
+    })?;
     let _ = std::fs::remove_dir_all(place);
     std::fs::create_dir_all(place).map_err(|_| "Couldn't make room for a copy of the game.".to_string())?;
     if let Ok(dir) = data_dir(app) {
         let _ = std::fs::write(dir.join(COPY_NOTE), place.to_string_lossy().as_bytes());
     }
     CANCEL.store(false, Ordering::Relaxed);
-    COPYING.store(true, Ordering::Relaxed);
     let progress = |percent: u32| {
         let progress = Progress { title_id: game.title_id.clone(), step: "copy", done: percent as usize, of: 100 };
         let _ = app.emit("figure-pictures", progress);
     };
-    let made = backend.make_copy(app, game, &place.join("game.wua"), &progress, &CANCEL);
-    COPYING.store(false, Ordering::Relaxed);
+    let made = backend.make_copy(app, game, place, &progress, &CANCEL);
+    drop(copying);
     match made {
-        Ok(()) => Ok(place.clone()),
+        Ok(copy) => Ok((place.clone(), copy)),
         Err(said) => {
             remove_copy(app, place);
             Err(said)
@@ -287,9 +302,33 @@ pub fn tidy(app: &AppHandle) {
     }
 }
 
-/// Whether the emulator is busy making a copy of a game.
-pub fn copying() -> bool {
-    COPYING.load(Ordering::Relaxed)
+/// The emulator busy making a copy of a game, by name.
+pub fn copying() -> Option<&'static str> {
+    *COPYING.lock().unwrap()
+}
+
+/// An emulator marked as making a copy until this is dropped.
+struct Copying;
+
+impl Copying {
+    /// Marks `emulator`, unless `installing` says it is being installed: its
+    /// copier would run from files being replaced. Marked before asking, as
+    /// an install marks itself before it asks about a copy
+    /// (`commands::install_dolphin`), so the two never both go ahead.
+    fn begin(emulator: &'static str, installing: impl FnOnce() -> bool) -> Result<Self, String> {
+        *COPYING.lock().unwrap() = Some(emulator);
+        if installing() {
+            *COPYING.lock().unwrap() = None;
+            return Err(format!("{emulator} is being updated. Try again when that is done."));
+        }
+        Ok(Self)
+    }
+}
+
+impl Drop for Copying {
+    fn drop(&mut self) {
+        *COPYING.lock().unwrap() = None;
+    }
 }
 
 /// Reads the figures' pictures out of the game and keeps them, in place of
@@ -311,8 +350,8 @@ pub async fn get(app: AppHandle, backend: &'static dyn EmulatorBackend, game: Ga
         if !copy {
             return Ok(Got::Copy { need, free: most_free(&app, &game) });
         }
-        let place = make_copy(&app, backend, &game, need)?;
-        let read = read(&app, &reader, &game, &place.join("game.wua"), &folder);
+        let (place, copy) = make_copy(&app, backend, &game, need)?;
+        let read = read(&app, &reader, &game, &copy, &folder);
         remove_copy(&app, &place);
         read.map(Got::Pictures)
     })
@@ -390,5 +429,19 @@ mod tests {
     #[test]
     fn the_fingerprint_is_sha256_in_hex() {
         assert_eq!(fingerprint(b"hello"), "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824");
+    }
+
+    #[test]
+    fn no_copy_is_made_while_its_emulator_is_installed() {
+        assert!(Copying::begin("Dolphin", || true).is_err());
+        assert_eq!(copying(), None, "a refused copy leaves no mark");
+        let copy = Copying::begin("Dolphin", || {
+            assert_eq!(copying(), Some("Dolphin"), "marked before the install is asked about");
+            false
+        })
+        .unwrap();
+        assert_eq!(copying(), Some("Dolphin"));
+        drop(copy);
+        assert_eq!(copying(), None);
     }
 }

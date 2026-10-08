@@ -507,14 +507,64 @@ fn mlc_folder(portable: &Path) -> PathBuf {
         .unwrap_or_else(|| portable.join("mlc01"))
 }
 
-/// The icon a game keeps beside its save, as the Wii U lays its storage out:
-/// usr/save, then the title id's two halves, then meta.
-fn save_icon(mlc: &Path, title_id: &str) -> Option<PathBuf> {
+/// A game's folder in the Wii U's storage, as the Wii U lays it out: usr/save,
+/// then the title id's two halves.
+fn title_save(mlc: &Path, title_id: &str) -> Option<PathBuf> {
     let id = title_id.to_ascii_lowercase();
     if id.len() != 16 || !id.chars().all(|c| c.is_ascii_hexdigit()) {
         return None;
     }
-    Some(mlc.join("usr").join("save").join(&id[..8]).join(&id[8..]).join("meta").join("iconTex.tga"))
+    Some(mlc.join("usr").join("save").join(&id[..8]).join(&id[8..]))
+}
+
+/// The icon a game keeps beside its save, in its folder's `meta`.
+fn save_icon(mlc: &Path, title_id: &str) -> Option<PathBuf> {
+    Some(title_save(mlc, title_id)?.join("meta").join("iconTex.tga"))
+}
+
+/// What a backup keeps a Wii U game's saves under: the accounts' folders,
+/// and what sits beside them in the game's own folder.
+const ACCOUNTS: &str = "user";
+const BESIDE: &str = "title";
+
+/// A game's saves, in its folder (see `title_save`): a folder for each Wii U
+/// account in `user`, 80000001 and on, with `common` beside them for every
+/// account's, and the game's `meta`. Each account's folder is a save of its
+/// own, so putting a backup back replaces only the accounts the backup
+/// holds, and an account that saved since keeps that save. `meta` and
+/// anything else beside `user` are kept as saves of their own too.
+fn save_folders_in(mlc: &Path, title_id: &str) -> Vec<super::SaveFolder> {
+    let Some(save) = title_save(mlc, title_id) else {
+        return Vec::new();
+    };
+    if !own_cemu::has_files(&save) {
+        return Vec::new();
+    }
+    let inside = |dir: &Path| -> Vec<PathBuf> {
+        let mut found: Vec<PathBuf> = std::fs::read_dir(dir)
+            .map(|entries| entries.flatten().map(|entry| entry.path()).collect())
+            .unwrap_or_default();
+        found.sort();
+        found
+    };
+    let is_accounts = |path: &PathBuf| path.file_name().is_some_and(|name| name.eq_ignore_ascii_case(ACCOUNTS));
+    let accounts = save.join(ACCOUNTS);
+    let beside: Vec<PathBuf> = inside(&save).into_iter().filter(|path| !is_accounts(path)).collect();
+    [(ACCOUNTS, inside(&accounts), accounts), (BESIDE, beside, save)]
+        .into_iter()
+        .filter(|(_, saves, _)| !saves.is_empty())
+        .map(|(kept_as, saves, path)| super::SaveFolder { kept_as: kept_as.to_string(), path, saves })
+        .collect()
+}
+
+/// The folder a backup's part kept under `kept_as` goes back into.
+fn save_folder_in(mlc: &Path, title_id: &str, kept_as: &str) -> Option<PathBuf> {
+    let save = title_save(mlc, title_id)?;
+    match kept_as {
+        ACCOUNTS => Some(save.join(ACCOUNTS)),
+        BESIDE => Some(save),
+        _ => None,
+    }
 }
 
 /// A game whose dump can't be read, such as a disc image, still gets its
@@ -821,15 +871,17 @@ impl super::EmulatorBackend for Cemu {
 
     fn features(&self) -> Features {
         // Starting games, the Skylanders portal through Cemu's own window,
-        // Cemu's settings for a game and its community's graphic packs.
-        // Nothing else is offered until it has been checked against Cemu the
-        // way RPCS3's was. Cemu reads the
+        // Cemu's settings for a game, its community's graphic packs and
+        // backups of a game's save, which sits where bringing saves over
+        // from the user's own Cemu found them. Nothing else is offered until
+        // it has been checked against Cemu the way RPCS3's was. Cemu reads the
         // pad whatever is in front, so Omoio keeps its input settings window
         // open while a menu is over the game, which stops that (`hush`).
         Features {
             portal: true,
             settings: true,
             packs: true,
+            saves: true,
             quiet_behind: true,
             ..Features::default()
         }
@@ -870,17 +922,18 @@ impl super::EmulatorBackend for Cemu {
         own_picture(&game.path).or_else(|| played_picture(app, game))
     }
 
-    fn prepare(&self, app: &AppHandle, game: &Game) {
+    fn prepare(&self, app: &AppHandle, game: &Game) -> Result<(), String> {
         let Ok(dir) = install_dir(app) else {
-            return;
+            return Ok(());
         };
         if !dir.join("Cemu.exe").is_file() {
-            return;
+            return Ok(());
         }
         let portable = dir.join("portable");
         let _ = write_first_settings(&portable);
         let _ = tune_settings(&portable.join("settings.xml"), is_skylanders(&game.title));
         packs::apply(app);
+        Ok(())
     }
 
     fn tidy_window(&self, pid: u32, _game: isize) {
@@ -909,14 +962,16 @@ impl super::EmulatorBackend for Cemu {
         into: &Path,
         progress: &dyn Fn(u32),
         cancel: &AtomicBool,
-    ) -> Result<(), String> {
+    ) -> Result<PathBuf, String> {
         let exe = exe_path(app)?;
         if !exe.is_file() {
             return Err("Install Cemu from the Emulators screen first.".to_string());
         }
         let portable = install_dir(app)?.join("portable");
         let _ = write_first_settings(&portable);
-        convert::make_wua(&exe, &portable.join("settings.xml"), &game.path, &game.title, into, progress, cancel)
+        let wua = into.join("game.wua");
+        convert::make_wua(&exe, &portable.join("settings.xml"), &game.path, &game.title, &wua, progress, cancel)?;
+        Ok(wua)
     }
 
     fn game_settings(&self, app: &AppHandle, game: &Game) -> Result<crate::core::game_settings::GameSettings, String> {
@@ -938,6 +993,20 @@ impl super::EmulatorBackend for Cemu {
     ) -> Result<(), String> {
         let title_id = title_id_for(app, game).ok_or(NOT_PLAYED_YET)?;
         game_profile::write(&install_dir(app)?, &title_id, &game.title, chosen)
+    }
+
+    /// A disc image's title id is known only once Cemu has run it, and a
+    /// game never run has saved nothing.
+    fn save_folders(&self, app: &AppHandle, game: &Game) -> Vec<super::SaveFolder> {
+        let (Some(title_id), Ok(install)) = (title_id_for(app, game), install_dir(app)) else {
+            return Vec::new();
+        };
+        save_folders_in(&mlc_folder(&install.join("portable")), &title_id)
+    }
+
+    fn save_folder(&self, app: &AppHandle, game: &Game, kept_as: &str) -> Option<PathBuf> {
+        let title_id = title_id_for(app, game)?;
+        save_folder_in(&mlc_folder(&install_dir(app).ok()?.join("portable")), &title_id, kept_as)
     }
 
     fn portal_figures(&self, pid: u32) -> Result<Vec<String>, String> {
@@ -1004,10 +1073,20 @@ impl super::EmulatorBackend for Cemu {
         controllers::write(app, title_id, players)
     }
 
-    fn tune_picture(&self, _app: &AppHandle, _display_height: u32, _graphics_memory: u64) -> Result<Option<u32>, String> {
-        // An error rather than "nothing to do": the app-wide "tuned" flag is
-        // only set on success, and setting it from here would stop RPCS3 from
-        // ever being sized for the machine.
+    /// Cemu's picture is left as Cemu sets it.
+    fn sizes_picture(&self) -> bool {
+        false
+    }
+
+    fn tune_picture(
+        &self,
+        _app: &AppHandle,
+        _display_width: u32,
+        _display_height: u32,
+        _graphics_memory: u64,
+    ) -> Result<Option<u32>, String> {
+        // Never asked (`sizes_picture`). An error rather than "nothing to
+        // do", so Cemu would never be noted as sized if it were.
         Err("Omoio does not size Cemu's picture.".to_string())
     }
 
@@ -1082,8 +1161,8 @@ impl super::EmulatorBackend for Cemu {
         Box::pin(packs::download(app, cancel))
     }
 
-    fn catalogue_source(&self) -> (&'static str, &'static str) {
-        ("Wii U results from the Cemu wiki", "https://wiki.cemu.info/")
+    fn catalogue_source(&self) -> Option<(&'static str, &'static str)> {
+        Some(("Wii U results from the Cemu wiki", "https://wiki.cemu.info/"))
     }
 }
 
@@ -1232,6 +1311,41 @@ Deluxe");
         std::fs::write(meta.join("iconTex.tga"), tga_file(8, 8)).unwrap();
         assert_eq!(png_size(&found().unwrap()), (8, 8));
         let _ = std::fs::remove_dir_all(&portable);
+    }
+
+    #[test]
+    fn a_games_saves_are_its_accounts_folders_under_the_title_ids_two_halves() {
+        let mlc = scratch("save-folder");
+        let high = mlc.join("usr/save/00050000");
+        let save = high.join("10140400");
+        std::fs::create_dir_all(save.join("user/80000001")).unwrap();
+        assert!(save_folders_in(&mlc, "0005000010140400").is_empty(), "no file in it yet");
+
+        std::fs::write(save.join("user/80000001/slot0.dat"), b"save").unwrap();
+        std::fs::create_dir_all(save.join("user/common")).unwrap();
+        std::fs::create_dir_all(save.join("meta")).unwrap();
+        std::fs::write(save.join("meta/iconTex.tga"), b"icon").unwrap();
+        std::fs::create_dir_all(high.join("10101e00/user")).unwrap();
+        std::fs::write(high.join("10101e00/user/other.dat"), b"another game's").unwrap();
+
+        let user = save.join("user");
+        assert_eq!(
+            save_folders_in(&mlc, "0005000010140400"),
+            [
+                super::super::SaveFolder {
+                    kept_as: "user".to_string(),
+                    path: user.clone(),
+                    saves: vec![user.join("80000001"), user.join("common")],
+                },
+                super::super::SaveFolder { kept_as: "title".to_string(), path: save.clone(), saves: vec![save.join("meta")] },
+            ]
+        );
+        assert!(save_folders_in(&mlc, "WUD87E51FD0F7F95").is_empty(), "a disc image's own id is no title id");
+        assert_eq!(save_folder_in(&mlc, "0005000010140400", "user"), Some(user));
+        assert_eq!(save_folder_in(&mlc, "0005000010140400", "title"), Some(save));
+        assert_eq!(save_folder_in(&mlc, "0005000010140400", "00050000"), None);
+        assert_eq!(save_folder_in(&mlc, "WUD87E51FD0F7F95", "user"), None);
+        let _ = std::fs::remove_dir_all(&mlc);
     }
 
     #[test]

@@ -13,14 +13,21 @@ pub enum Console {
     #[default]
     Ps3,
     WiiU,
+    Wii,
+    GameCube,
 }
 
 impl Console {
+    /// Every console Omoio runs, in the order they are named in a sentence.
+    pub const ALL: [Console; 4] = [Self::Ps3, Self::WiiU, Self::Wii, Self::GameCube];
+
     /// The short name people use, for messages like "It takes PS3 games".
     pub fn short(self) -> &'static str {
         match self {
             Self::Ps3 => "PS3",
             Self::WiiU => "Wii U",
+            Self::Wii => "Wii",
+            Self::GameCube => "GameCube",
         }
     }
 }
@@ -57,6 +64,8 @@ mod tests {
         assert_eq!(serde_json::to_string(&Console::Ps3).unwrap(), "\"ps3\"");
         assert_eq!(serde_json::to_string(&Console::WiiU).unwrap(), "\"wiiu\"");
         assert_eq!(serde_json::from_str::<Console>("\"wiiu\"").unwrap(), Console::WiiU);
+        assert_eq!(serde_json::to_string(&Console::Wii).unwrap(), "\"wii\"");
+        assert_eq!(serde_json::to_string(&Console::GameCube).unwrap(), "\"gamecube\"");
     }
 
     #[test]

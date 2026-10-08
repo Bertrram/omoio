@@ -140,18 +140,32 @@ impl Session {
         self.inner.lock().unwrap().take().map(|r| r.playing)
     }
 
-    /// Ends the game if one is running. Killing the process is how RPCS3 is
-    /// stopped from outside; it keeps nothing of ours that a clean exit would
-    /// save.
+    /// Ends the game if one is running. An emulator that writes out what it
+    /// holds only as it closes, as Dolphin does, is asked to close the way
+    /// its own Stop does, and killed only if it hasn't within a few seconds
+    /// (`backends::close`), which this waits for. Any other is killed at
+    /// once: that is how RPCS3 is stopped from outside, and it keeps nothing
+    /// of ours that a clean exit would save.
     pub fn stop(&self) -> bool {
         let Some(pid) = self.pid() else {
             return false;
         };
+        let backend = self.playing().and_then(|playing| crate::backends::for_console(playing.console));
         if let Some(running) = self.inner.lock().unwrap().as_mut() {
             running.stopped_by_us = true;
         }
-        kill(pid);
+        if !backend.is_some_and(|backend| crate::backends::close(backend, pid)) {
+            kill(pid);
+        }
         true
+    }
+
+    /// Whether `stop` would wait for the game's emulator to close, which
+    /// takes seconds, too long for the window's own thread.
+    pub fn stops_slowly(&self) -> bool {
+        self.playing()
+            .and_then(|playing| crate::backends::for_console(playing.console))
+            .is_some_and(|backend| backend.closes_when_asked())
     }
 }
 
