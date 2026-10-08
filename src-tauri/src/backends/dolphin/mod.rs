@@ -29,11 +29,11 @@ pub use install::install;
 use crate::core::community::{PackChange, Packs};
 use crate::core::console::{Console, Features};
 use crate::core::figures::{self, Character};
-use crate::core::library::Game;
+use crate::core::library::{Game, Library};
 use crate::core::pad_layout::{Pad, Player};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 
 pub struct Dolphin {
     console: Console,
@@ -106,6 +106,42 @@ fn library_id(found: &disc::Disc) -> String {
     } else {
         format!("{}D{}", found.game_id, found.disc_number + 1)
     }
+}
+
+/// The six characters a disc shares with the game's other discs, and its
+/// number, 1 for the first, from its library id (`library_id`).
+fn disc_of(title_id: &str) -> Option<(&str, u32)> {
+    let game = title_id.get(..6)?;
+    match &title_id[6..] {
+        "" => Some((game, 1)),
+        rest => Some((game, rest.strip_prefix('D')?.parse().ok()?)),
+    }
+}
+
+/// Every disc Dolphin is given for `game`: the one started, then the
+/// game's other discs in the library, each the one after the disc before
+/// and round to the first. Given more than one, Dolphin puts the next in
+/// by itself when the game asks for another disc
+/// (`DVDInterface::AutoChangeDisc`, Core/HW/DVD/DVDInterface.cpp, Dolphin
+/// 2609a); its main window, which could change one by hand, isn't shown.
+/// Another disc is one of the same console's with the same six characters,
+/// a disc image that is there. A game unpacked into a folder is given alone.
+fn discs<'a>(game: &'a Game, library: &'a [Game]) -> Vec<&'a Path> {
+    let mut all = vec![game.path.as_path()];
+    let Some((id, number)) = disc_of(&game.title_id).filter(|_| game.path.is_file()) else {
+        return all;
+    };
+    let mut others: Vec<(u32, &Path)> = library
+        .iter()
+        .filter(|other| other.console == game.console && other.path.is_file())
+        .filter_map(|other| {
+            let (other_id, other_number) = disc_of(&other.title_id)?;
+            (other_id == id && other_number != number).then_some((other_number, other.path.as_path()))
+        })
+        .collect();
+    others.sort_by_key(|&(other_number, _)| (other_number < number, other_number));
+    all.extend(others.into_iter().map(|(_, path)| path));
+    all
 }
 
 impl Dolphin {
@@ -350,9 +386,10 @@ impl super::EmulatorBackend for Dolphin {
     /// window is opened from, hidden the moment it shows. Every other game
     /// starts in batch mode, where Dolphin never shows its main window and
     /// closes once the game has (`--batch`, `MainWindow::OnStopComplete`,
-    /// DolphinQt). `--exec` names the game and `--user` the folder Dolphin
-    /// keeps everything in (UICommon/CommandLineParse.cpp); named outright,
-    /// no setting of another Dolphin's in the registry can send it elsewhere
+    /// DolphinQt). `--exec` names the game, once for each of its discs
+    /// (`discs`), and `--user` the folder Dolphin keeps everything in
+    /// (UICommon/CommandLineParse.cpp); named outright, no setting of
+    /// another Dolphin's in the registry can send it elsewhere
     /// (`UICommon::SetUserDirectory`).
     fn launch(&self, app: &AppHandle, game: &Game) -> Result<u32, String> {
         let exe = install::exe_path(app)?;
@@ -370,7 +407,23 @@ impl super::EmulatorBackend for Dolphin {
         } else {
             command.arg("--batch");
         }
-        let child = command.arg("--exec").arg(&game.path).spawn().map_err(|e| e.to_string())?;
+        let library = app
+            .path()
+            .data_dir()
+            .map(|dir| Library::load(&dir.join("Omoio").join("library.json")))
+            .unwrap_or_default();
+        let discs = discs(game, library.games());
+        if discs.len() > 1 {
+            // Dolphin changes discs by itself only when this is on, and it
+            // is off as it ships (`MAIN_AUTO_DISC_CHANGE`,
+            // Core/Config/MainSettings.cpp). Set here, it holds for this
+            // game alone and is never saved (`CommandLineConfigLayerLoader`).
+            command.arg("--config").arg("Dolphin.Core.AutoDiscChange=True");
+        }
+        for disc in discs {
+            command.arg("--exec").arg(disc);
+        }
+        let child = command.spawn().map_err(|e| e.to_string())?;
         let pid = child.id();
         if portal {
             portal::prepare(pid);
@@ -449,5 +502,58 @@ impl super::EmulatorBackend for Dolphin {
 
     fn set_community_pack(&self, app: &AppHandle, game: &Game, change: &PackChange) -> Result<(), String> {
         packs::set(app, &game.title_id, revision(game), change)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_disc_is_known_by_its_game_and_number() {
+        assert_eq!(disc_of("GLMP01"), Some(("GLMP01", 1)));
+        assert_eq!(disc_of("GLMP01D2"), Some(("GLMP01", 2)));
+        assert_eq!(disc_of("GLMP0"), None);
+        assert_eq!(disc_of("GLMP01X2"), None);
+    }
+
+    #[test]
+    fn every_disc_of_a_game_goes_to_dolphin_the_one_started_first() {
+        let dir = std::env::temp_dir().join(format!("omoio-dolphin-discs-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let entry = |console, title_id: &str, file: &str| {
+            let path = if file.is_empty() { PathBuf::new() } else { dir.join(file) };
+            if !file.is_empty() {
+                std::fs::write(&path, b"").unwrap();
+            }
+            Game {
+                console,
+                title_id: title_id.to_string(),
+                title: String::new(),
+                version: None,
+                update_version: None,
+                path,
+                size_bytes: 0,
+            }
+        };
+        let library = vec![
+            entry(Console::GameCube, "GLMP01", "first.iso"),
+            entry(Console::GameCube, "GLMP01D2", "second.iso"),
+            entry(Console::GameCube, "GLMP01D3", "third.iso"),
+            entry(Console::GameCube, "GALE01", "another.iso"),
+            entry(Console::Wii, "GLMP01D4", "wii.iso"),
+            entry(Console::GameCube, "GLMP01D5", ""),
+        ];
+        let names = |started: usize| -> Vec<String> {
+            discs(&library[started], &library)
+                .iter()
+                .map(|path| path.file_name().unwrap().to_string_lossy().into_owned())
+                .collect()
+        };
+        assert_eq!(names(0), ["first.iso", "second.iso", "third.iso"]);
+        assert_eq!(names(1), ["second.iso", "third.iso", "first.iso"]);
+        assert_eq!(names(2), ["third.iso", "first.iso", "second.iso"]);
+        assert_eq!(names(3), ["another.iso"], "a game of one disc");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
