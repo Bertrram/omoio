@@ -81,14 +81,17 @@ pub fn game_from_title(title: &str) -> Option<Game> {
 /// SuperChargers and Imaginators on the Wii U, where each comes first. Their
 /// PS3 versions follow once they have been played there; Imaginators' once
 /// it is known whether the PS3 game checks its figures' signature too, since
-/// RPCS3 has no patch that takes that check away. On the Wii, Spyro's
-/// Adventure comes first, through Dolphin; the Wii's other Skylanders games
-/// follow once each has been played there.
+/// RPCS3 has no patch that takes that check away. Spyro's Adventure on the
+/// PS3 has it too, though in one test on 7 October 2026 a figure made new
+/// there, Voodood, left the game on the portal screen. That was never
+/// settled, and the menu is offered so players can say how it goes. On the
+/// Wii, Spyro's Adventure comes first, through Dolphin; the Wii's other
+/// Skylanders games follow once each has been played there.
 pub fn has_portal_menu(console: Console, title: &str) -> bool {
     is_skylanders(title)
         && matches!(
             (console, game_from_title(title)),
-            (Console::Ps3, Some(Game::Giants | Game::SwapForce | Game::TrapTeam))
+            (Console::Ps3, Some(Game::Spyro | Game::Giants | Game::SwapForce | Game::TrapTeam))
                 | (Console::WiiU, Some(Game::SwapForce | Game::TrapTeam | Game::SuperChargers | Game::Imaginators))
                 | (Console::Wii, Some(Game::Spyro))
         )
@@ -781,6 +784,7 @@ mod tests {
 
     #[test]
     fn the_portal_menu_works_in_the_games_played_with_on_each_console() {
+        assert!(has_portal_menu(Console::Ps3, "Skylanders: Spyro's Adventure"));
         assert!(has_portal_menu(Console::Ps3, "Skylanders Giants™"));
         assert!(has_portal_menu(Console::Ps3, "Skylanders SWAP Force"));
         assert!(has_portal_menu(Console::Ps3, "Skylanders Trap Team"));
@@ -799,10 +803,9 @@ mod tests {
 
     #[test]
     fn the_other_skylanders_games_have_no_portal_menu_yet() {
-        // Spyro's Adventure is next, on the PS3. Its Wii U release was sold
-        // in Japan only. SuperChargers and Imaginators have it on the Wii U
-        // only so far, and the Wii's later games wait for a play there.
-        assert!(!has_portal_menu(Console::Ps3, "Skylanders: Spyro's Adventure"));
+        // Spyro's Adventure's Wii U release was sold in Japan only.
+        // SuperChargers and Imaginators have it on the Wii U only so far, and
+        // the Wii's later games wait for a play there.
         assert!(!has_portal_menu(Console::WiiU, "Skylanders Spyro's Adventure"));
         assert!(!has_portal_menu(Console::Wii, "Skylanders Giants"));
         assert!(!has_portal_menu(Console::Ps3, "Skylanders SuperChargers"));
@@ -826,7 +829,7 @@ mod tests {
         assert!(offers_portal_menu(portal, Console::Ps3, "Skylanders Giants"));
         assert!(offers_portal_menu(portal, Console::WiiU, "Skylanders SWAP Force"));
         assert!(!offers_portal_menu(none, Console::Ps3, "Skylanders Giants"));
-        assert!(!offers_portal_menu(portal, Console::Ps3, "Skylanders: Spyro's Adventure"));
+        assert!(!offers_portal_menu(portal, Console::Ps3, "Skylanders SuperChargers"));
         assert!(!offers_portal_menu(portal, Console::WiiU, "Mario Kart 8"));
     }
 
