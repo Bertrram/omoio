@@ -350,6 +350,7 @@ fn entry(app: &AppHandle, game: crate::core::library::Game) -> GameEntry {
         cover_source,
         features,
         portal_menu: crate::core::figures::offers_portal_menu(features, game.console, &game.title),
+        portal_note: crate::core::figures::portal_menu_note(game.console, &game.title),
         game,
     }
 }

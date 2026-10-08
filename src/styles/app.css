@@ -1120,6 +1120,10 @@ img.cover-behind {
 .badge.warn {
   color: var(--warn);
 }
+/* A Skylanders game in the catalogue whose portal menu works in Omoio. */
+.badge.go {
+  color: var(--go);
+}
 /* Top right, so it never meets the Not set up and Offline badge. */
 .console-tag {
   position: absolute;

@@ -92,6 +92,9 @@ export interface Game {
   /// Whether the portal menu works in this game. Omoio's own rule, so the
   /// interface never guesses it from the title.
   portal_menu: boolean;
+  /// For a Skylanders game the menu doesn't work in: "The portal menu
+  /// doesn't work in this version yet. It works in the Wii U version."
+  portal_note: string | null;
 }
 
 export function listGames(): Promise<Game[]> {
@@ -102,15 +105,22 @@ export function importGame(path: string): Promise<Game> {
   return invoke("import_game", { path });
 }
 
-/// What to tell someone before a game that may not run well is imported.
+/// What to tell someone before a game that may not run well, or a Skylanders
+/// game the portal menu doesn't work in, is imported.
 export interface ImportWarning {
   title: string;
   console: Console;
   console_name: string;
-  /// "RPCS3 rates it Ingame: it starts, but you may hit problems before the end."
+  /// "Omoio's portal menu doesn't work in Skylanders SuperChargers on the
+  /// PS3, so you can't put figures on the portal." Said first. Empty when
+  /// the menu works or the game has no portal.
+  portal: string;
+  /// "RPCS3 rates it Ingame: it starts, but you may hit problems before the
+  /// end." Empty when only the portal is warned about.
   rating: string;
-  /// "The Wii U version is rated Playable in Cemu." Empty when no other
-  /// console has a version that plays well.
+  /// "The Wii U version is rated Playable in Cemu.", or with a portal
+  /// warning "The portal menu works in the Wii U version." Empty when there
+  /// is no such version.
   better: string;
 }
 
@@ -640,6 +650,11 @@ export interface Listing {
   demo: boolean;
   owned: boolean;
   features: Game["features"];
+  /// For a Skylanders game, whether Omoio's portal menu works in it. Null
+  /// for any other game.
+  portal_menu: boolean | null;
+  /// For a Skylanders game the menu doesn't work in, where it does.
+  portal_note: string | null;
 }
 
 export interface CatalogueFilter {

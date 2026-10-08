@@ -5,10 +5,14 @@
 //! Omoio keeps, so nothing here waits on the network, along with Omoio's own
 //! short list of games it has been played with (`tested`). A game nobody has
 //! rated gets no warning: there is nothing true to say about it.
+//!
+//! A Skylanders game the portal menu doesn't work in is warned about
+//! whatever its rating: without figures on the portal it can't really be
+//! played.
 
 use crate::core::catalogue::{fold, same_game, tone_rank, Entry, Status};
 use crate::core::console::Console;
-use crate::core::figures::has_portal_menu;
+use crate::core::figures::{self, has_portal_menu, portal_menu_elsewhere, versions};
 use crate::core::library::Game;
 use crate::core::tested::tested;
 use serde::Serialize;
@@ -127,24 +131,78 @@ fn portal_note(console: Console, title: &str) -> &'static str {
     }
 }
 
-/// What to tell someone about to import a game that may not run well.
+/// What to tell someone about to import a game that may not run well, or a
+/// Skylanders game the portal menu doesn't work in.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Warning {
     pub title: String,
     pub console: Console,
     pub console_name: &'static str,
-    /// "RPCS3 rates it Ingame: it starts, but you may hit problems before the end."
+    /// "Omoio's portal menu doesn't work in Skylanders SuperChargers on the
+    /// PS3, so you can't put figures on the portal." Said first. Empty for a
+    /// game the menu works in, or one with no portal.
+    pub portal: String,
+    /// "RPCS3 rates it Ingame: it starts, but you may hit problems before the
+    /// end." Empty when it plays well, has been played in Omoio, or nobody
+    /// has rated it, which only a portal warning leaves.
     pub rating: String,
     /// "The Wii U version is rated Playable in Cemu.", or "The Wii U version
-    /// runs well in Omoio." for one on the tested list. Empty when no other
-    /// console has a version that plays well.
+    /// runs well in Omoio." for one on the tested list. With a portal
+    /// warning, where the menu works instead: "The portal menu works in the
+    /// Wii U version." Empty when there is no such version.
     pub better: String,
 }
 
-/// The warning for a game whose own emulator rates it below playing well,
-/// or `None` when it plays well, has been played in Omoio, or nobody has
-/// rated it.
+/// The warning for a Skylanders game the portal menu doesn't work in, or
+/// for a game whose own emulator rates it below playing well. `None` when
+/// neither: it plays well, has been played in Omoio, or nobody has rated it.
 pub fn warning(game: &Imported, lists: &[List]) -> Option<Warning> {
+    let portal = portal_warning(game);
+    let rated = rated(game, lists);
+    if portal.is_none() && rated.is_none() {
+        return None;
+    }
+    let (rating, better) = rated.unwrap_or_default();
+    // Where the menu works is the version to point to. One the lists rate
+    // well may have no menu at all.
+    let (portal, better) = match portal {
+        Some((portal, works)) => (portal, works),
+        None => (String::new(), better),
+    };
+    Some(Warning {
+        title: game.title.clone(),
+        console: game.console,
+        console_name: game.console.short(),
+        portal,
+        rating,
+        better,
+    })
+}
+
+/// Why a Skylanders game can't be played in Omoio on this console, and
+/// where it can.
+fn portal_warning(game: &Imported) -> Option<(String, String)> {
+    let elsewhere = portal_menu_elsewhere(game.console, &game.title)?;
+    let name = figures::game_from_title(&game.title).map_or("this game", figures::Game::name);
+    Some(if elsewhere.is_empty() {
+        (
+            format!("Omoio's portal menu doesn't work in {name} on any console yet, so you can't put figures on the portal."),
+            String::new(),
+        )
+    } else {
+        (
+            format!(
+                "Omoio's portal menu doesn't work in {name} on the {}, so you can't put figures on the portal.",
+                game.console.short()
+            ),
+            format!("The portal menu works in {}.", versions(&elsewhere)),
+        )
+    })
+}
+
+/// What the game's own list says, when it rates the game below playing
+/// well, and the version elsewhere that plays well.
+fn rated(game: &Imported, lists: &[List]) -> Option<(String, String)> {
     if tested(game.console, &game.title).is_some() {
         return None;
     }
@@ -192,13 +250,7 @@ pub fn warning(game: &Imported, lists: &[List]) -> Option<Warning> {
         })
         .unwrap_or_default();
 
-    Some(Warning {
-        title: game.title.clone(),
-        console: game.console,
-        console_name: game.console.short(),
-        rating,
-        better,
-    })
+    Some((rating, better))
 }
 
 #[cfg(test)]
@@ -287,16 +339,83 @@ mod tests {
         Imported { console: Console::Ps3, title_id: title_id.into(), title: title.into() }
     }
 
+    /// SuperChargers on the PS3 is the one people will try: RPCS3 rates it
+    /// no worse than the others, but the portal menu doesn't work in it.
     #[test]
-    fn a_game_with_a_better_version_elsewhere_is_told_about_it() {
+    fn a_skylanders_game_without_the_portal_menu_says_so_first() {
         let superchargers = warning(&ps3_game("BLUS31545", "Skylanders SuperChargers™"), &lists()).unwrap();
         assert_eq!(superchargers.title, "Skylanders SuperChargers™");
         assert_eq!(superchargers.console_name, "PS3");
-        assert_eq!(superchargers.rating, "RPCS3 rates it Ingame: it starts, but you may hit problems before the end.");
         assert_eq!(
-            superchargers.better,
-            "The Wii U version is rated Perfect in Cemu, and the portal menu works in it."
+            superchargers.portal,
+            "Omoio's portal menu doesn't work in Skylanders SuperChargers on the PS3, so you can't put figures on the portal."
         );
+        assert_eq!(superchargers.rating, "RPCS3 rates it Ingame: it starts, but you may hit problems before the end.");
+        assert_eq!(superchargers.better, "The portal menu works in the Wii U version.");
+    }
+
+    #[test]
+    fn a_skylanders_game_without_the_portal_menu_is_warned_whatever_its_rating() {
+        // Rated well, or not rated at all, it still can't take figures.
+        let mut lists = lists();
+        lists.push(List::new(
+            Console::Wii,
+            "Dolphin",
+            vec![Entry { regions: vec!["EU"], ..entry(Console::Wii, "SKYP52", "Skylanders: Giants", "Perfect") }],
+        ));
+        let wii_giants = Imported { console: Console::Wii, title_id: "SKYP52".into(), title: "Skylanders Giants".into() };
+        let giants = warning(&wii_giants, &lists).unwrap();
+        assert_eq!(
+            giants.portal,
+            "Omoio's portal menu doesn't work in Skylanders Giants on the Wii, so you can't put figures on the portal."
+        );
+        assert_eq!(giants.rating, "", "Dolphin rates it Perfect");
+        assert_eq!(giants.better, "The portal menu works in the PS3 version.");
+
+        let imaginators = warning(&ps3_game("BLES02240", "Skylanders Imaginators"), &[]).unwrap();
+        assert_eq!(imaginators.rating, "", "no lists yet");
+        assert_eq!(imaginators.better, "The portal menu works in the Wii U version.");
+    }
+
+    #[test]
+    fn every_version_with_the_portal_menu_is_named() {
+        let wii = |title: &str| Imported { console: Console::Wii, title_id: "SVXP52".into(), title: title.into() };
+        let swap_force = warning(&wii("Skylanders SWAP Force"), &[]).unwrap();
+        assert_eq!(swap_force.better, "The portal menu works in the PS3 and Wii U versions.");
+        let trap_team = warning(&wii("Skylanders Trap Team"), &[]).unwrap();
+        assert_eq!(trap_team.better, "The portal menu works in the PS3 and Wii U versions.");
+
+        // Spyro's Adventure came out on the Wii U in Japan; the menu works in
+        // the PS3's and the Wii's, and Cemu's Perfect isn't offered instead.
+        let spyro = warning(&wii_u_game("Skylanders: Spyro's Adventure"), &lists()).unwrap();
+        assert_eq!(
+            spyro.portal,
+            "Omoio's portal menu doesn't work in Skylanders Spyro's Adventure on the Wii U, so you can't put figures on the portal."
+        );
+        assert_eq!(spyro.better, "The portal menu works in the PS3 and Wii versions.");
+    }
+
+    #[test]
+    fn a_skylanders_game_omoio_cant_tell_has_the_menu_nowhere_yet() {
+        let other = warning(&ps3_game("BLUS99998", "Skylanders Battlecast"), &[]).unwrap();
+        assert_eq!(
+            other.portal,
+            "Omoio's portal menu doesn't work in this game on any console yet, so you can't put figures on the portal."
+        );
+        assert_eq!(other.better, "");
+    }
+
+    #[test]
+    fn a_skylanders_game_with_the_portal_menu_gets_no_portal_warning() {
+        assert_eq!(warning(&ps3_game("BLES02055", "Skylanders Trap Team"), &lists()), None);
+        assert_eq!(warning(&wii_u_game("Skylanders SuperChargers"), &lists()), None);
+        assert_eq!(warning(&wii_u_game("Skylanders Imaginators"), &[]), None);
+        assert_eq!(warning(&ps3_game("BLES01689", "Skylanders Giants"), &[]), None);
+        // Spyro's Adventure on the PS3 has the menu, and is warned of its
+        // rating alone.
+        let spyro = warning(&ps3_game("BLES01272", "Skylanders Spyro's Adventure"), &lists()).unwrap();
+        assert_eq!(spyro.portal, "");
+        assert!(spyro.rating.starts_with("RPCS3 rates it Ingame"));
     }
 
     #[test]
@@ -321,6 +440,7 @@ mod tests {
     fn a_wii_u_game_is_found_by_its_name() {
         let warning = warning(&wii_u_game("Batman Arkham Origins"), &lists()).unwrap();
         assert_eq!(warning.console_name, "Wii U");
+        assert_eq!(warning.portal, "", "not a Skylanders game");
         assert_eq!(
             warning.rating,
             "Cemu rates it Runs: it gets into the game, but major glitches make it hard to finish."
@@ -390,10 +510,7 @@ mod tests {
     fn a_release_the_list_lacks_is_rated_like_the_rest_of_its_game() {
         let warning = warning(&ps3_game("BLUS31600", "Skylanders Imaginators"), &lists()).unwrap();
         assert!(warning.rating.starts_with("RPCS3 rates it Ingame"));
-        assert_eq!(
-            warning.better,
-            "The Wii U version is rated Perfect in Cemu, and the portal menu works in it."
-        );
+        assert_eq!(warning.better, "The portal menu works in the Wii U version.");
     }
 
     #[test]

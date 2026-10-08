@@ -100,6 +100,7 @@ function fill(body: HTMLElement, hero: HTMLElement, game: Game): void {
       <button class="link-btn gone" id="detail-compat-get"></button>
     </div>
     <div class="note plain gone" id="detail-wii-moves"></div>
+    <div class="note plain gone" id="detail-no-portal"></div>
     <div class="gone" id="detail-portal">
       <div class="d-group-h">
         <span class="sec-h">Skylanders</span>
@@ -209,9 +210,16 @@ function fill(body: HTMLElement, hero: HTMLElement, game: Game): void {
     }
   };
 
+  // A Skylanders game the menu doesn't work in says so, and which version
+  // it works in, since without figures on the portal it can't be played.
+  if (game.portal_note) {
+    const noPortal = body.querySelector<HTMLElement>("#detail-no-portal")!;
+    noPortal.textContent = game.portal_note;
+    noPortal.classList.remove("gone");
+  }
+
   // The button that opens the portal menu over a Skylanders game, shown only
-  // for a game the menu works in. Other Skylanders games show nothing rather
-  // than a menu that won't open.
+  // for a game the menu works in.
   if (game.portal_menu && game.set_up) {
     body.querySelector("#detail-portal")!.classList.remove("gone");
     const keyRow = body.querySelector<HTMLButtonElement>("#detail-portal-button")!;
@@ -503,6 +511,7 @@ function fillListing(body: HTMLElement, hero: HTMLElement, { listing }: Catalogu
       <div class="sec-h">How well it runs</div>
       <div class="compat"><span class="status" id="listing-compat"></span></div>
       <div class="note plain" id="listing-compat-note"></div>
+      <div class="note plain gone" id="listing-no-portal"></div>
     </div>
     <div class="sec gone" id="listing-updates-sec">
       <div class="sec-h">Official updates</div>
@@ -561,6 +570,11 @@ function fillListing(body: HTMLElement, hero: HTMLElement, { listing }: Catalogu
   badge.textContent = listing.status.label || "No result";
   badge.className = `status ${listing.status.tone || "mute"}`;
   compatNote.textContent = listing.status.explanation || "Nobody has reported on this game yet.";
+  if (listing.portal_note) {
+    const noPortal = body.querySelector<HTMLElement>("#listing-no-portal")!;
+    noPortal.textContent = listing.portal_note;
+    noPortal.classList.remove("gone");
+  }
   // Some lists also say when a release's result was last reported.
   if (release && listing.features.compatibility) {
     void gameCompatibility(release.title_id).then((compat) => {

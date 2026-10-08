@@ -131,17 +131,23 @@ function sheet(dropped?: string[]): void {
   }
 
   /// One game's warning, filled in by text so a game's own name never goes
-  /// through innerHTML.
+  /// through innerHTML. A Skylanders game the portal menu doesn't work in
+  /// says that first, then how its emulator rates it, if that is said.
   function warningItem(warning: ImportWarning): HTMLElement {
     const item = document.createElement("li");
     item.className = "warn-item";
     item.innerHTML = `
       <div class="warn-item-h"><span class="warn-item-name"></span><span class="warn-item-console"></span></div>
-      <div class="warn-item-p"></div>
     `;
     item.querySelector<HTMLElement>(".warn-item-name")!.textContent = warning.title;
     item.querySelector<HTMLElement>(".warn-item-console")!.textContent = warning.console_name;
-    item.querySelector<HTMLElement>(".warn-item-p")!.textContent = warning.rating;
+    for (const said of [warning.portal, warning.rating]) {
+      if (!said) continue;
+      const line = document.createElement("div");
+      line.className = "warn-item-p";
+      line.textContent = said;
+      item.appendChild(line);
+    }
     if (warning.better) {
       const better = document.createElement("div");
       better.className = "warn-item-better";
@@ -151,27 +157,38 @@ function sheet(dropped?: string[]): void {
     return item;
   }
 
-  /// Asks before a game that may not run well is imported. True for Import
-  /// anyway; Cancel, Escape and a click outside the sheet are all false.
+  /// Asks before a game that may not run well, or a Skylanders game the
+  /// portal menu doesn't work in, is imported. True for Import anyway;
+  /// Cancel, Escape and a click outside the sheet are all false.
   function confirmWarning(warning: ImportWarning): Promise<boolean> {
     busy = false;
     sheet.setAttribute("role", "alertdialog");
     sheet.setAttribute("aria-labelledby", "warn-title");
-    sheet.setAttribute("aria-describedby", "warn-rating");
+    sheet.setAttribute("aria-describedby", "warn-said");
     sheet.innerHTML = `
-      <div class="warn-kicker">May not run well</div>
+      <div class="warn-kicker"></div>
       <div class="sheet-h" id="warn-title"></div>
       <div class="warn-console"></div>
-      <div class="sheet-p warn-rating" id="warn-rating"></div>
+      <div id="warn-said"></div>
       ${warning.better ? `<div class="warn-better"></div>` : ""}
       <div class="sheet-actions">
         <button class="btn ghost" id="warn-cancel">Cancel</button>
         <button class="btn solid" id="warn-import">Import anyway</button>
       </div>
     `;
+    sheet.querySelector<HTMLElement>(".warn-kicker")!.textContent = warning.portal
+      ? "Not supported in Omoio yet"
+      : "May not run well";
     sheet.querySelector<HTMLElement>("#warn-title")!.textContent = warning.title;
     sheet.querySelector<HTMLElement>(".warn-console")!.textContent = warning.console_name;
-    sheet.querySelector<HTMLElement>("#warn-rating")!.textContent = warning.rating;
+    const said = sheet.querySelector<HTMLElement>("#warn-said")!;
+    for (const words of [warning.portal, warning.rating]) {
+      if (!words) continue;
+      const line = document.createElement("div");
+      line.className = "sheet-p warn-rating";
+      line.textContent = words;
+      said.appendChild(line);
+    }
     const better = sheet.querySelector<HTMLElement>(".warn-better");
     if (better) better.textContent = warning.better;
 
@@ -204,13 +221,16 @@ function sheet(dropped?: string[]): void {
     sheet.innerHTML = `
       <div class="sheet-h"></div>
       ${lines.length > 0 ? `<div class="sheet-p"></div>` : ""}
-      <div class="sec-h warn-list-h">May not run well</div>
+      <div class="sec-h warn-list-h"></div>
       <ul class="warn-list"></ul>
       <div class="sheet-actions">
         <button class="btn solid" id="warn-done">Done</button>
       </div>
     `;
     sheet.querySelector<HTMLElement>(".sheet-h")!.textContent = heading;
+    sheet.querySelector<HTMLElement>(".warn-list-h")!.textContent = warnings.every((warning) => warning.portal)
+      ? "Not supported in Omoio yet"
+      : "May not run well";
     const said = sheet.querySelector<HTMLElement>(".sheet-p");
     if (said) said.textContent = lines.join(" ");
     const list = sheet.querySelector<HTMLElement>(".warn-list")!;

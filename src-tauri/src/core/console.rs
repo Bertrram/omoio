@@ -18,6 +18,9 @@ pub enum Console {
 }
 
 impl Console {
+    /// Every console Omoio runs, in the order they are named in a sentence.
+    pub const ALL: [Console; 4] = [Self::Ps3, Self::WiiU, Self::Wii, Self::GameCube];
+
     /// The short name people use, for messages like "It takes PS3 games".
     pub fn short(self) -> &'static str {
         match self {

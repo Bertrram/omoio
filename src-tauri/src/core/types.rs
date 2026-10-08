@@ -57,6 +57,10 @@ pub struct GameEntry {
     /// portal is not enough: the menu has been played through with three
     /// games only, so the interface asks this rather than the title.
     pub portal_menu: bool,
+    /// For a Skylanders game the menu doesn't work in, the line its page
+    /// shows: "The portal menu doesn't work in this version yet. It works in
+    /// the Wii U version."
+    pub portal_note: Option<String>,
 }
 
 #[derive(Clone, Serialize)]
