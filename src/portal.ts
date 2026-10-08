@@ -246,6 +246,10 @@ const CASINGS: Record<Casing, string> = {
 /// the card of the one picked.
 const SHELF = 4;
 
+/// Tabs the game has a badge of its own for, once Omoio has read it:
+/// Imaginators' for a Sensei, and for an Imaginator, a crystal lantern.
+const TAB_BADGES: Partial<Record<keyof typeof MARKS, string>> = { sensei: "class-sensei", crystal: "class-imaginator" };
+
 /// The kinds the games' checklists mark apart, with their names, where they
 /// sort in an element, and Omoio's own mark where it has one: Imaginators'
 /// Senseis first, with a belt, and the villains among them with horns, then
@@ -1183,7 +1187,12 @@ function renderTabs(): HTMLElement {
       if (own) button.appendChild(own);
       else button.insertAdjacentHTML("beforeend", `<svg class="portal-tab-mark tint-${each.element}" viewBox="0 0 24 24" aria-hidden="true">${MARKS[each.element]}</svg>`);
     } else if (each.icon) button.appendChild(icon(each.icon));
-    else if (each.mark) button.insertAdjacentHTML("beforeend", `<svg class="portal-tab-mark ${each.mark}" viewBox="0 0 24 24" aria-hidden="true">${MARKS[each.mark]}</svg>`);
+    else if (each.mark) {
+      const badge = TAB_BADGES[each.mark];
+      const own = badge ? fileOf(badge) : null;
+      if (own) button.appendChild(image(own)).className = "portal-tab-badge";
+      else button.insertAdjacentHTML("beforeend", `<svg class="portal-tab-mark ${each.mark}" viewBox="0 0 24 24" aria-hidden="true">${MARKS[each.mark]}</svg>`);
+    }
     button.append(each.label);
     button.onclick = () => showTab(index);
     bar.appendChild(button);

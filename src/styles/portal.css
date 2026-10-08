@@ -1497,6 +1497,14 @@ body {
   color: var(--ink);
 }
 
+/* The game's own badge for a tab, as it draws it. */
+.portal-tab-badge {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+}
+
 /* A battle class with its symbol, in the text's colour: classes have no
    colour of their own in the game. */
 .portal-battle {
@@ -1738,8 +1746,8 @@ body {
 }
 
 .portal-dojo-class-head .portal-battle-shape {
-  width: 22px;
-  height: 22px;
+  width: 30px;
+  height: 30px;
 }
 
 .portal-sensei {
