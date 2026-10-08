@@ -2,17 +2,28 @@
 //!
 //! RPCS3 names a build like `0.0.42-19985-6ba56a52`: the build number is what
 //! orders them, and the commit hash after it says nothing about order. Cemu
-//! tags a release like `v2.6`. Both are read as numbers piece by piece, up to
-//! the first piece that is not a number.
+//! tags a release like `v2.6`. Dolphin names a release by its year and month,
+//! `2609`, and a fix to it with a letter after, `2609a`
+//! (dl.dolphin-emu.org/releases/2609a/). All are read as numbers piece by
+//! piece, up to the first piece that is not a number, a release's letter
+//! counting as one more number after it.
 
 fn numbers(version: &str) -> Vec<u64> {
     let version = version.trim();
-    version
-        .strip_prefix('v')
-        .unwrap_or(version)
-        .split(['.', '-'])
-        .map_while(|piece| piece.parse().ok())
-        .collect()
+    let mut found = Vec::new();
+    for piece in version.strip_prefix('v').unwrap_or(version).split(['.', '-']) {
+        if let Ok(number) = piece.parse() {
+            found.push(number);
+            continue;
+        }
+        let digits = piece.trim_end_matches(|c: char| c.is_ascii_lowercase());
+        let letters = &piece[digits.len()..];
+        match (digits.parse(), letters.as_bytes()) {
+            (Ok(number), [letter]) => found.extend([number, u64::from(letter - b'a') + 1]),
+            _ => break,
+        }
+    }
+    found
 }
 
 /// Whether `newest` is a later release than `installed`.
@@ -48,6 +59,16 @@ mod tests {
         assert!(is_newer_release("2.10", "2.9"), "not as decimals");
         assert!(!is_newer_release("2.6", "2.6"));
         assert!(!is_newer_release("v2.6", "2.6"));
+    }
+
+    #[test]
+    fn dolphin_releases_and_their_fixes_come_in_order() {
+        assert!(is_newer_release("2609a", "2609"), "a fix comes after its release");
+        assert!(is_newer_release("2609b", "2609a"));
+        assert!(is_newer_release("2609", "2606a"));
+        assert!(!is_newer_release("2609a", "2609a"));
+        assert!(!is_newer_release("2609", "2609a"));
+        assert!(!is_newer_release("2606a", "2609"));
     }
 
     #[test]

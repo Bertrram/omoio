@@ -526,6 +526,7 @@ impl super::EmulatorBackend for Rpcs3 {
     fn tune_picture(
         &self,
         app: &AppHandle,
+        _display_width: u32,
         display_height: u32,
         graphics_memory: u64,
     ) -> Result<Option<u32>, String> {
@@ -556,8 +557,8 @@ impl super::EmulatorBackend for Rpcs3 {
         Box::pin(compat::refresh(app, cancel))
     }
 
-    fn catalogue_source(&self) -> (&'static str, &'static str) {
-        ("PS3 results from RPCS3", "https://rpcs3.net/compatibility")
+    fn catalogue_source(&self) -> Option<(&'static str, &'static str)> {
+        Some(("PS3 results from RPCS3", "https://rpcs3.net/compatibility"))
     }
 
     fn apply_fixes(

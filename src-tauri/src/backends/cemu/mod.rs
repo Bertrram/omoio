@@ -909,14 +909,16 @@ impl super::EmulatorBackend for Cemu {
         into: &Path,
         progress: &dyn Fn(u32),
         cancel: &AtomicBool,
-    ) -> Result<(), String> {
+    ) -> Result<PathBuf, String> {
         let exe = exe_path(app)?;
         if !exe.is_file() {
             return Err("Install Cemu from the Emulators screen first.".to_string());
         }
         let portable = install_dir(app)?.join("portable");
         let _ = write_first_settings(&portable);
-        convert::make_wua(&exe, &portable.join("settings.xml"), &game.path, &game.title, into, progress, cancel)
+        let wua = into.join("game.wua");
+        convert::make_wua(&exe, &portable.join("settings.xml"), &game.path, &game.title, &wua, progress, cancel)?;
+        Ok(wua)
     }
 
     fn game_settings(&self, app: &AppHandle, game: &Game) -> Result<crate::core::game_settings::GameSettings, String> {
@@ -1004,10 +1006,15 @@ impl super::EmulatorBackend for Cemu {
         controllers::write(app, title_id, players)
     }
 
-    fn tune_picture(&self, _app: &AppHandle, _display_height: u32, _graphics_memory: u64) -> Result<Option<u32>, String> {
-        // An error rather than "nothing to do": the app-wide "tuned" flag is
-        // only set on success, and setting it from here would stop RPCS3 from
-        // ever being sized for the machine.
+    fn tune_picture(
+        &self,
+        _app: &AppHandle,
+        _display_width: u32,
+        _display_height: u32,
+        _graphics_memory: u64,
+    ) -> Result<Option<u32>, String> {
+        // An error rather than "nothing to do", so Cemu is never noted as
+        // sized: its picture is left as Cemu sets it.
         Err("Omoio does not size Cemu's picture.".to_string())
     }
 
@@ -1082,8 +1089,8 @@ impl super::EmulatorBackend for Cemu {
         Box::pin(packs::download(app, cancel))
     }
 
-    fn catalogue_source(&self) -> (&'static str, &'static str) {
-        ("Wii U results from the Cemu wiki", "https://wiki.cemu.info/")
+    fn catalogue_source(&self) -> Option<(&'static str, &'static str)> {
+        Some(("Wii U results from the Cemu wiki", "https://wiki.cemu.info/"))
     }
 }
 

@@ -5,6 +5,7 @@
 //! implementation and a line in `all`, not touching the library or a screen.
 
 pub mod cemu;
+pub mod dolphin;
 pub mod qt;
 pub mod rpcs3;
 
@@ -95,6 +96,14 @@ pub trait EmulatorBackend: Sync {
         Err(NO_PORTAL.to_string())
     }
 
+    /// Whether the emulator's figure maker lists its characters with their
+    /// numbers, for `portal_characters` to read. One that makes a figure
+    /// from any numbers but names them alone is offered the characters Omoio
+    /// read from the other emulators' makers instead.
+    fn lists_characters(&self) -> bool {
+        true
+    }
+
     /// Has the emulator's figure maker make a figure of `character` into
     /// `file` and put it on the portal in `slot`. Returns what the portal
     /// holds afterwards.
@@ -129,9 +138,10 @@ pub trait EmulatorBackend: Sync {
         None
     }
 
-    /// Has the emulator make a readable copy of the game at `into`, for the
-    /// figures' pictures. `progress` hears how far it is, out of 100, and
-    /// `cancel` stops it.
+    /// Has the emulator make a readable copy of the game inside the empty
+    /// folder `into`, for the figures' pictures, and returns the copy for the
+    /// picture reader: an archive or a folder in there. `progress` hears how
+    /// far it is, out of 100, and `cancel` stops it.
     fn make_copy(
         &self,
         _app: &AppHandle,
@@ -139,7 +149,7 @@ pub trait EmulatorBackend: Sync {
         _into: &Path,
         _progress: &dyn Fn(u32),
         _cancel: &AtomicBool,
-    ) -> Result<(), String> {
+    ) -> Result<PathBuf, String> {
         Err("This emulator can't make a copy of the game.".to_string())
     }
 
@@ -180,9 +190,11 @@ pub trait EmulatorBackend: Sync {
 
     /// Sizes the picture for this machine if it has not been. Returns the
     /// scale that applies, or `None` when the user already chose their own.
+    /// The display is the one Omoio's window is on, in pixels.
     fn tune_picture(
         &self,
         app: &AppHandle,
+        display_width: u32,
         display_height: u32,
         graphics_memory: u64,
     ) -> Result<Option<u32>, String>;
@@ -234,19 +246,28 @@ pub trait EmulatorBackend: Sync {
 
     /// Every title this console's compatibility list knows, or `None` until
     /// the list has been downloaded.
-    fn catalogue(&self, app: &AppHandle) -> Option<Vec<crate::core::catalogue::Entry>>;
+    fn catalogue(&self, _app: &AppHandle) -> Option<Vec<crate::core::catalogue::Entry>> {
+        None
+    }
 
     /// Downloads the list again and returns how many titles it holds. Boxed
     /// because a trait used through `dyn` cannot declare an `async fn`; the
     /// box is where the download's state lives while it runs.
     fn refresh_catalogue<'a>(
         &'a self,
-        app: &'a AppHandle,
-        cancel: &'a std::sync::atomic::AtomicBool,
-    ) -> futures_util::future::BoxFuture<'a, Result<usize, String>>;
+        _app: &'a AppHandle,
+        _cancel: &'a std::sync::atomic::AtomicBool,
+    ) -> futures_util::future::BoxFuture<'a, Result<usize, String>> {
+        Box::pin(async { Err(NO_LIST.to_string()) })
+    }
 
     /// Who publishes the list and where, for the credit under the catalogue.
-    fn catalogue_source(&self) -> (&'static str, &'static str);
+    /// `None` for an emulator with no list Omoio may use, which is then left
+    /// out of the catalogue and its warnings rather than shown as waiting
+    /// for one.
+    fn catalogue_source(&self) -> Option<(&'static str, &'static str)> {
+        None
+    }
 
     /// Switches on the known fixes for this game that have not been applied
     /// before, and returns their ids so none is ever applied twice. Most
@@ -280,10 +301,14 @@ pub trait EmulatorBackend: Sync {
 
 const NO_PORTAL: &str = "Omoio can't reach this emulator's portal yet.";
 const NO_PACKS: &str = "There are no community packs for this emulator.";
+const NO_LIST: &str = "There is no compatibility list for this emulator.";
 
-/// Every emulator Omoio can run, one per console.
+/// Every emulator Omoio can run, one per console. Dolphin runs two consoles
+/// and is listed once for each, so every list kept per console (the
+/// catalogue, the Controller screen's names, the layouts) has it in both.
 pub fn all() -> &'static [&'static dyn EmulatorBackend] {
-    &[&rpcs3::Rpcs3, &cemu::Cemu]
+    static ALL: [&dyn EmulatorBackend; 4] = [&rpcs3::Rpcs3, &cemu::Cemu, &dolphin::WII, &dolphin::GAMECUBE];
+    &ALL
 }
 
 pub fn for_console(console: Console) -> Option<&'static dyn EmulatorBackend> {
@@ -378,5 +403,7 @@ mod tests {
         }
         assert!(for_console(Console::Ps3).is_some());
         assert!(for_console(Console::WiiU).is_some());
+        assert_eq!(for_console(Console::Wii).map(|b| b.name()), Some("Dolphin"));
+        assert_eq!(for_console(Console::GameCube).map(|b| b.name()), Some("Dolphin"));
     }
 }

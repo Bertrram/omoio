@@ -339,16 +339,21 @@ struct Kept {
 
 /// Every character the running game's emulator can make a figure of. Read
 /// from the emulator the first time and kept, since the list only changes
-/// with a new emulator.
+/// with a new emulator. An emulator whose maker doesn't list them with
+/// their numbers gets those Omoio read from the others.
 pub fn characters(
     app: &AppHandle,
     backend: &dyn EmulatorBackend,
     console: Console,
     pid: u32,
 ) -> Result<Vec<Character>, String> {
-    let version = backend.detect_version(app).unwrap_or_default();
     let key = serde_json::to_string(&console).unwrap_or_default().replace('"', "");
-    let file = data_dir(app)?.join(format!("characters-{key}.json"));
+    let own = format!("characters-{key}.json");
+    if !backend.lists_characters() {
+        return from_the_others(app, &own);
+    }
+    let version = backend.detect_version(app).unwrap_or_default();
+    let file = data_dir(app)?.join(own);
     let kept = std::fs::read_to_string(&file)
         .ok()
         .and_then(|text| serde_json::from_str::<Kept>(&text).ok())
@@ -361,6 +366,43 @@ pub fn characters(
         let _ = std::fs::write(&file, text);
     }
     Ok(characters)
+}
+
+/// The characters kept from every other emulator's maker, each once by its
+/// number, in the order of the files' names.
+fn from_the_others(app: &AppHandle, own: &str) -> Result<Vec<Character>, String> {
+    let mut files: Vec<PathBuf> = std::fs::read_dir(data_dir(app)?)
+        .map(|entries| entries.flatten().map(|entry| entry.path()).collect())
+        .unwrap_or_default();
+    files.retain(|file| {
+        file.file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with("characters-") && name.ends_with(".json") && name != own)
+    });
+    files.sort();
+    let lists = files
+        .iter()
+        .filter_map(|file| std::fs::read_to_string(file).ok())
+        .filter_map(|text| serde_json::from_str::<Kept>(&text).ok())
+        .map(|kept| kept.characters);
+    let merged = merge(lists);
+    if merged.is_empty() {
+        Err("Omoio learns which figures can be made from Cemu's or RPCS3's figure maker. \
+             Make one figure in a Skylanders game there once, and they show here too."
+            .to_string())
+    } else {
+        Ok(merged)
+    }
+}
+
+fn merge(lists: impl Iterator<Item = Vec<Character>>) -> Vec<Character> {
+    let mut merged: Vec<Character> = Vec::new();
+    for character in lists.flatten() {
+        if !merged.iter().any(|known| known.id == character.id && known.variant == character.variant) {
+            merged.push(character);
+        }
+    }
+    merged
 }
 
 /// Where a new figure of a character is kept: the figures folder, under the

@@ -105,6 +105,8 @@ pub fn run() {
             commands::emulator_versions,
             commands::install_cemu,
             commands::cancel_cemu_install,
+            commands::install_dolphin,
+            commands::cancel_dolphin_install,
             commands::cemu_keys,
             commands::add_cemu_keys,
             commands::look_at_own_cemu,

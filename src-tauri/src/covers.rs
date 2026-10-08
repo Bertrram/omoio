@@ -23,11 +23,14 @@ use std::path::{Path, PathBuf};
 const SEARCH: &str = "https://api.rawg.io/api/games";
 /// RAWG's name for each console's platform, as it appears in its results.
 /// The PS3's was read off real results. The Wii U's has not been seen in one
-/// yet.
+/// yet. The Wii's and the GameCube's are as RAWG's own platform pages name
+/// them (rawg.io/games/wii and rawg.io/games/gamecube, 8 October 2026).
 fn platform(console: Console) -> &'static str {
     match console {
         Console::Ps3 => "PlayStation 3",
         Console::WiiU => "Wii U",
+        Console::Wii => "Wii",
+        Console::GameCube => "GameCube",
     }
 }
 

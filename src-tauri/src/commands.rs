@@ -1,5 +1,5 @@
 use crate::archive;
-use crate::backends::rpcs3;
+use crate::backends::{rpcs3, EmulatorBackend};
 use crate::core::console::Console;
 use crate::core::import_warning::{self, Imported, List, Warning};
 use crate::core::library::Library;
@@ -26,9 +26,11 @@ pub struct InstallState {
     cancel_update: Arc<AtomicBool>,
     cancel_compat: Arc<AtomicBool>,
     cancel_cemu: Arc<AtomicBool>,
+    cancel_dolphin: Arc<AtomicBool>,
     cancel_community: Arc<AtomicBool>,
-    /// Emulators whose files are being replaced right now.
-    installing: std::sync::Mutex<Vec<Console>>,
+    /// Emulators whose files are being replaced right now, by name: Dolphin
+    /// runs two consoles from the same files.
+    installing: std::sync::Mutex<Vec<&'static str>>,
 }
 
 /// Marks an emulator as being installed until it is dropped, so a game cannot
@@ -36,33 +38,36 @@ pub struct InstallState {
 /// that fails or is stopped part way.
 struct Installing<'a> {
     state: &'a InstallState,
-    console: Console,
+    emulator: &'static str,
 }
 
 impl Drop for Installing<'_> {
     fn drop(&mut self) {
-        self.state.installing.lock().unwrap().retain(|c| *c != self.console);
+        self.state.installing.lock().unwrap().retain(|e| *e != self.emulator);
     }
 }
 
 impl InstallState {
-    fn begin_install(&self, console: Console) -> Result<Installing<'_>, String> {
+    fn begin_install(&self, emulator: &dyn crate::backends::EmulatorBackend) -> Result<Installing<'_>, String> {
+        let emulator = emulator.name();
         let mut busy = self.installing.lock().unwrap();
-        if busy.contains(&console) {
+        if busy.contains(&emulator) {
             return Err("It's already being installed.".to_string());
         }
-        busy.push(console);
-        Ok(Installing { state: self, console })
+        busy.push(emulator);
+        Ok(Installing { state: self, emulator })
     }
 
-    fn is_installing(&self, console: Console) -> bool {
-        self.installing.lock().unwrap().contains(&console)
+    fn is_installing(&self, emulator: &dyn crate::backends::EmulatorBackend) -> bool {
+        self.installing.lock().unwrap().contains(&emulator.name())
     }
 }
 
-/// An emulator's files cannot be replaced under a game it is running.
-fn refuse_while_playing(app: &AppHandle, console: Console) -> Result<(), String> {
-    if app.state::<Session>().playing().is_some_and(|p| p.console == console) {
+/// An emulator's files cannot be replaced under a game it is running, for
+/// whichever of its consoles.
+fn refuse_while_playing(app: &AppHandle, emulator: &dyn crate::backends::EmulatorBackend) -> Result<(), String> {
+    let running = app.state::<Session>().playing().and_then(|p| crate::backends::for_console(p.console));
+    if running.is_some_and(|running| running.name() == emulator.name()) {
         return Err("Close the game first. The emulator can't be replaced while it runs one.".to_string());
     }
     Ok(())
@@ -75,8 +80,8 @@ pub fn get_rpcs3_version(app: AppHandle) -> Option<String> {
 
 #[tauri::command]
 pub async fn install_rpcs3(app: AppHandle, state: State<'_, InstallState>) -> Result<String, String> {
-    refuse_while_playing(&app, Console::Ps3)?;
-    let _installing = state.begin_install(Console::Ps3)?;
+    refuse_while_playing(&app, &rpcs3::Rpcs3)?;
+    let _installing = state.begin_install(&rpcs3::Rpcs3)?;
     state.cancel.store(false, Ordering::Relaxed);
     let cancel = state.cancel.clone();
     rpcs3::install(app, cancel).await
@@ -402,7 +407,11 @@ pub fn catalogue(
     let mut consoles = Vec::new();
     let mut missing = Vec::new();
     let mut sources = Vec::new();
+    // An emulator with no list Omoio may use is left out altogether.
     for backend in crate::backends::all() {
+        let Some((label, url)) = backend.catalogue_source() else {
+            continue;
+        };
         consoles.push(CatalogueConsole {
             console: backend.console(),
             name: backend.console().short(),
@@ -410,7 +419,6 @@ pub fn catalogue(
         match backend.catalogue(&app) {
             Some(found) => {
                 entries.extend(found);
-                let (label, url) = backend.catalogue_source();
                 sources.push(CatalogueSource { label, url });
             }
             None => missing.push(backend.console()),
@@ -455,6 +463,7 @@ pub fn list_games(app: AppHandle) -> Result<Vec<GameEntry>, String> {
 fn compat_lists(app: &AppHandle) -> Vec<List> {
     crate::backends::all()
         .iter()
+        .filter(|backend| backend.catalogue_source().is_some())
         .map(|backend| List::new(backend.console(), backend.name(), backend.catalogue(app).unwrap_or_default()))
         .collect()
 }
@@ -564,20 +573,23 @@ pub fn launch_game(app: AppHandle, title_id: String) -> Result<(), String> {
         .find(|g| g.title_id == title_id)
         .ok_or("That game isn't in your library any more.")?;
 
-    if app.state::<InstallState>().is_installing(game.console) {
-        let name = crate::backends::for_console(game.console).map_or("The emulator", |b| b.name());
-        return Err(format!("{name} is being updated. Try again in a minute."));
+    let backend = crate::backends::for_console(game.console)
+        .ok_or("Omoio can't start games for this console yet.")?;
+    if app.state::<InstallState>().is_installing(backend) {
+        return Err(format!("{} is being updated. Try again in a minute.", backend.name()));
     }
 
-    // Cemu may be busy making a copy of a game to read figure pictures from.
-    if game.console == crate::core::console::Console::WiiU && crate::figure_pictures::copying() {
-        return Err("Cemu is busy getting figure pictures. Try again when that is done, or stop it.".to_string());
+    // The emulator may be busy making a copy of a game to read figure
+    // pictures from.
+    if crate::figure_pictures::copying() == Some(backend.name()) {
+        return Err(format!(
+            "{} is busy getting figure pictures. Try again when that is done, or stop it.",
+            backend.name()
+        ));
     }
 
     // One game at a time: starting another stops the one already running.
     app.state::<Session>().stop();
-    let backend = crate::backends::for_console(game.console)
-        .ok_or("Omoio can't start games for this console yet.")?;
     // The known fixes for this game go in before it starts, each only once,
     // so one the user switched off afterwards stays off.
     let settings_file = settings_path(&app)?;
@@ -861,7 +873,7 @@ pub async fn refresh_compatibility(
     let mut count = 0;
     let mut failed = None;
     for backend in crate::backends::all() {
-        if console.is_some_and(|wanted| wanted != backend.console()) {
+        if console.is_some_and(|wanted| wanted != backend.console()) || backend.catalogue_source().is_none() {
             continue;
         }
         match backend.refresh_catalogue(&app, &cancel).await {
@@ -1292,16 +1304,22 @@ fn tune_picture(app: &AppHandle, backend: &dyn crate::backends::EmulatorBackend)
         return;
     };
     let mut settings = Settings::load(&file);
-    if settings.tuned {
+    let rpcs3 = backend.console() == Console::Ps3;
+    let name = backend.name().to_string();
+    if (rpcs3 && settings.tuned) || settings.tuned_for.contains(&name) {
         return;
     }
     let hw = hardware::detect();
     let (Some(display), Some(gpu)) = (hw.display, hw.gpu) else {
         return;
     };
-    if let Ok(scale) = backend.tune_picture(app, display.height, gpu.dedicated_memory_bytes) {
-        settings.tuned = true;
-        settings.tuned_scale = scale;
+    if let Ok(scale) = backend.tune_picture(app, display.width, display.height, gpu.dedicated_memory_bytes) {
+        if rpcs3 {
+            settings.tuned = true;
+            settings.tuned_scale = scale;
+        } else {
+            settings.tuned_for.push(name);
+        }
         let _ = settings.save(&file);
     }
 }
@@ -1515,8 +1533,12 @@ pub struct EmulatorUpdate {
 /// holding up the rest.
 #[tauri::command]
 pub async fn emulator_updates(app: AppHandle) -> Vec<EmulatorUpdate> {
-    let mut behind = Vec::new();
+    let mut behind: Vec<EmulatorUpdate> = Vec::new();
     for backend in crate::backends::all() {
+        // Dolphin is listed once for each of its consoles.
+        if behind.iter().any(|update| update.name == backend.name()) {
+            continue;
+        }
         let Some(installed) = backend.detect_version(&app) else {
             continue;
         };
@@ -1537,8 +1559,8 @@ pub async fn emulator_updates(app: AppHandle) -> Vec<EmulatorUpdate> {
 
 #[tauri::command]
 pub async fn install_cemu(app: AppHandle, state: State<'_, InstallState>) -> Result<String, String> {
-    refuse_while_playing(&app, Console::WiiU)?;
-    let _installing = state.begin_install(Console::WiiU)?;
+    refuse_while_playing(&app, &crate::backends::cemu::Cemu)?;
+    let _installing = state.begin_install(&crate::backends::cemu::Cemu)?;
     state.cancel_cemu.store(false, Ordering::Relaxed);
     let cancel = state.cancel_cemu.clone();
     crate::backends::cemu::install(app, cancel).await
@@ -1578,7 +1600,7 @@ pub fn look_at_own_cemu(app: AppHandle, path: String) -> Result<crate::backends:
 /// into Omoio's Cemu. Overwrites nothing.
 #[tauri::command]
 pub fn bring_own_cemu(app: AppHandle, path: String) -> Result<crate::backends::cemu::own_cemu::Brought, String> {
-    refuse_while_playing(&app, Console::WiiU)?;
+    refuse_while_playing(&app, &crate::backends::cemu::Cemu)?;
     crate::backends::cemu::own_cemu::bring_over(&app, &path)
 }
 
@@ -1586,13 +1608,30 @@ pub fn bring_own_cemu(app: AppHandle, path: String) -> Result<crate::backends::c
 /// said so. Omoio's is moved aside first.
 #[tauri::command]
 pub fn replace_with_own_save(app: AppHandle, path: String, title_id: String) -> Result<(), String> {
-    refuse_while_playing(&app, Console::WiiU)?;
+    refuse_while_playing(&app, &crate::backends::cemu::Cemu)?;
     crate::backends::cemu::own_cemu::replace_save(&app, &path, &title_id)
 }
 
 #[tauri::command]
 pub fn cancel_cemu_install(state: State<'_, InstallState>) {
     state.cancel_cemu.store(true, Ordering::Relaxed);
+}
+
+#[tauri::command]
+pub async fn install_dolphin(app: AppHandle, state: State<'_, InstallState>) -> Result<String, String> {
+    refuse_while_playing(&app, &crate::backends::dolphin::WII)?;
+    let _installing = state.begin_install(&crate::backends::dolphin::WII)?;
+    if crate::figure_pictures::copying() == Some(crate::backends::dolphin::WII.name()) {
+        return Err("Dolphin is busy getting figure pictures. Try again when that is done, or stop it.".to_string());
+    }
+    state.cancel_dolphin.store(false, Ordering::Relaxed);
+    let cancel = state.cancel_dolphin.clone();
+    crate::backends::dolphin::install(app, cancel).await
+}
+
+#[tauri::command]
+pub fn cancel_dolphin_install(state: State<'_, InstallState>) {
+    state.cancel_dolphin.store(true, Ordering::Relaxed);
 }
 
 /// The emulator running the game right now, and its process.

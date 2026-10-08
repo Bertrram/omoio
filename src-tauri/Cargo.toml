@@ -83,6 +83,15 @@ png = "0.17"
 # new crate. A Wii U game kept as a .wua, Cemu's own archive, has its files
 # in zstd blocks, and its meta.xml is read from there. See backends/cemu/wua.rs.
 zstd = "0.13"
+# Already in the build through png and zip, the same version, so naming it
+# adds no new crate. A GameCube disc kept as a .gcz is stored in zlib blocks,
+# and its banner is read from there. See backends/dolphin/disc.rs.
+flate2 = "1.1"
+# Already in the build through yaml-rust2, the same version, so naming it adds
+# no new crate. A Japanese disc's title is in Shift-JIS and any other's in
+# Windows-1252, and it is turned into text with this. See
+# backends/dolphin/disc.rs.
+encoding_rs = "0.8"
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
 [profile.release]
