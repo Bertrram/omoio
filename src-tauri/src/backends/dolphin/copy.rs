@@ -35,15 +35,32 @@ struct ReaderFiles {
     room: u64,
 }
 
-/// Spyro's Adventure keeps every figure's picture in its versus screen and
-/// the element symbols in the screen kept for every level (omoio-portraits,
-/// "Read Spyro's Adventure's pictures from the Wii game", 8 October 2026).
-/// The two are 27,416,584 bytes on the PAL disc, against 4.4 GB for the
-/// game; `room` allows another region's to be a little larger.
+/// Spyro's Adventure keeps every figure's picture in its versus screen, the
+/// element symbols in the screen kept for every level, and each magic item's
+/// and adventure pack's sprite in that toy's own archive (omoio-portraits,
+/// "Read Spyro's Adventure's pictures from the Wii game" and "Read Spyro's
+/// Adventure's magic items and adventure packs", 8 October 2026). Together
+/// they are 30,969,088 bytes on the PAL disc, against 4.4 GB for the game;
+/// `room` allows another region's to be a little larger.
 const READER_FILES: [ReaderFiles; 1] = [ReaderFiles {
     game: figures::Game::Spyro,
-    files: &["/misc/PvP_MainControl.arc", "/permanent/global.bld"],
-    room: 32 << 20,
+    files: &[
+        "/misc/PvP_MainControl.arc",
+        "/permanent/global.bld",
+        "/item/Item_Anvil.bld",
+        "/item/Item_SecretStash.bld",
+        "/item/Item_Regeneration.bld",
+        "/item/Item_Pirates.bld",
+        "/item/Item_Hourglass.bld",
+        "/item/Item_Shield.bld",
+        "/item/Item_Potion.bld",
+        "/item/Item_Zapper.bld",
+        "/item/Item_Location_Dragon.bld",
+        "/item/Item_Location_Ice.bld",
+        "/item/Item_Location_Pirate.bld",
+        "/item/Item_Location_Undead.bld",
+    ],
+    room: 40 << 20,
 }];
 
 /// Every one of a game's files, for a game not in `READER_FILES`.
@@ -192,11 +209,14 @@ mod tests {
     }
 
     #[test]
-    fn spyros_adventure_copies_only_the_two_files_the_reader_reads() {
+    fn spyros_adventure_copies_only_the_files_the_reader_reads() {
         let spyro = Some(figures::Game::Spyro);
-        assert_eq!(files_for(spyro), ["/misc/PvP_MainControl.arc", "/permanent/global.bld"]);
+        let files = files_for(spyro);
+        assert_eq!(files[..2], ["/misc/PvP_MainControl.arc", "/permanent/global.bld"]);
+        // The eight magic items and four adventure packs, one archive each.
+        assert_eq!(files.iter().filter(|file| file.starts_with("/item/Item_") && file.ends_with(".bld")).count(), 12);
         let room = room_for(spyro).unwrap();
-        assert!(room >= 27_416_584 && room < 100 << 20, "the two files with a little to spare, not the game");
+        assert!(room >= 30_969_088 && room < 100 << 20, "the files with a little to spare, not the game");
         // Every other game, and one Omoio can't tell, is copied whole.
         for other in [Some(figures::Game::Giants), Some(figures::Game::TrapTeam), None] {
             assert_eq!(files_for(other), ["/"]);
