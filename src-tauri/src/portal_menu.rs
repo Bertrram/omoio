@@ -6,12 +6,14 @@
 //! Figures are the user's own files, copied into Omoio's figures folder from
 //! Settings, or new ones of any character, which the emulator's own figure
 //! maker makes into the same folder. Omoio never writes figure data itself;
-//! a Trap Team trap is read, for the villain it holds.
+//! a Trap Team trap is read, for the villain it holds, and a file the user
+//! brought only as far as its plain first blocks, to tell a Creation Crystal.
 
 use crate::backends::EmulatorBackend;
 use crate::core::console::Console;
 use crate::core::figure_data::{self, Trapped};
 use crate::core::figures::{self, Character, Class, Element, Kind, Movement};
+use crate::core::imaginators::{self, BattleClass, Casing};
 use crate::core::settings::Settings;
 use crate::core::vehicles::{self, Terrain};
 use crate::core::villains::{Villain, VILLAINS};
@@ -54,8 +56,10 @@ pub struct Figure {
     /// The file's name without its extension.
     pub name: String,
     pub path: String,
-    /// The character, for a figure Omoio had the emulator make. A file the
-    /// user brought has none, since Omoio doesn't read inside figure files.
+    /// The character, for a figure Omoio had the emulator make, or for a
+    /// Creation Crystal the user brought, told from its file so the menu can
+    /// keep it with the crystals. Any other file the user brought has none,
+    /// and is listed in every game as before.
     pub id: Option<u16>,
     pub variant: Option<u16>,
     pub element: Option<Element>,
@@ -68,6 +72,10 @@ pub struct Figure {
     pub terrain: Option<Terrain>,
     /// A vehicle's own SuperCharger, or a SuperCharger's own vehicle.
     pub partner: Option<u16>,
+    /// A Sensei's battle class.
+    pub battle_class: Option<BattleClass>,
+    /// A Creation Crystal's casing.
+    pub casing: Option<Casing>,
     /// The villain a trap holds, read from the data the game wrote to it.
     pub holds: Option<Trapped>,
 }
@@ -79,6 +87,24 @@ fn held(path: &Path, id: Option<u16>) -> Option<Trapped> {
     }
     let bytes = std::fs::read(path).ok()?;
     figure_data::trapped(&<[u8; figure_data::SIZE]>::try_from(bytes.as_slice()).ok()?)
+}
+
+/// The id and variant of a Creation Crystal in a file the user brought. A
+/// file that isn't a figure's size isn't opened.
+fn brought_crystal(path: &Path) -> Option<[u16; 2]> {
+    if path.metadata().ok()?.len() != figure_data::SIZE as u64 {
+        return None;
+    }
+    crystal_in(&std::fs::read(path).ok()?)
+}
+
+/// A crystal's id and variant, read from the figure's first two blocks,
+/// which no game encrypts. Nothing is decrypted, and a file whose own number
+/// doesn't check out isn't taken for a figure.
+fn crystal_in(bytes: &[u8]) -> Option<[u16; 2]> {
+    let figure = <[u8; figure_data::SIZE]>::try_from(bytes).ok()?;
+    let id = figure_data::id(&figure);
+    (imaginators::is_crystal(id) && figure_data::number_ok(&figure)).then(|| [id, figure_data::variant(&figure)])
 }
 
 /// Which character each figure Omoio had made is, by file name.
@@ -124,7 +150,7 @@ pub fn list(app: &AppHandle) -> Vec<Figure> {
                 .filter(|path| path.is_file() && is_figure(path))
                 .map(|path| {
                     let file = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-                    let character = made.get(&file).copied();
+                    let character = made.get(&file).copied().or_else(|| brought_crystal(&path));
                     let holds = held(&path, character.map(|[id, _]| id));
                     Figure {
                         name: path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default(),
@@ -138,6 +164,10 @@ pub fn list(app: &AppHandle) -> Vec<Figure> {
                         class: character.and_then(|[id, _]| figures::class(id)),
                         terrain: character.and_then(|[id, _]| vehicles::terrain(id)),
                         partner: character.and_then(|[id, _]| vehicles::partner(id)),
+                        battle_class: character.and_then(|[id, _]| imaginators::battle_class(id)),
+                        casing: character
+                            .and_then(|[id, variant]| imaginators::crystal(id, variant))
+                            .map(|crystal| crystal.casing),
                         holds,
                     }
                 })
@@ -465,5 +495,34 @@ mod tests {
         assert!(is_figure(Path::new("x.dump")));
         assert!(!is_figure(Path::new("notes.txt")));
         assert!(!is_figure(Path::new("no extension")));
+    }
+
+    /// A figure as an emulator's figure maker makes it, with its number and
+    /// checksum, as figure_data's own tests make one.
+    fn made_figure(id: u16, variant: u16) -> Vec<u8> {
+        let mut figure = vec![0u8; figure_data::SIZE];
+        figure[..4].copy_from_slice(&[0x12, 0x34, 0x56, 0x78]);
+        figure[0x10..0x12].copy_from_slice(&id.to_le_bytes());
+        figure[0x1C..0x1E].copy_from_slice(&variant.to_le_bytes());
+        let crc = figure_data::crc16(&figure[..0x1E]);
+        figure[0x1E..0x20].copy_from_slice(&crc.to_le_bytes());
+        figure
+    }
+
+    #[test]
+    fn a_crystal_the_user_brought_is_told_by_its_plain_first_blocks() {
+        assert_eq!(crystal_in(&made_figure(680, 0x5208)), Some([680, 0x5208]));
+        // One whose design Omoio has no name for is still a crystal.
+        assert_eq!(crystal_in(&made_figure(682, 0x5212)), Some([682, 0x5212]));
+        // Every other figure stays unknown, as it was.
+        assert_eq!(crystal_in(&made_figure(217, 0x3003)), None); // a trap
+        assert_eq!(crystal_in(&made_figure(601, 0x5000)), None); // King Pen
+        assert_eq!(crystal_in(&made_figure(16, 0x0000)), None); // Spyro
+        // A file whose number doesn't check out, or isn't a figure's size.
+        let mut broken = made_figure(680, 0x5208);
+        broken[0x1E] ^= 0xFF;
+        assert_eq!(crystal_in(&broken), None);
+        assert_eq!(crystal_in(&made_figure(680, 0x5208)[..512]), None);
+        assert_eq!(crystal_in(&[made_figure(680, 0x5208), vec![0]].concat()), None);
     }
 }
