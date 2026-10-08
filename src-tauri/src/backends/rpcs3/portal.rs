@@ -333,7 +333,8 @@ fn is_message(pid: u32, window: HWND) -> bool {
 /// its own windows forward.
 pub fn give_back_to_game(pid: u32) {
     let front = unsafe { GetForegroundWindow() };
-    if process_of(front) != pid {
+    // A message RPCS3 put up is left in front, where it can be read.
+    if process_of(front) != pid || is_message(pid, front) {
         return;
     }
     let game = showing(pid)
