@@ -112,7 +112,7 @@ pub fn scale_for(width: u32, height: u32, graphics_memory: u64) -> u32 {
 /// there is one the user chose. Returns the scale set, or `None`.
 pub fn size_picture(config: &Path, width: u32, height: u32, graphics_memory: u64) -> std::io::Result<Option<u32>> {
     let path = config.join("GFX.ini");
-    let text = std::fs::read_to_string(&path).unwrap_or_default();
+    let text = ini::read(&path)?;
     if ini::get(&text, "Settings", "InternalResolution").is_some() {
         return Ok(None);
     }

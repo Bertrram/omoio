@@ -412,7 +412,7 @@ impl super::EmulatorBackend for Dolphin {
         if self.console == Console::Wii {
             // Read only to see which ports hold a standard pad, so a file
             // that can't be read counts as Dolphin's defaults.
-            let dolphin_ini = std::fs::read_to_string(user.join("Config").join("Dolphin.ini")).unwrap_or_default();
+            let dolphin_ini = ini::read(&user.join("Config").join("Dolphin.ini")).unwrap_or_default();
             command.args(controllers::gamecube_ports_off(&dolphin_ini));
         }
         if portal {

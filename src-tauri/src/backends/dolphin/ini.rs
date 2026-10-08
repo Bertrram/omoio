@@ -8,6 +8,9 @@
 //! Omoio sets only the values it means to and leaves every other line as it
 //! was, so whatever the user changed in Dolphin itself stays.
 
+use std::io::{self, Write};
+use std::path::Path;
+
 /// The line ending a file already uses, so an edited file keeps its own.
 fn line_ending(text: &str) -> &'static str {
     if text.contains("\r\n") {
@@ -222,19 +225,98 @@ pub fn remove_line(text: &str, section: &str, line: &str) -> String {
 
 /// Reads a settings file, sets every value in `values` as (section, key,
 /// value), and writes it back only if anything changed. A file that isn't
-/// there yet is made.
-pub fn update(path: &std::path::Path, values: &[(&str, &str, &str)]) -> std::io::Result<()> {
-    let before = std::fs::read_to_string(path).unwrap_or_default();
+/// there yet is made; one that can't be read is left alone (`read`).
+pub fn update(path: &Path, values: &[(&str, &str, &str)]) -> io::Result<()> {
+    let before = read(path)?;
     let after = values
         .iter()
         .fold(before.clone(), |text, (section, key, value)| set(&text, section, key, value));
     if after == before {
         return Ok(());
     }
+    write(path, &after)
+}
+
+/// Where a byte that isn't UTF-8 is kept while a file is read and changed:
+/// as the character this far into Unicode's private use area, which `write`
+/// turns back into the byte. Dolphin reads its files as bytes
+/// (`IniFile::Load`, Common/IniFile.cpp, reads each line into a
+/// `std::string`), so a line saved in another encoding, such as a name with
+/// an ø from an editor that saves in the Windows code page, is one Dolphin
+/// reads as it is, and changing another line must leave it so.
+const RAW_BYTES: u32 = 0xF700;
+
+fn is_raw(character: char) -> bool {
+    (RAW_BYTES..RAW_BYTES + 0x100).contains(&u32::from(character))
+}
+
+/// The text of a file's bytes, with any that aren't UTF-8 kept as
+/// `RAW_BYTES`. `None` when the text itself holds one of those characters,
+/// which couldn't then be told from a kept byte.
+fn decode(bytes: &[u8]) -> Option<String> {
+    let mut text = String::with_capacity(bytes.len());
+    for chunk in bytes.utf8_chunks() {
+        if chunk.valid().chars().any(is_raw) {
+            return None;
+        }
+        text.push_str(chunk.valid());
+        text.extend(chunk.invalid().iter().filter_map(|&byte| char::from_u32(RAW_BYTES + u32::from(byte))));
+    }
+    Some(text)
+}
+
+/// The bytes `decode` read the text from, with Omoio's own changes in
+/// UTF-8, as Dolphin writes its files.
+fn encode(text: &str) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(text.len());
+    for character in text.chars() {
+        if is_raw(character) {
+            bytes.push((u32::from(character) - RAW_BYTES) as u8);
+        } else {
+            bytes.extend_from_slice(character.encode_utf8(&mut [0; 4]).as_bytes());
+        }
+    }
+    bytes
+}
+
+/// A settings file's text, to read or change. A file that isn't there is
+/// empty. Any other failure to read it is an error, so a file Omoio couldn't
+/// read is never written over as if it held nothing, the user's settings
+/// with it. Bytes that aren't UTF-8 are kept (`RAW_BYTES`).
+pub fn read(path: &Path) -> io::Result<String> {
+    match std::fs::read(path) {
+        Ok(bytes) => decode(&bytes).ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "unexpected characters")),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(String::new()),
+        Err(error) => Err(error),
+    }
+}
+
+/// Writes a settings file read with `read`, its bytes put back as they
+/// were (`replace`).
+pub fn write(path: &Path, text: &str) -> io::Result<()> {
+    replace(path, &encode(text))
+}
+
+/// Writes one of Dolphin's files whole, through a file beside it that is
+/// renamed over it once it is all on the disk, so a write cut short leaves
+/// the file as it was. Dolphin writes its own the same way (`IniFile::Save`
+/// and `File::RenameSync`, Common/IniFile.cpp and Common/FileUtil.cpp).
+pub fn replace(path: &Path, bytes: &[u8]) -> io::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    std::fs::write(path, after)
+    let mut name = path.file_name().unwrap_or_default().to_os_string();
+    name.push(".part");
+    let part = path.with_file_name(name);
+    let written = std::fs::File::create(&part).and_then(|mut file| {
+        file.write_all(bytes)?;
+        file.sync_all()
+    });
+    let renamed = written.and_then(|()| std::fs::rename(&part, path));
+    if renamed.is_err() {
+        let _ = std::fs::remove_file(&part);
+    }
+    renamed
 }
 
 #[cfg(test)]
@@ -329,5 +411,57 @@ mod tests {
         let text = remove_line(&text, "OnFrame_Enabled", "$Two");
         assert_eq!(text, "[Controls]\nWiimoteSource0 = 1\n[Gecko_Enabled]\n$One\n");
         assert_eq!(remove_line("[Gecko_Enabled]\n$One\n\n", "Gecko_Enabled", "$One"), "");
+    }
+
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("omoio-dolphin-ini-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn bytes_that_arent_utf8_are_written_back_as_they_were() {
+        let dir = scratch("bytes");
+        let path = dir.join("Dolphin.ini");
+        // A path with an ø saved in the Windows code page, as one byte.
+        let before = b"[General]\r\nISOPath0 = C:\\Spil\\R\xF8d\r\n[Interface]\r\nConfirmStop = True\r\n";
+        std::fs::write(&path, before).unwrap();
+        update(&path, &[("Interface", "ConfirmStop", "False")]).unwrap();
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            b"[General]\r\nISOPath0 = C:\\Spil\\R\xF8d\r\n[Interface]\r\nConfirmStop = False\r\n"
+        );
+        // Omoio's own values go in as UTF-8, as Dolphin writes them.
+        update(&path, &[("General", "SkylandersCollectionPath", "C:\\Brugere\\Søren")]).unwrap();
+        let after = std::fs::read(&path).unwrap();
+        assert!(after.windows(2).any(|pair| pair == "ø".as_bytes()));
+        assert!(after.starts_with(b"[General]\r\nISOPath0 = C:\\Spil\\R\xF8d\r\n"));
+        assert!(!dir.join("Dolphin.ini.part").exists(), "nothing left beside it");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_file_that_cant_be_read_is_left_alone() {
+        let dir = scratch("unreadable");
+        // A folder in the file's place can't be read as one.
+        let path = dir.join("GFX.ini");
+        std::fs::create_dir_all(path.join("inside")).unwrap();
+        assert!(read(&path).is_err());
+        assert!(update(&path, &[("Settings", "InternalResolution", "3")]).is_err());
+        assert!(path.join("inside").is_dir());
+        // A file that isn't there is empty, and made.
+        let missing = dir.join("Logger.ini");
+        assert_eq!(read(&missing).unwrap(), "");
+        update(&missing, &[("Options", "WriteToFile", "True")]).unwrap();
+        assert_eq!(std::fs::read_to_string(&missing).unwrap(), "[Options]\nWriteToFile = True\n");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_character_omoio_keeps_bytes_as_is_refused_rather_than_misread() {
+        assert_eq!(decode("a\u{F7F8}b".as_bytes()), None);
+        assert_eq!(decode(b"plain").as_deref(), Some("plain"));
+        assert_eq!(encode(&decode(b"R\xF8d \xC3\xB8").unwrap()), b"R\xF8d \xC3\xB8");
     }
 }

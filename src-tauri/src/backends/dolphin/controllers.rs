@@ -386,8 +386,7 @@ pub fn write(app: &AppHandle, console: Console, title_id: &str, players: &[Playe
     let failed = |_| "Couldn't save the controller settings for Dolphin.".to_string();
     if title_id.is_empty() {
         let name = if console == Console::GameCube { "GCPadNew.ini" } else { "WiimoteNew.ini" };
-        std::fs::create_dir_all(&config).map_err(failed)?;
-        std::fs::write(config.join(name), file(console, &players, &devices, &emulated)).map_err(failed)?;
+        ini::write(&config.join(name), &file(console, &players, &devices, &emulated)).map_err(failed)?;
         if console == Console::GameCube {
             standard_controllers(&config.join("Dolphin.ini")).map_err(failed)?;
         }
@@ -398,12 +397,11 @@ pub fn write(app: &AppHandle, console: Console, title_id: &str, players: &[Playe
     };
     let (folder, key) = profile_kind(console);
     let profiles = config.join("Profiles").join(folder);
-    std::fs::create_dir_all(&profiles).map_err(failed)?;
     let mut settings: Vec<(String, String)> = Vec::new();
     for (at, player) in players.iter().enumerate().take(PLAYERS) {
         let name = profile_name(game, at);
         let text = profile(console, player, devices[at].as_deref());
-        std::fs::write(profiles.join(format!("{name}.ini")), text).map_err(failed)?;
+        ini::write(&profiles.join(format!("{name}.ini")), &text).map_err(failed)?;
         settings.push((format!("{key}Profile{}", at + 1), name));
         if console != Console::GameCube {
             // Counted from 0 here (`GameConfigLoader.cpp`).
@@ -423,7 +421,7 @@ pub fn write(app: &AppHandle, console: Console, title_id: &str, players: &[Playe
 /// `SIDevice0` to 3 in Core/Config/MainSettings.cpp). A port the user set
 /// to something else is left as it is.
 fn standard_controllers(dolphin_ini: &Path) -> std::io::Result<()> {
-    let text = std::fs::read_to_string(dolphin_ini).unwrap_or_default();
+    let text = ini::read(dolphin_ini)?;
     let keys = ["SIDevice0", "SIDevice1", "SIDevice2", "SIDevice3"];
     let empty: Vec<(&str, &str, &str)> = keys
         .iter()
@@ -481,13 +479,14 @@ pub fn forget(app: &AppHandle, console: Console, title_id: &str) -> Result<(), S
     let user = super::install::user_dir(app)?;
     let profiles = user.join("Config").join("Profiles").join(folder);
     let game_settings = user.join("GameSettings").join(format!("{game}.ini"));
-    let before = std::fs::read_to_string(&game_settings).unwrap_or_default();
+    let failed = |_| "Couldn't save the controller settings for Dolphin.".to_string();
+    let before = ini::read(&game_settings).map_err(failed)?;
     let text = without_own_profiles(&before, console, game);
     for at in 0..PLAYERS {
         let _ = std::fs::remove_file(profiles.join(format!("{}.ini", profile_name(game, at))));
     }
-    if game_settings.is_file() && text != before {
-        std::fs::write(&game_settings, text).map_err(|_| "Couldn't save the controller settings for Dolphin.".to_string())?;
+    if text != before {
+        ini::write(&game_settings, &text).map_err(failed)?;
     }
     Ok(())
 }

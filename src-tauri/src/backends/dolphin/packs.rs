@@ -120,6 +120,7 @@ const SOURCE: &str = "the Dolphin community";
 const NOT_INSTALLED: &str = "Install Dolphin from the Emulators screen. Its patches and codes come with it.";
 const ON_BY_DOLPHIN: &str = "On unless you turn it off, as Dolphin has it for this game.";
 const GONE: &str = "That patch isn't in Dolphin's list for this game any more.";
+const UNREADABLE: &str = "Couldn't read Dolphin's settings for this game, so Omoio left them as they are. Try again in a moment.";
 
 /// Spaces and line breaks off both ends, as Dolphin's `StripWhitespace`
 /// takes them.
@@ -378,15 +379,21 @@ fn user_dir(app: &AppHandle) -> Result<PathBuf, String> {
 
 fn load(app: &AppHandle, game_id: &str, revision: Option<u16>) -> Result<Files, String> {
     let (shipped, user) = (shipped_dir(app)?, user_dir(app)?);
-    // One of Dolphin's files has a stray byte outside UTF-8 in a comment.
-    let read = |path: PathBuf| std::fs::read(path).map(|bytes| String::from_utf8_lossy(&bytes).into_owned()).unwrap_or_default();
+    // Byte for byte, as Dolphin reads them (ini::read): one of Dolphin's
+    // files has a stray byte outside UTF-8 in a comment. Only the game's own
+    // file is ever written, so only it must be read whole; the others are
+    // read as far as they can be.
+    let read = |path: PathBuf| ini::read(&path).unwrap_or_default();
     let names = file_names(game_id, revision);
-    let own = format!("{game_id}.ini");
+    let own_name = format!("{game_id}.ini");
+    let own = names.iter().position(|name| *name == own_name).unwrap_or_default();
+    let mut user_files: Vec<String> = names.iter().map(|name| read(user.join(name))).collect();
+    user_files[own] = ini::read(&user.join(&own_name)).map_err(|_| UNREADABLE.to_string())?;
     let config = super::install::user_dir(app)?.join("Config");
     Ok(Files {
         shipped: names.iter().map(|name| read(shipped.join(name))).collect(),
-        user: names.iter().map(|name| read(user.join(name))).collect(),
-        own: names.iter().position(|name| *name == own).unwrap_or_default(),
+        user: user_files,
+        own,
         settings: read(config.join("Dolphin.ini")),
         graphics: read(config.join("GFX.ini")),
     })
@@ -442,10 +449,7 @@ pub fn set(app: &AppHandle, title_id: &str, revision: Option<u16>, change: &Pack
     if text.trim().is_empty() {
         return if path.exists() { std::fs::remove_file(&path).map_err(failed) } else { Ok(()) };
     }
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(failed)?;
-    }
-    std::fs::write(&path, text).map_err(failed)
+    ini::write(&path, &text).map_err(failed)
 }
 
 #[cfg(test)]

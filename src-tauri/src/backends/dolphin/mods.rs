@@ -425,8 +425,19 @@ pub fn load(app: &AppHandle, game_id: &str) -> Result<Found, String> {
             place(Source::User, &user.join("Load").join("GraphicMods")),
             place(Source::System, &own),
         ],
-        list: std::fs::read_to_string(list_path(&user, game_id)).ok(),
+        list: read_list(&list_path(&user, game_id))?,
     })
+}
+
+/// The game's list of mods, `None` when it has none. A list that is there
+/// but can't be read is an error rather than no list: switching a mod would
+/// otherwise write a new list over it, the user's own mods gone from it.
+fn read_list(path: &Path) -> Result<Option<String>, String> {
+    match std::fs::read_to_string(path) {
+        Ok(text) => Ok(Some(text)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(_) => Err("Couldn't read Dolphin's list of graphics mods for this game, so Omoio left it as it is.".to_string()),
+    }
 }
 
 /// Writes the game's list, unless it says what it said before.
@@ -437,10 +448,7 @@ pub fn save(app: &AppHandle, found: &Found, list: &str) -> Result<(), String> {
     }
     let path = list_path(&super::install::user_dir(app)?, &found.game_id);
     let failed = |_: std::io::Error| "Couldn't save that in Dolphin's list of graphics mods for this game.".to_string();
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(failed)?;
-    }
-    std::fs::write(&path, list).map_err(failed)
+    super::ini::replace(&path, list.as_bytes()).map_err(failed)
 }
 
 #[cfg(test)]
@@ -651,6 +659,22 @@ mod tests {
     fn a_mod_nobody_lists_any_more_is_refused() {
         assert_eq!(switched(&found(nobodys(), None), "All Games HUD Removal/metadata.json", true), Err(GONE.to_string()));
         assert_eq!(switched(&found(nobodys(), None), "A Game/metadata.json", true), Err(GONE.to_string()), "names alone");
+    }
+
+    #[test]
+    fn a_list_that_cant_be_read_is_no_empty_list() {
+        let dir = std::env::temp_dir().join(format!("omoio-dolphin-mod-list-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        assert_eq!(read_list(&dir.join("SSPP52.json")), Ok(None), "none yet");
+        std::fs::write(dir.join("SSPP52.json"), "{}\n").unwrap();
+        assert_eq!(read_list(&dir.join("SSPP52.json")), Ok(Some("{}\n".to_string())));
+        // A folder in its place can't be read, nor can a list that isn't UTF-8.
+        std::fs::create_dir_all(dir.join("GALE01.json")).unwrap();
+        assert!(read_list(&dir.join("GALE01.json")).is_err());
+        std::fs::write(dir.join("RMCE01.json"), b"{\"mods\": \"\xF8\"}").unwrap();
+        assert!(read_list(&dir.join("RMCE01.json")).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Reads the mods the Dolphin Omoio installs comes with. Set
