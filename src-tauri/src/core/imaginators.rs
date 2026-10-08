@@ -144,7 +144,10 @@ pub enum Casing {
 /// order of Trap Team's traps (210 to 219). The variant's low byte is the
 /// crystal's design, 0x0200 is the LightCore bit, under which Runes lists
 /// the crystals, and 0x0400 marks a Legendary one (Texthead1's
-/// Skylander-IDs, README lines 458 to 493, read 7 October 2026).
+/// Skylander-IDs, README lines 458 to 493, read 7 October 2026). The game's
+/// own toy data has the same ids and variants, each with a Collection
+/// picture of its casing (read from Bertram's copy of the European release
+/// with its update, 8 October 2026).
 ///
 /// An Imaginator's battle class is chosen the first time its crystal goes on
 /// and is kept for good: "There are no options to reset a Creation Crystal or
@@ -209,9 +212,9 @@ const fn crystal_of(id: u16, variant: u16, element: Element, casing: Casing) -> 
     Crystal { id, variant, element, casing }
 }
 
-/// The 29 crystals that were sold. Texthead1's list has five more, which
-/// were never released (skylanderswiki.com's "Creation Crystal" agrees, read
-/// 7 October 2026) and are left out: Air Acorn (682, 0x5212), Tech Pyramid
+/// The 29 crystals that were sold. Texthead1's list and the game's toy data
+/// have five more, which were never released (skylanderswiki.com's
+/// "Creation Crystal" agrees, read 7 October 2026) and are left out: Air Acorn (682, 0x5212), Tech Pyramid
 /// (684, 0x5205), Fire Angel (685, 0x5201), Earth Rune (686, 0x520C) and
 /// Light Angel (689, 0x5203).
 pub const CRYSTALS: [Crystal; 29] = [
