@@ -507,38 +507,64 @@ fn mlc_folder(portable: &Path) -> PathBuf {
         .unwrap_or_else(|| portable.join("mlc01"))
 }
 
-/// The icon a game keeps beside its save, as the Wii U lays its storage out:
-/// usr/save, then the title id's two halves, then meta.
-fn save_icon(mlc: &Path, title_id: &str) -> Option<PathBuf> {
+/// A game's folder in the Wii U's storage, as the Wii U lays it out: usr/save,
+/// then the title id's two halves.
+fn title_save(mlc: &Path, title_id: &str) -> Option<PathBuf> {
     let id = title_id.to_ascii_lowercase();
     if id.len() != 16 || !id.chars().all(|c| c.is_ascii_hexdigit()) {
         return None;
     }
-    Some(mlc.join("usr").join("save").join(&id[..8]).join(&id[8..]).join("meta").join("iconTex.tga"))
+    Some(mlc.join("usr").join("save").join(&id[..8]).join(&id[8..]))
 }
 
-/// A game's save, as the Wii U lays its storage out (see `save_icon`): one
-/// folder, usr/save/<high half>/<low half>, holding the game's `user` saves
-/// and its `meta`. It is copied whole, as bringing saves over from the
-/// user's own Cemu copies it (own_cemu.rs), and kept under the high half.
+/// The icon a game keeps beside its save, in its folder's `meta`.
+fn save_icon(mlc: &Path, title_id: &str) -> Option<PathBuf> {
+    Some(title_save(mlc, title_id)?.join("meta").join("iconTex.tga"))
+}
+
+/// What a backup keeps a Wii U game's saves under: the accounts' folders,
+/// and what sits beside them in the game's own folder.
+const ACCOUNTS: &str = "user";
+const BESIDE: &str = "title";
+
+/// A game's saves, in its folder (see `title_save`): a folder for each Wii U
+/// account in `user`, 80000001 and on, with `common` beside them for every
+/// account's, and the game's `meta`. Each account's folder is a save of its
+/// own, so putting a backup back replaces only the accounts the backup
+/// holds, and an account that saved since keeps that save. `meta` and
+/// anything else beside `user` are kept as saves of their own too.
 fn save_folders_in(mlc: &Path, title_id: &str) -> Vec<super::SaveFolder> {
-    let id = title_id.to_ascii_lowercase();
-    if id.len() != 16 || !id.chars().all(|c| c.is_ascii_hexdigit()) {
+    let Some(save) = title_save(mlc, title_id) else {
         return Vec::new();
-    }
-    let high = mlc.join("usr").join("save").join(&id[..8]);
-    let save = high.join(&id[8..]);
+    };
     if !own_cemu::has_files(&save) {
         return Vec::new();
     }
-    vec![super::SaveFolder { kept_as: id[..8].to_string(), path: high, saves: vec![save] }]
+    let inside = |dir: &Path| -> Vec<PathBuf> {
+        let mut found: Vec<PathBuf> = std::fs::read_dir(dir)
+            .map(|entries| entries.flatten().map(|entry| entry.path()).collect())
+            .unwrap_or_default();
+        found.sort();
+        found
+    };
+    let is_accounts = |path: &PathBuf| path.file_name().is_some_and(|name| name.eq_ignore_ascii_case(ACCOUNTS));
+    let accounts = save.join(ACCOUNTS);
+    let beside: Vec<PathBuf> = inside(&save).into_iter().filter(|path| !is_accounts(path)).collect();
+    [(ACCOUNTS, inside(&accounts), accounts), (BESIDE, beside, save)]
+        .into_iter()
+        .filter(|(_, saves, _)| !saves.is_empty())
+        .map(|(kept_as, saves, path)| super::SaveFolder { kept_as: kept_as.to_string(), path, saves })
+        .collect()
 }
 
-/// The folder of the high half `kept_as` that a backup's save goes back
-/// into.
-fn save_folder_in(mlc: &Path, kept_as: &str) -> Option<PathBuf> {
-    let is_half = kept_as.len() == 8 && kept_as.chars().all(|c| c.is_ascii_hexdigit());
-    is_half.then(|| mlc.join("usr").join("save").join(kept_as))
+/// The folder a backup's part kept under `kept_as` goes back into.
+fn save_folder_in(mlc: &Path, title_id: &str, kept_as: &str) -> Option<PathBuf> {
+    let save = title_save(mlc, title_id)?;
+    match kept_as {
+        ACCOUNTS => Some(save.join(ACCOUNTS)),
+        BESIDE => Some(save),
+        _ => None,
+    }
 }
 
 /// A game whose dump can't be read, such as a disc image, still gets its
@@ -978,8 +1004,9 @@ impl super::EmulatorBackend for Cemu {
         save_folders_in(&mlc_folder(&install.join("portable")), &title_id)
     }
 
-    fn save_folder(&self, app: &AppHandle, _game: &Game, kept_as: &str) -> Option<PathBuf> {
-        save_folder_in(&mlc_folder(&install_dir(app).ok()?.join("portable")), kept_as)
+    fn save_folder(&self, app: &AppHandle, game: &Game, kept_as: &str) -> Option<PathBuf> {
+        let title_id = title_id_for(app, game)?;
+        save_folder_in(&mlc_folder(&install_dir(app).ok()?.join("portable")), &title_id, kept_as)
     }
 
     fn portal_figures(&self, pid: u32) -> Result<Vec<String>, String> {
@@ -1287,7 +1314,7 @@ Deluxe");
     }
 
     #[test]
-    fn a_games_save_is_its_folder_under_the_title_ids_two_halves() {
+    fn a_games_saves_are_its_accounts_folders_under_the_title_ids_two_halves() {
         let mlc = scratch("save-folder");
         let high = mlc.join("usr/save/00050000");
         let save = high.join("10140400");
@@ -1295,16 +1322,29 @@ Deluxe");
         assert!(save_folders_in(&mlc, "0005000010140400").is_empty(), "no file in it yet");
 
         std::fs::write(save.join("user/80000001/slot0.dat"), b"save").unwrap();
+        std::fs::create_dir_all(save.join("user/common")).unwrap();
+        std::fs::create_dir_all(save.join("meta")).unwrap();
+        std::fs::write(save.join("meta/iconTex.tga"), b"icon").unwrap();
         std::fs::create_dir_all(high.join("10101e00/user")).unwrap();
         std::fs::write(high.join("10101e00/user/other.dat"), b"another game's").unwrap();
 
+        let user = save.join("user");
         assert_eq!(
             save_folders_in(&mlc, "0005000010140400"),
-            [super::super::SaveFolder { kept_as: "00050000".to_string(), path: high.clone(), saves: vec![save] }]
+            [
+                super::super::SaveFolder {
+                    kept_as: "user".to_string(),
+                    path: user.clone(),
+                    saves: vec![user.join("80000001"), user.join("common")],
+                },
+                super::super::SaveFolder { kept_as: "title".to_string(), path: save.clone(), saves: vec![save.join("meta")] },
+            ]
         );
         assert!(save_folders_in(&mlc, "WUD87E51FD0F7F95").is_empty(), "a disc image's own id is no title id");
-        assert_eq!(save_folder_in(&mlc, "00050000"), Some(high));
-        assert_eq!(save_folder_in(&mlc, "EUR"), None);
+        assert_eq!(save_folder_in(&mlc, "0005000010140400", "user"), Some(user));
+        assert_eq!(save_folder_in(&mlc, "0005000010140400", "title"), Some(save));
+        assert_eq!(save_folder_in(&mlc, "0005000010140400", "00050000"), None);
+        assert_eq!(save_folder_in(&mlc, "WUD87E51FD0F7F95", "user"), None);
         let _ = std::fs::remove_dir_all(&mlc);
     }
 
