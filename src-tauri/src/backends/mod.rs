@@ -245,6 +245,31 @@ pub trait EmulatorBackend: Sync {
         Err("This emulator has no settings of its own for a game.".to_string())
     }
 
+    /// The folders in the emulator's storage that hold this game's saves
+    /// now, each with the saves in it, for backing them up (crate::saves).
+    /// Only folders with at least one save; none when the game has saved
+    /// nothing yet, or when the emulator offers no backups
+    /// (`Features::saves`).
+    fn save_folders(&self, _app: &AppHandle, _game: &Game) -> Vec<SaveFolder> {
+        Vec::new()
+    }
+
+    /// The folder a backup's part kept under `kept_as` goes back into.
+    /// Asked even when the game has nothing there now, so a backup can be
+    /// put back after the emulator's storage was cleared. `None` for a name
+    /// this emulator never keeps a part under.
+    fn save_folder(&self, _app: &AppHandle, _game: &Game, _kept_as: &str) -> Option<PathBuf> {
+        None
+    }
+
+    /// Whether `saved`, one of the game's saves in the emulator's storage
+    /// now, is the save `kept`, from a backup, under another name, so that
+    /// putting the backup back takes it out. A save of the same name is
+    /// always replaced; most emulators know a save by its name alone.
+    fn is_same_save(&self, _kept: &Path, _saved: &Path) -> bool {
+        false
+    }
+
     /// Every title this console's compatibility list knows, or `None` until
     /// the list has been downloaded.
     fn catalogue(&self, _app: &AppHandle) -> Option<Vec<crate::core::catalogue::Entry>> {
@@ -298,6 +323,18 @@ pub trait EmulatorBackend: Sync {
     ) -> futures_util::future::BoxFuture<'a, Result<usize, String>> {
         Box::pin(async { Err(NO_PACKS.to_string()) })
     }
+}
+
+/// One folder in an emulator's storage that holds a game's saves.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SaveFolder {
+    /// The name this folder's part of a backup is kept under, which
+    /// `save_folder` turns back into the folder: the RPCS3 user it belongs
+    /// to, for instance, or the GameCube region.
+    pub kept_as: String,
+    pub path: PathBuf,
+    /// The game's saves in it, files or folders, each copied whole.
+    pub saves: Vec<PathBuf>,
 }
 
 const NO_PORTAL: &str = "Omoio can't reach this emulator's portal yet.";

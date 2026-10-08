@@ -399,7 +399,7 @@ function fill(body: HTMLElement, hero: HTMLElement, game: Game): void {
   };
   if (offers.saves && game.set_up) void showSaves();
   body.querySelector<HTMLButtonElement>("#detail-saves")!.onclick = () =>
-    openSaves(game.title_id, game.title, showSaves);
+    openSaves(game, showSaves);
 
   const compat = body.querySelector<HTMLElement>("#detail-compat")!;
   const badge = body.querySelector<HTMLElement>("#detail-compat-badge")!;

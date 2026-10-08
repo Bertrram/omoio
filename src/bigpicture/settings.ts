@@ -625,7 +625,15 @@ export function savesScreen(kit: Kit, game: Game, section: Section): Screen {
         return page;
       }
       const [hasSaves, backups] = saves;
-      list.append(h("p", "bp-list-note", "A copy is taken by itself before every update. Reinstalling the emulator leaves these alone."));
+      list.append(
+        h(
+          "p",
+          "bp-list-note",
+          game.features.updates
+            ? "A copy is taken by itself before every update. Reinstalling the emulator leaves these alone."
+            : "Reinstalling the emulator leaves these alone."
+        )
+      );
       const now = row("save:now", "Back up now", working ? "Copying…" : "", async () => {
         if (working) return;
         working = true;
@@ -647,7 +655,7 @@ export function savesScreen(kit: Kit, game: Game, section: Section): Screen {
       list.append(heading(backups.length === 1 ? "1 copy kept" : `${backups.length} copies kept`));
       for (const backup of backups) {
         list.append(
-          row(`save:${backup.made}`, formatWhen(backup.made), `${formatBytes(backup.bytes)} · ${backup.folders === 1 ? "1 save" : `${backup.folders} saves`}`, () => {
+          row(`save:${backup.made}`, formatWhen(backup.made), `${formatBytes(backup.bytes)} · ${backup.saves === 1 ? "1 save" : `${backup.saves} saves`}`, () => {
             if (store.get().playing?.title_id === game.title_id) {
               kit.say("Quit the game first, then put the copy back.");
               return;

@@ -540,7 +540,9 @@ export interface SaveBackup {
   /// Seconds since the epoch, like the session logs use.
   made: number;
   bytes: number;
-  folders: number;
+  /// Not always one: a game can keep several save folders, or several
+  /// files on a GameCube memory card.
+  saves: number;
 }
 
 export function gameSaves(titleId: string): Promise<[boolean, SaveBackup[]]> {

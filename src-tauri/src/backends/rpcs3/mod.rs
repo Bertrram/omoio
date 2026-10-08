@@ -478,6 +478,14 @@ impl super::EmulatorBackend for Rpcs3 {
         game_config::write(app, &game.title_id, chosen)
     }
 
+    fn save_folders(&self, app: &AppHandle, game: &crate::core::library::Game) -> Vec<super::SaveFolder> {
+        saves::folders(app, &game.title_id)
+    }
+
+    fn save_folder(&self, app: &AppHandle, _game: &crate::core::library::Game, kept_as: &str) -> Option<PathBuf> {
+        saves::folder(app, kept_as)
+    }
+
     fn recognises(&self, path: &Path) -> bool {
         crate::import::recognises(path)
     }

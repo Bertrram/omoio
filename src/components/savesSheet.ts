@@ -1,8 +1,10 @@
 import {
   backUpSaves,
+  EMULATOR_OF,
   forgetBackup,
   gameSaves,
   restoreSaves,
+  type Game,
   type SaveBackup,
 } from "../api";
 
@@ -21,11 +23,10 @@ function formatWhen(seconds: number): string {
   });
 }
 
-export async function openSaves(
-  titleId: string,
-  title: string,
-  onChanged: () => void
-): Promise<void> {
+export async function openSaves(game: Game, onChanged: () => void): Promise<void> {
+  const titleId = game.title_id;
+  // A copy is taken before an update only where Omoio installs updates.
+  const beforeUpdates = game.features.updates;
   const scrim = document.createElement("div");
   scrim.className = "scrim";
   const sheet = document.createElement("div");
@@ -49,8 +50,10 @@ export async function openSaves(
     <div class="sheet-h">Saved games</div>
     <div class="sheet-p"></div>
   `;
-  head.querySelector<HTMLElement>(".sheet-p")!.textContent =
-    `${title}. One is taken automatically before every update, and reinstalling RPCS3 does not touch these.`;
+  const emulator = EMULATOR_OF[game.console];
+  head.querySelector<HTMLElement>(".sheet-p")!.textContent = beforeUpdates
+    ? `${game.title}. One is taken automatically before every update, and reinstalling ${emulator} does not touch these.`
+    : `${game.title}. Reinstalling ${emulator} does not touch these.`;
   sheet.appendChild(head);
 
   const list = document.createElement("div");
@@ -97,9 +100,11 @@ export async function openSaves(
     if (backups.length === 0) {
       list.appendChild(
         message(
-          hasSaves
-            ? "No copies kept yet. Back up now, or let the next update do it."
-            : "This game hasn't saved anything yet, so there is nothing to copy."
+          !hasSaves
+            ? "This game hasn't saved anything yet, so there is nothing to copy."
+            : beforeUpdates
+              ? "No copies kept yet. Back up now, or let the next update do it."
+              : "No copies kept yet. Back up now to keep one."
         )
       );
       note.textContent = hasSaves ? "Nothing kept yet" : "No saves yet";
@@ -123,7 +128,7 @@ export async function openSaves(
     const detail = document.createElement("div");
     detail.className = "setting-path";
     detail.textContent = `${formatSize(backup.bytes)} · ${
-      backup.folders === 1 ? "1 save" : `${backup.folders} saves`
+      backup.saves === 1 ? "1 save" : `${backup.saves} saves`
     }`;
     left.append(when, detail);
 

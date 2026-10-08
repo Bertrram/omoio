@@ -63,11 +63,16 @@ impl InstallState {
     }
 }
 
-/// An emulator's files cannot be replaced under a game it is running, for
-/// whichever of its consoles.
-fn refuse_while_playing(app: &AppHandle, emulator: &dyn crate::backends::EmulatorBackend) -> Result<(), String> {
+/// Whether the emulator is running a game now, for whichever of its
+/// consoles.
+fn is_playing_on(app: &AppHandle, emulator: &dyn crate::backends::EmulatorBackend) -> bool {
     let running = app.state::<Session>().playing().and_then(|p| crate::backends::for_console(p.console));
-    if running.is_some_and(|running| running.name() == emulator.name()) {
+    running.is_some_and(|running| running.name() == emulator.name())
+}
+
+/// An emulator's files cannot be replaced under a game it is running.
+fn refuse_while_playing(app: &AppHandle, emulator: &dyn crate::backends::EmulatorBackend) -> Result<(), String> {
+    if is_playing_on(app, emulator) {
         return Err("Close the game first. The emulator can't be replaced while it runs one.".to_string());
     }
     Ok(())
@@ -1117,7 +1122,9 @@ pub async fn install_update(
     // not load on it. Told to back up and given no way to, people would not.
     // A failure here is not a reason to refuse the update; it is reported and
     // the update goes ahead.
-    if let Err(e) = rpcs3::saves::back_up(&app, &title_id) {
+    let backed_up =
+        game_and_emulator(&app, &title_id).and_then(|(backend, game)| crate::saves::back_up(&app, backend, &game));
+    if let Err(e) = backed_up {
         let _ = app.emit("saves-backup-failed", e);
     }
 
@@ -1158,30 +1165,35 @@ pub async fn install_update(
     Ok(())
 }
 
+/// Whether the game has saved anything, and the copies kept of its saves.
 #[tauri::command]
-pub fn game_saves(app: AppHandle, title_id: String) -> (bool, Vec<rpcs3::saves::Backup>) {
-    (
-        rpcs3::saves::has_saves(&app, &title_id),
-        rpcs3::saves::list(&app, &title_id),
-    )
+pub fn game_saves(app: AppHandle, title_id: String) -> (bool, Vec<crate::saves::Backup>) {
+    let has_saves = game_and_emulator(&app, &title_id)
+        .is_ok_and(|(backend, game)| crate::saves::has_saves(&app, backend, &game));
+    (has_saves, crate::saves::list(&app, &title_id))
 }
 
 #[tauri::command]
-pub fn back_up_saves(
-    app: AppHandle,
-    title_id: String,
-) -> Result<Option<rpcs3::saves::Backup>, String> {
-    rpcs3::saves::back_up(&app, &title_id)
+pub fn back_up_saves(app: AppHandle, title_id: String) -> Result<Option<crate::saves::Backup>, String> {
+    let (backend, game) = game_and_emulator(&app, &title_id)?;
+    crate::saves::back_up(&app, backend, &game)
 }
 
+/// Refused while the emulator runs a game, which may be writing the very
+/// saves being put back, or hold them in memory and write them over the
+/// backup when it next saves.
 #[tauri::command]
 pub fn restore_saves(app: AppHandle, title_id: String, made: u64) -> Result<(), String> {
-    rpcs3::saves::restore(&app, &title_id, made)
+    let (backend, game) = game_and_emulator(&app, &title_id)?;
+    if is_playing_on(&app, backend) {
+        return Err(format!("Close the game first. Saves can't be put back while {} runs one.", backend.name()));
+    }
+    crate::saves::restore(&app, backend, &game, made)
 }
 
 #[tauri::command]
 pub fn forget_backup(app: AppHandle, title_id: String, made: u64) -> Result<(), String> {
-    rpcs3::saves::forget(&app, &title_id, made)
+    crate::saves::forget(&app, &title_id, made)
 }
 
 #[tauri::command]
