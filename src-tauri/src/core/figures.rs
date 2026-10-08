@@ -79,7 +79,9 @@ pub fn game_from_title(title: &str) -> Option<Game> {
 /// Whether the portal menu works in this game on this console: the games it
 /// has been played through with on each, which the README names, and
 /// SuperChargers and Imaginators on the Wii U, where each comes first. Their
-/// PS3 versions follow once they have been played there.
+/// PS3 versions follow once they have been played there; Imaginators' once
+/// it is known whether the PS3 game checks its figures' signature too, since
+/// RPCS3 has no patch that takes that check away.
 pub fn has_portal_menu(console: Console, title: &str) -> bool {
     is_skylanders(title)
         && matches!(

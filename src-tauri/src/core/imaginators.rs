@@ -63,8 +63,8 @@ pub struct Sensei {
     pub villain: bool,
 }
 
-/// Crash and Cortex are guest stars, not villains, so they go with the
-/// heroes.
+/// A Sensei who isn't a villain. Crash and Cortex are guest stars, so they
+/// are counted here too.
 const fn hero(id: u16, name: &'static str, element: Element, class: BattleClass) -> Sensei {
     Sensei { id, name, element, class, villain: false }
 }
@@ -298,6 +298,30 @@ mod tests {
         assert!(sensei(600).is_none(), "King Pen is 601");
         assert!(sensei(632).is_none());
         assert_eq!(sensei(601).map(|king_pen| king_pen.name), Some("King Pen"));
+    }
+
+    /// Cemu's own list as Omoio kept it on this machine, read to check the
+    /// table against the real thing. Skipped where there is none.
+    #[test]
+    fn every_sensei_in_cemus_real_list_is_in_the_table() {
+        let Some(file) = std::env::var_os("APPDATA").map(|a| std::path::PathBuf::from(a).join("Omoio").join("characters-wiiu.json")) else {
+            return;
+        };
+        let Ok(text) = std::fs::read_to_string(file) else {
+            return;
+        };
+        let kept: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let listed: Vec<(u16, String)> = kept["characters"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|c| Some((u16::try_from(c["id"].as_u64()?).ok()?, c["name"].as_str()?.to_string())))
+            .filter(|(id, _)| (600..700).contains(id))
+            .collect();
+        assert_eq!(listed.len(), SENSEIS.len(), "Cemu lists every Sensei once, and nothing else from 600 to 699");
+        for (id, name) in listed {
+            assert_eq!(sensei(id).map(|sensei| sensei.name), Some(name.as_str()), "{id}");
+        }
     }
 
     #[test]
