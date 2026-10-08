@@ -107,7 +107,7 @@ fn omoio_data_dir(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(data.join("Omoio"))
 }
 
-fn library_path(app: &AppHandle) -> Result<PathBuf, String> {
+pub(crate) fn library_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(omoio_data_dir(app)?.join("library.json"))
 }
 

@@ -395,7 +395,8 @@ impl super::EmulatorBackend for Dolphin {
     /// (`discs`), and `--user` the folder Dolphin keeps everything in
     /// (UICommon/CommandLineParse.cpp); named outright, no setting of
     /// another Dolphin's in the registry can send it elsewhere
-    /// (`UICommon::SetUserDirectory`).
+    /// (`UICommon::SetUserDirectory`). A Wii game starts with the GameCube
+    /// ports Omoio drives empty (controllers.rs, `gamecube_ports_off`).
     fn launch(&self, app: &AppHandle, game: &Game) -> Result<u32, String> {
         let exe = install::exe_path(app)?;
         if !exe.is_file() {
@@ -405,8 +406,15 @@ impl super::EmulatorBackend for Dolphin {
             return Err("This game isn't where it was. Reconnect the drive it's on.".to_string());
         }
         let portal = self.wants_portal(game);
+        let user = install::user_dir(app)?;
         let mut command = install::command(&exe);
-        command.arg("--user").arg(install::user_dir(app)?);
+        command.arg("--user").arg(&user);
+        if self.console == Console::Wii {
+            // Read only to see which ports hold a standard pad, so a file
+            // that can't be read counts as Dolphin's defaults.
+            let dolphin_ini = std::fs::read_to_string(user.join("Config").join("Dolphin.ini")).unwrap_or_default();
+            command.args(controllers::gamecube_ports_off(&dolphin_ini));
+        }
         if portal {
             command.env("QT_QPA_PLATFORM", portal::QT_PLATFORM);
         } else {

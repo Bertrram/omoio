@@ -31,6 +31,7 @@
 
 use super::ini;
 use crate::core::console::Console;
+use crate::core::library::Library;
 use crate::core::pad_layout::{self, Pad, Player, PLAYERS};
 use std::path::{Path, PathBuf};
 use tauri::AppHandle;
@@ -302,9 +303,24 @@ fn config_dir(app: &AppHandle) -> Result<PathBuf, String> {
 }
 
 /// The game's id as Dolphin files its settings, the six characters a disc
-/// names itself by, from the library's id, which adds a second disc's number.
+/// names itself by, from the library's id, which adds a second disc's number
+/// as `D2` (mod.rs, `library_id`). `None` for an id of any other shape, such
+/// as a PS3 or Wii U game's: a game's own layout is handed to every
+/// emulator.
 pub(super) fn game_id(title_id: &str) -> Option<&str> {
-    title_id.get(..6).filter(|id| id.chars().all(|c| c.is_ascii_alphanumeric()))
+    let (id, disc) = title_id.split_at_checked(6)?;
+    let is_disc = |number: &str| !number.is_empty() && number.bytes().all(|digit| digit.is_ascii_digit());
+    let disc_ok = disc.is_empty() || disc.strip_prefix('D').is_some_and(is_disc);
+    (disc_ok && id.bytes().all(|byte| byte.is_ascii_alphanumeric())).then_some(id)
+}
+
+/// Whether the library has `title_id` as one of `console`'s games. A Wii
+/// game's id and a GameCube game's look alike, so the shape alone can't
+/// keep one console's layout out of the other's files.
+fn is_own_game(app: &AppHandle, console: Console, title_id: &str) -> bool {
+    crate::commands::library_path(app).is_ok_and(|file| {
+        Library::load(&file).games().iter().any(|game| game.title_id == title_id && game.console == console)
+    })
 }
 
 fn profile_name(game: &str, player: usize) -> String {
@@ -347,7 +363,8 @@ fn stand_in(players: &[Player], plugged: &[Pad], usable: &dyn Fn(&Player) -> boo
 
 /// Writes the players' layout into Dolphin's files for `console`. An empty
 /// `title_id` is the layout for every game: GCPadNew.ini or WiimoteNew.ini.
-/// A game's own goes in profiles its settings file names. A Wii Remote is
+/// A game's own goes in profiles its settings file names, for this
+/// console's games only, since every emulator is handed it. A Wii Remote is
 /// switched on for player 1 and for every player whose pad is plugged in;
 /// one switched on with nothing to answer it would look to a game like a
 /// player who never presses anything.
@@ -376,7 +393,7 @@ pub fn write(app: &AppHandle, console: Console, title_id: &str, players: &[Playe
         }
         return Ok(());
     }
-    let Some(game) = game_id(title_id) else {
+    let Some(game) = game_id(title_id).filter(|_| is_own_game(app, console, title_id)) else {
         return Ok(());
     };
     let (folder, key) = profile_kind(console);
@@ -416,28 +433,81 @@ fn standard_controllers(dolphin_ini: &Path) -> std::io::Result<()> {
     ini::update(dolphin_ini, &empty)
 }
 
+/// Dolphin's number for a standard GameCube pad in a port (`SIDevices`,
+/// Core/HW/SI/SI_Device.h).
+const STANDARD_PAD: u32 = 6;
+
+/// What is in a GameCube port as Dolphin reads Dolphin.ini: the number set
+/// there, else its own default, a standard pad in the first port and
+/// nothing in the others (`SIDevice0` to 3, Core/Config/MainSettings.cpp).
+/// A value it can't read counts as the default too (`Config::GetUncached`,
+/// Common/Config/Config.h).
+fn port_device(dolphin_ini: &str, port: usize) -> u32 {
+    let default = if port == 0 { STANDARD_PAD } else { 0 };
+    ini::get(dolphin_ini, "Core", &format!("SIDevice{port}")).and_then(|value| value.parse().ok()).unwrap_or(default)
+}
+
+/// Dolphin's arguments that empty, for one Wii game's session, every
+/// GameCube port with a standard pad in it. Omoio binds those to the
+/// players' pads for GameCube games, so a Wii game that also reads GameCube
+/// pads, as Mario Kart Wii and Super Smash Bros. Brawl do, would hear each
+/// press twice: from Wii Remote 1 and from GameCube pad 1.
+///
+/// `--config` sets a value for that run alone (`CommandLineConfigLayerLoader`,
+/// UICommon/CommandLineParse.cpp, whose `Save` writes nothing), in a layer
+/// above Dolphin.ini and below a game's own settings (`SEARCH_ORDER`,
+/// Common/Config/Enums.h). So nothing the user set up changes: a port they
+/// gave another device, such as a GameCube adapter, keeps it, a game they
+/// gave its own ports in Dolphin (`[Controls] PadType0`, read by
+/// Core/ConfigLoaders/GameConfigLoader.cpp) keeps those, and their GameCube
+/// games find their pads where they were.
+pub fn gamecube_ports_off(dolphin_ini: &str) -> Vec<String> {
+    (0..4)
+        .filter(|&port| port_device(dolphin_ini, port) == STANDARD_PAD)
+        .flat_map(|port| ["--config".to_string(), format!("Dolphin.Core.SIDevice{port}=0")])
+        .collect()
+}
+
 /// Takes a game's own layout out of Dolphin: its profiles and the settings
-/// naming them, so it goes back to the layout for every game.
+/// naming them, so it goes back to the layout for every game. Only settings
+/// that name Omoio's own profiles are taken out, so a profile the user chose
+/// for the game in Dolphin stays, and so does everything of the other
+/// console's, which is asked to forget the same id.
 pub fn forget(app: &AppHandle, console: Console, title_id: &str) -> Result<(), String> {
     let Some(game) = game_id(title_id) else {
         return Ok(());
     };
-    let (folder, key) = profile_kind(console);
+    let (folder, _) = profile_kind(console);
     let user = super::install::user_dir(app)?;
     let profiles = user.join("Config").join("Profiles").join(folder);
     let game_settings = user.join("GameSettings").join(format!("{game}.ini"));
-    let mut text = std::fs::read_to_string(&game_settings).unwrap_or_default();
+    let before = std::fs::read_to_string(&game_settings).unwrap_or_default();
+    let text = without_own_profiles(&before, console, game);
     for at in 0..PLAYERS {
         let _ = std::fs::remove_file(profiles.join(format!("{}.ini", profile_name(game, at))));
-        text = ini::remove(&text, "Controls", &format!("{key}Profile{}", at + 1));
+    }
+    if game_settings.is_file() && text != before {
+        std::fs::write(&game_settings, text).map_err(|_| "Couldn't save the controller settings for Dolphin.".to_string())?;
+    }
+    Ok(())
+}
+
+/// A game's settings without the ones naming Omoio's profiles for it, nor
+/// the Wii Remote's source Omoio set beside each.
+fn without_own_profiles(text: &str, console: Console, game: &str) -> String {
+    let (_, key) = profile_kind(console);
+    let mut text = text.to_string();
+    for at in 0..PLAYERS {
+        let profile_key = format!("{key}Profile{}", at + 1);
+        if ini::get(&text, "Controls", &profile_key).as_deref() != Some(profile_name(game, at).as_str()) {
+            continue;
+        }
+        text = ini::remove(&text, "Controls", &profile_key);
         if console != Console::GameCube {
             text = ini::remove(&text, "Controls", &format!("WiimoteSource{at}"));
         }
     }
-    if game_settings.is_file() {
-        std::fs::write(&game_settings, text).map_err(|_| "Couldn't save the controller settings for Dolphin.".to_string())?;
-    }
-    Ok(())
+    text
 }
 
 /// Why player 1 would have no pad in Dolphin with these `players`, after
@@ -600,6 +670,45 @@ mod tests {
         assert_eq!(game_id("GALE01D2"), Some("GALE01"), "a second disc");
         assert_eq!(game_id("BLES"), None);
         assert_eq!(profile_name("SSPP52", 0), "Omoio SSPP52 1");
+    }
+
+    #[test]
+    fn another_consoles_id_is_no_dolphin_game() {
+        assert_eq!(game_id("BLES01272"), None, "a PS3 game");
+        assert_eq!(game_id("NPUB30910"), None, "a PS3 game from the store");
+        assert_eq!(game_id("0005000010140400"), None, "a Wii U game");
+        assert_eq!(game_id("WUD87E51FD0F7F95"), None, "a Wii U disc image");
+        assert_eq!(game_id("GALE01D"), None);
+        assert_eq!(game_id("GALE01X2"), None);
+        assert_eq!(game_id("SS-P52"), None);
+        assert_eq!(game_id("GALE01D12"), Some("GALE01"));
+    }
+
+    #[test]
+    fn forgetting_takes_out_only_omoios_own_profiles() {
+        let text = "[Controls]\r\nWiimoteProfile1 = Omoio SSPP52 1\r\nWiimoteSource0 = 1\r\n\
+                    WiimoteProfile2 = My remote\r\nWiimoteSource1 = 2\r\n[Core]\r\nCPUThread = False\r\n";
+        assert_eq!(
+            without_own_profiles(text, Console::Wii, "SSPP52"),
+            "[Controls]\r\nWiimoteProfile2 = My remote\r\nWiimoteSource1 = 2\r\n[Core]\r\nCPUThread = False\r\n"
+        );
+        // The GameCube's are asked about the same id, and have none there.
+        assert_eq!(without_own_profiles(text, Console::GameCube, "SSPP52"), text);
+    }
+
+    #[test]
+    fn a_wii_game_starts_with_the_standard_gamecube_pads_unplugged() {
+        // Dolphin's own defaults: a pad in the first port only.
+        assert_eq!(gamecube_ports_off(""), ["--config", "Dolphin.Core.SIDevice0=0"]);
+        // As Omoio leaves them for GameCube games, but for a port the user
+        // gave a GameCube adapter (12) and one with nothing in it.
+        let ini = "[Core]\r\nSIDevice0 = 6\r\nSIDevice1 = 12\r\nSIDevice2 = 6\r\nSIDevice3 = 0\r\n";
+        assert_eq!(
+            gamecube_ports_off(ini),
+            ["--config", "Dolphin.Core.SIDevice0=0", "--config", "Dolphin.Core.SIDevice2=0"]
+        );
+        assert!(gamecube_ports_off("[Core]\r\nSIDevice0 = 0\r\n").is_empty());
+        assert_eq!(gamecube_ports_off("[Core]\r\nSIDevice0 = pad\r\n").len(), 2, "unreadable is Dolphin's default");
     }
 
     #[test]
