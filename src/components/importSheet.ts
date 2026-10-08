@@ -22,8 +22,9 @@ import { store } from "../state";
 
 /// Disc images, which are played where they are: the Wii U's, which Cemu
 /// reads with the user's keys, and the Wii's and GameCube's, which Dolphin
-/// reads (backends/dolphin/disc.rs).
-const DISC_IMAGES = ["wud", "wux", "iso", "gcm", "wbfs", "rvz", "wia", "gcz", "ciso", "tgc"];
+/// reads (backends/dolphin/disc.rs). A .bin picked here is one only when its
+/// header says so.
+const DISC_IMAGES = ["wud", "wux", "iso", "gcm", "wbfs", "rvz", "wia", "gcz", "ciso", "tgc", "bin"];
 
 function formatGB(bytes: number): string {
   return `${(bytes / 1024 ** 3).toFixed(1)} GB`;

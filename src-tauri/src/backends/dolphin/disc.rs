@@ -105,7 +105,8 @@ pub struct Disc {
 /// 2609a, UICommon/GameFileCache.cpp, FindAllGamePaths), less two: .bin,
 /// which many other files are named, a Wii save's own banner.bin among them,
 /// and .nfs, a Wii game bought on the Wii U, which only the Wii U's keys
-/// open. A .bin that is a disc is still read when picked by hand.
+/// open. A .bin that is a disc is still read when picked by hand
+/// (`is_picked_disc_name`).
 const DISC_EXTENSIONS: [&str; 8] = ["iso", "gcm", "tgc", "ciso", "gcz", "wbfs", "wia", "rvz"];
 
 fn extension(name: &str) -> Option<String> {
@@ -118,6 +119,14 @@ fn extension(name: &str) -> Option<String> {
 pub fn is_disc_name(name: &str) -> bool {
     extension(name).is_some_and(|extension| DISC_EXTENSIONS.contains(&extension.as_str()))
         && !is_later_part(name)
+}
+
+/// Whether a file picked or dropped by hand, rather than found in a folder
+/// or a scan, may be a disc image by its name: one `is_disc_name` takes, or
+/// a .bin, which Dolphin plays too. Its header then says whether it is one
+/// (`read`), so another file named .bin is only opened, never taken.
+pub fn is_picked_disc_name(name: &str) -> bool {
+    is_disc_name(name) || extension(name).as_deref() == Some("bin")
 }
 
 /// Whether a file is the second or a later part of an image split into
@@ -1228,6 +1237,11 @@ mod tests {
         }
         assert!(is_channel_name("Channel.WAD"));
         assert!(!is_channel_name("game.iso"));
+        // A .bin only when picked by hand, its header deciding.
+        assert!(is_picked_disc_name("Melee.BIN"));
+        assert!(is_picked_disc_name("melee.iso"));
+        assert!(!is_picked_disc_name("Melee.part1.iso"));
+        assert!(!is_picked_disc_name("game.wad"));
     }
 
     #[test]

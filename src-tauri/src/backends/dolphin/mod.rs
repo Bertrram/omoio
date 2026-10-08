@@ -56,12 +56,13 @@ fn file_name(name: &str) -> String {
 
 /// The one disc image picked, or the one inside the folder picked, at the
 /// top or one level down, which is where an archive unpacks it. Two or more
-/// is not clear, so none.
+/// is not clear, so none. A file picked itself may be a .bin, which only its
+/// header says is a disc (`disc::is_picked_disc_name`).
 fn disc_image(picked: &Path) -> Option<PathBuf> {
-    let is_image = |path: &Path| path.is_file() && disc::is_disc_name(&path.to_string_lossy());
-    if is_image(picked) {
+    if picked.is_file() && disc::is_picked_disc_name(&picked.to_string_lossy()) {
         return Some(picked.to_path_buf());
     }
+    let is_image = |path: &Path| path.is_file() && disc::is_disc_name(&path.to_string_lossy());
     if !picked.is_dir() {
         return None;
     }
@@ -580,5 +581,31 @@ mod tests {
         assert_eq!(save_banner(user, "SSPP52"), Some(banner));
         assert_eq!(save_banner(user, "SSPP52D2"), save_banner(user, "SSPP52"), "a second disc's save is the game's");
         assert_eq!(save_banner(user, "SS-P52"), None);
+    }
+
+    #[test]
+    fn a_bin_is_read_only_when_picked_and_only_its_header_makes_it_a_disc() {
+        use crate::backends::EmulatorBackend;
+        let dir = std::env::temp_dir().join(format!("omoio-dolphin-bin-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // A GameCube disc's header: its id, the GameCube's word and a title.
+        let mut header = vec![0u8; 0x440];
+        header[..6].copy_from_slice(b"GALE01");
+        header[0x1C..0x20].copy_from_slice(&0xC233_9F3Du32.to_be_bytes());
+        header[0x20..0x25].copy_from_slice(b"Melee");
+        let game = dir.join("melee.bin");
+        std::fs::write(&game, &header).unwrap();
+        let (path, found) = find(&game).unwrap();
+        assert_eq!((path, found.game_id.as_str()), (game.clone(), "GALE01"));
+        assert!(GAMECUBE.recognises(&game));
+        assert!(!WII.recognises(&game));
+        // In a folder, where any file may be named so, it isn't looked at.
+        assert!(find(&dir).is_none());
+        // Nor is a .bin with no disc's header, such as a Wii save's banner.
+        let banner = dir.join("banner.bin");
+        std::fs::write(&banner, vec![0u8; 0x440]).unwrap();
+        assert!(find(&banner).is_none());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
