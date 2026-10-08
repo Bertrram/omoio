@@ -43,6 +43,13 @@ pub const TESTED: &[Tested] = &[
                  villain he trapped showed in the Villains tab. RPCS3's list rates it Ingame \
                  from 2020.",
     },
+    Tested {
+        console: Console::WiiU,
+        title: "Skylanders Imaginators",
+        reason: "Tested by Bertram on 8 October 2026 with the portal menu: a Sensei and new \
+                 Creation Crystals went on with Cemu's Signature Patch, and an Imaginator made \
+                 in one stayed on it.",
+    },
 ];
 
 /// The entry for this game on this console, if it has been played in Omoio.
