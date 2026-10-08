@@ -439,6 +439,9 @@ export interface Packs {
   source: string;
   /// Why none can be shown yet, when there is a reason.
   waiting: string | null;
+  /// They come with the emulator, as Dolphin's do, so there is nothing to
+  /// download or check for.
+  with_emulator: boolean;
   packs: Pack[];
 }
 

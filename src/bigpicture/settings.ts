@@ -460,7 +460,8 @@ export function packsScreen(kit: Kit, game: Game, section: Section): Screen {
     section,
     first: () => {
       const first = found?.packs.find((pack) => pack.applies);
-      return first ? `pack:${first.id}` : "pack:get";
+      if (first) return `pack:${first.id}`;
+      return found?.with_emulator ? "pack:none" : "pack:get";
     },
     draw() {
       const { page, list } = listPage(game.title, "Community packs");
@@ -472,7 +473,7 @@ export function packsScreen(kit: Kit, game: Game, section: Section): Screen {
         list.append(h("div", "bp-quiet", "Reading…"));
         return page;
       }
-      const { have_list, waiting, packs, source } = found;
+      const { have_list, waiting, with_emulator, packs, source } = found;
       list.append(
         h(
           "p",
@@ -480,7 +481,9 @@ export function packsScreen(kit: Kit, game: Game, section: Section): Screen {
           `Made by ${source || "the emulator's community"}. A pack that is on without being asked says why; the rest stay off until you turn them on.`
         )
       );
-      if (!have_list) {
+      if (!have_list && with_emulator) {
+        list.append(row("pack:none", "Not installed", "", undefined, waiting ?? undefined));
+      } else if (!have_list) {
         list.append(row("pack:none", "Not downloaded yet", "", undefined, "Download them to see what has been made for this game."));
       } else if (waiting) {
         list.append(row("pack:none", waiting, ""));
@@ -535,6 +538,8 @@ export function packsScreen(kit: Kit, game: Game, section: Section): Screen {
           }
         }
       }
+      // Packs that come with the emulator have nothing to download.
+      if (with_emulator) return page;
       // Pressed again while it runs, it stops.
       const get = row(
         "pack:get",

@@ -437,8 +437,10 @@ function fill(body: HTMLElement, hero: HTMLElement, game: Game): void {
     const packs = await communityPacks(game.title_id);
     const value = valueOf("packs");
     // Not downloaded yet, the row offers it rather than reporting a lack.
-    value.classList.toggle("ask", !packs.have_list);
-    value.textContent = packs.have_list ? packCount(packs) : "Download";
+    // Packs that come with the emulator can't be downloaded on their own.
+    const offer = !packs.have_list && !packs.with_emulator;
+    value.classList.toggle("ask", offer);
+    value.textContent = offer ? "Download" : packCount(packs);
   };
   if (offers.packs && game.set_up) void showPackCount();
   body.querySelector<HTMLButtonElement>("#detail-packs")!.onclick = () =>
@@ -586,7 +588,7 @@ function fillListing(body: HTMLElement, hero: HTMLElement, { listing }: Catalogu
     const packsNote = body.querySelector<HTMLElement>("#listing-packs")!;
     void communityPacks(release.title_id, listing.console).then(({ have_list, waiting, packs }) => {
       packsNote.textContent = !have_list
-        ? "Not downloaded yet. Open the game from your library to get them."
+        ? (waiting ?? "Not downloaded yet. Open the game from your library to get them.")
         : waiting
           ? waiting
           : packs.length === 0

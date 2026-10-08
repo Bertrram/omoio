@@ -37,8 +37,8 @@ function line(className: string, text: string): HTMLElement {
 }
 
 /// The packs that are on, of those that can be: "1 of 4 on".
-export function packCount({ have_list, waiting, packs }: Packs): string {
-  if (!have_list) return "Not downloaded";
+export function packCount({ have_list, waiting, with_emulator, packs }: Packs): string {
+  if (!have_list) return with_emulator ? "Not installed" : "Not downloaded";
   if (waiting) return "After first play";
   const fits = packs.filter((pack) => pack.applies);
   const on = fits.filter((pack) => pack.on).length;
@@ -163,9 +163,11 @@ export async function openPacks(titleId: string, title: string, console: Console
     body.textContent = "";
     intro.textContent = `Made by ${packs.source || "the emulator's community"} for ${title}. A pack that is on without being asked says why; the rest stay off until you turn them on.`;
     get.textContent = packs.have_list ? "Check for new packs" : "Download packs";
+    // Packs that come with the emulator have nothing to download.
+    get.classList.toggle("gone", packs.with_emulator);
     note.textContent = packCount(packs);
     if (!packs.have_list) {
-      empty("Download the packs to see what has been made for this game.");
+      empty(packs.waiting ?? "Download the packs to see what has been made for this game.");
       return;
     }
     if (packs.waiting) {
