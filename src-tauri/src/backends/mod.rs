@@ -150,6 +150,15 @@ pub trait EmulatorBackend: Sync {
         None
     }
 
+    /// Why a player's pad, plugged in, isn't reaching the game started for
+    /// `title_id`, from what the emulator logged as it set its pads up,
+    /// worded for the person playing. Asked once, a few seconds after the
+    /// game's window appears. `None` when every pad was found, or the
+    /// emulator can't say.
+    fn unfound_pad(&self, _app: &AppHandle, _title_id: &str) -> Option<String> {
+        None
+    }
+
     /// Takes a game's own layout out of the emulator's files.
     fn forget_layout(&self, _app: &AppHandle, _title_id: &str) -> Result<(), String> {
         Ok(())

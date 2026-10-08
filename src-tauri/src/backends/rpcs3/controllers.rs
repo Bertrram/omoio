@@ -99,7 +99,8 @@ const SDL_NAMES: [(u16, u16, &str); 8] = [
 /// RPCS3 ships has no mapping for those drivers' pads, so SDL makes one named
 /// "*" (`SDL_CreateMappingForHIDAPIGamepad`), which means the pad's own name.
 /// Any other pad goes by its mapping's name in that database, which gilrs
-/// reads too, so gilrs's name stands in for it.
+/// reads too, so gilrs's name stands in for it. One RPCS3 then can't find
+/// is told about after the game starts (`unfound`).
 fn sdl_name(pad: &Pad, ids: Option<(u16, u16)>) -> String {
     ids.and_then(|ids| SDL_NAMES.iter().find(|(vendor, product, _)| (*vendor, *product) == ids))
         .map_or_else(|| pad.name.clone(), |(.., name)| name.to_string())
@@ -506,6 +507,100 @@ pub fn existing(app: &AppHandle) -> Vec<(String, Vec<Player>)> {
         .collect()
 }
 
+/// Why RPCS3 could not use a player's pad, as its log says it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Unbound {
+    /// No pad by the profile's name was there to take.
+    Missing,
+    /// A pad of the kind was there, but RPCS3 could not open it, as when
+    /// another program holds it.
+    Held,
+}
+
+/// The players, counted from zero, whose pad in `profile` RPCS3's `log`
+/// says it could not use, and why. RPCS3 says so in three ways (its source
+/// at 222754bf, read 8 October 2026):
+///
+/// - "Failed to bind device '<device>' to handler <handler>." when the
+///   handler has no pad by that name at all (`pad_thread::Init`; RPCS3's pad
+///   thread for its own menus says it the same way, `gui_pad_thread::init`).
+/// - "Adding empty device: <device>" when SDL found no pad by that name and
+///   holds an empty place for it (`sdl_pad_handler::get_device`).
+/// - "One or more <handler> pads were detected but couldn't be interacted
+///   with directly" when a Sony pad is there but could not be opened
+///   (`hid_pad_handler::update_devices`). That names no slot, so it counts
+///   for every player on that handler.
+///
+/// A slot handler's slot always exists, so a slot with no pad in it is never
+/// in the log: a pad switched off is not found this way.
+fn unbound_players(log: &str, profile: &str) -> Vec<(usize, Unbound)> {
+    let mut missing: Vec<&str> = Vec::new();
+    let mut held: Vec<&str> = Vec::new();
+    for line in log.lines().map(str::trim_end) {
+        if let Some((_, rest)) = line.split_once("Failed to bind device '") {
+            if let Some((device, _)) = rest.split_once("' to handler ") {
+                missing.push(device);
+            }
+        } else if let Some((_, device)) = line.split_once("Adding empty device: ") {
+            missing.push(device);
+        } else if let Some((_, rest)) = line.split_once("One or more ") {
+            if let Some((handler, _)) =
+                rest.split_once(" pads were detected but couldn't be interacted with directly")
+            {
+                held.push(handler);
+            }
+        }
+    }
+    sections(profile)
+        .iter()
+        .enumerate()
+        .filter_map(|(at, section)| {
+            let (handler, device) = handler_and_device(section)?;
+            if missing.contains(&device.as_str()) {
+                Some((at, Unbound::Missing))
+            } else if held.contains(&handler.as_str()) {
+                Some((at, Unbound::Held))
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+/// What Omoio says about a player whose pad RPCS3 could not use. `player`
+/// counts from zero.
+fn notice(player: usize, pad_name: &str, why: Unbound) -> String {
+    let number = player + 1;
+    match why {
+        Unbound::Missing => format!(
+            "RPCS3 couldn't find player {number}'s controller, {pad_name}, so the game won't answer it. Stop the game and start it again."
+        ),
+        Unbound::Held => format!(
+            "RPCS3 couldn't open player {number}'s controller, {pad_name}. Close any other program using it, such as DS4Windows, then start the game again."
+        ),
+    }
+}
+
+/// Why a player's pad, plugged in, isn't reaching the game started for
+/// `title_id`, from what RPCS3 logged as it set its pads up. RPCS3 reads a
+/// game's own profile when it has one, else the one for every game
+/// (`cfg_input::load`). `None` when RPCS3 found every pad plugged in, or
+/// there is no log to read.
+pub fn unfound(app: &AppHandle, title_id: &str) -> Option<String> {
+    let log = std::fs::read(super::install_dir(app).ok()?.join("log").join("RPCS3.log")).ok()?;
+    let log = String::from_utf8_lossy(&log);
+    let profile = read_profile(app, title_id).or_else(|| read_profile(app, ""))?;
+    let plugged = plugged();
+    let players = parse_players(&profile, &plugged);
+    unbound_players(&log, &profile).into_iter().find_map(|(at, why)| {
+        let pad = &players.get(at)?.as_ref()?.pad;
+        plugged
+            .iter()
+            .any(|p| p.pad.device == pad.device)
+            .then(|| notice(at, &pad.name, why))
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -755,6 +850,58 @@ mod tests {
         let player = parse_players(text, &[])[0].clone().unwrap();
         assert_eq!(player.input("RB"), "RB", "the Edge's back button is no place of Omoio's");
         assert_eq!(player.input("South"), "East");
+    }
+
+    /// How RPCS3's log reads as it sets the pads up, in its own words, with
+    /// lines around them that must not count.
+    const SETUP_LOG: &str = "\u{b7}! 0:00:01.684565 {Pad Thread} Input: Using input configuration: '' (override='')\n\
+        \u{b7}W 0:00:01.689000 {Pad Thread} SDL: Adding empty device: Nintendo Switch Pro Controller 1\n\
+        \u{b7}! 0:00:01.689388 {Pad Thread} Input: Pad 0: device='Nintendo Switch Pro Controller 1', handler=SDL, VID=0x0, PID=0x0, class_type=0x0, class_profile=0x0\n\
+        \u{b7}! 0:00:01.689699 {Pad Thread} Input: Pad 0: config=\n\
+        Handler: SDL\n\
+        Device: \"Nintendo Switch Pro Controller 1\"\n\
+        \u{b7}E 0:00:01.690100 {Pad Thread} HID: DualShock 4 hid_open_path failed! error='Access is denied.', path='\\\\?\\hid#vid_054c&pid_09cc&mi_03'\n\
+        \u{b7}E 0:00:01.690200 {Pad Thread} HID: One or more DualShock 4 pads were detected but couldn't be interacted with directly\r\n\
+        \u{b7}E 0:00:01.690300 {Pad Thread} HID: Check https://wiki.rpcs3.net/index.php?title=Help:Controller_Configuration for instructions on how to solve this issue\n\
+        \u{b7}E 0:00:01.690400 {Pad Thread} Input: PadHandlerBase::bindPadToDevice: no PadDevice found for device 'DualSense Pad #8'\n\
+        \u{b7}E 0:00:01.690500 {Pad Thread} Input: Failed to bind device 'DualSense Pad #8' to handler DualSense. Falling back to NullPadHandler.\n\
+        \u{b7}S 0:00:02.435919 {Pad Thread} Input: XInput device 0 connected\n";
+
+    #[test]
+    fn the_players_rpcs3_could_not_use_are_read_from_its_log() {
+        let profile = "Player 1 Input:\n  Handler: SDL\n  Device: \"Nintendo Switch Pro Controller 1\"\n\
+             Player 2 Input:\n  Handler: DualShock 4\n  Device: \"DS4 Pad #1\"\n\
+             Player 3 Input:\n  Handler: XInput\n  Device: \"XInput Pad #1\"\n\
+             Player 4 Input:\n  Handler: DualSense\n  Device: \"DualSense Pad #8\"\n";
+        assert_eq!(
+            unbound_players(SETUP_LOG, profile),
+            [(0, Unbound::Missing), (1, Unbound::Held), (3, Unbound::Missing)]
+        );
+    }
+
+    #[test]
+    fn a_log_with_every_pad_found_names_nobody() {
+        let profile = "Player 1 Input:\n  Handler: XInput\n  Device: \"XInput Pad #1\"\n\
+             Player 2 Input:\n  Handler: DualSense\n  Device: \"DualSense Pad #1\"\n";
+        assert!(unbound_players(SETUP_LOG, profile).is_empty());
+    }
+
+    #[test]
+    fn the_notice_says_who_and_what_to_do() {
+        assert_eq!(
+            notice(0, "PS5 Controller", Unbound::Missing),
+            "RPCS3 couldn't find player 1's controller, PS5 Controller, so the game won't answer it. Stop the game and start it again."
+        );
+        assert_eq!(
+            notice(1, "PS4 Controller", Unbound::Held),
+            "RPCS3 couldn't open player 2's controller, PS4 Controller. Close any other program using it, such as DS4Windows, then start the game again."
+        );
+    }
+
+    #[test]
+    fn a_name_with_punctuation_survives_being_written() {
+        assert_eq!(quoted("Pad: v2"), "\"Pad: v2\"");
+        assert_eq!(quoted("say \"hi\""), "\"say \\\"hi\\\"\"");
     }
 
     /// "Left Stick Left" starts with "Left", so a looser match would answer

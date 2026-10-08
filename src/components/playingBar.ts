@@ -10,6 +10,7 @@ export function renderPlayingBar(playing: Playing): HTMLElement {
   bar.innerHTML = `
     <span class="playing-dot"></span>
     <span class="playing-name"></span>
+    <span class="playing-note" role="status"></span>
     <div class="playing-actions">
       <button class="small-btn" id="toggle-fullscreen">Fullscreen</button>
       <button class="small-btn danger" id="stop-game">Stop</button>
@@ -37,4 +38,11 @@ export function renderPlayingBar(playing: Playing): HTMLElement {
   };
 
   return bar;
+}
+
+/// Says what went wrong with the running game beside its name, the one place
+/// it can be read without leaving the game. It stays until the game stops.
+export function showPlayingNote(message: string): void {
+  const note = document.querySelector<HTMLElement>(".playing-note");
+  if (note) note.textContent = message;
 }

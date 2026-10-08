@@ -498,6 +498,10 @@ impl super::EmulatorBackend for Rpcs3 {
         controllers::write(app, title_id, players)
     }
 
+    fn unfound_pad(&self, app: &AppHandle, title_id: &str) -> Option<String> {
+        controllers::unfound(app, title_id)
+    }
+
     fn forget_layout(&self, app: &AppHandle, title_id: &str) -> Result<(), String> {
         controllers::forget(app, title_id)
     }

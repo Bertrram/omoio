@@ -194,6 +194,9 @@ fn still_running(pid: u32) -> bool {
 pub fn watch(app: AppHandle, pid: u32) {
     tauri::async_runtime::spawn(async move {
         let mut attached = false;
+        // When the game's window appeared, until its pads have been asked
+        // about.
+        let mut pads_unasked: Option<std::time::Instant> = None;
         // The key state is remembered until read, so clear anything left over
         // from before the game started. Otherwise an F11 pressed elsewhere
         // minutes ago throws the game to fullscreen the moment it appears.
@@ -258,6 +261,7 @@ pub fn watch(app: AppHandle, pid: u32) {
                         overlay::focus(game);
                     }
                     attached = true;
+                    pads_unasked = Some(std::time::Instant::now());
                     let _ = app.emit("game-started", session.playing());
                 }
             }
@@ -272,6 +276,35 @@ pub fn watch(app: AppHandle, pid: u32) {
                     backend.tidy_window(pid, game);
                 }
             }
+
+            if pads_unasked.is_some_and(|since| since.elapsed() >= PADS_SET_UP) {
+                pads_unasked = None;
+                ask_about_pads(&app);
+            }
+        }
+    });
+}
+
+/// How long after the game's window appears to ask whether the emulator
+/// found every pad. RPCS3 sets its pads up a fraction of a second after it
+/// opens the window (its log, 8 October 2026); the rest is room for that to
+/// reach its log file.
+const PADS_SET_UP: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Tells the interface when the emulator couldn't find a player's pad, which
+/// would otherwise show only as a game that ignores it. Off the watcher's
+/// task, since the emulator's log can be large.
+fn ask_about_pads(app: &AppHandle) {
+    let Some(playing) = app.state::<Session>().playing() else {
+        return;
+    };
+    let Some(backend) = crate::backends::for_console(playing.console) else {
+        return;
+    };
+    let app = app.clone();
+    std::thread::spawn(move || {
+        if let Some(message) = backend.unfound_pad(&app, &playing.title_id) {
+            let _ = app.emit("pad-not-found", message);
         }
     });
 }

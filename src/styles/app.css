@@ -979,6 +979,13 @@ button {
   font-weight: 600;
   letter-spacing: -0.01em;
 }
+.playing-note {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--warn);
+}
 .playing-actions {
   margin-left: auto;
   display: flex;

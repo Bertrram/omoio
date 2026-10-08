@@ -8,6 +8,7 @@ import {
   launchWarning,
   listSessions,
   onGameStopped,
+  onPadNotFound,
   padsConnected,
   padInput,
   padsHeld,
@@ -1197,6 +1198,11 @@ async function arrive(): Promise<void> {
 }
 
 export function renderBigPicture(): HTMLElement {
+  // The desktop says it in the bar over the game, which Big Picture covers.
+  void onPadNotFound((message) => {
+    if (store.get().bigPicture) say(message);
+  });
+
   listen(
     act,
     () => {
