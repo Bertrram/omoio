@@ -1638,7 +1638,8 @@ pub async fn portal_load(app: AppHandle, slot: usize, figure: String) -> Result<
 /// those the running game reads, for the portal menu: a figure from a later
 /// game does nothing in an earlier one, and Nintendo's SuperChargers figures
 /// do nothing away from the Wii U. A file the user brought is kept, since
-/// Omoio can't tell which character it is.
+/// Omoio can't tell which character it is, except a Creation Crystal, which
+/// it tells by the plain id in its first blocks.
 #[tauri::command]
 pub fn figures(app: AppHandle, playable: Option<bool>) -> Vec<crate::portal_menu::Figure> {
     use crate::core::figures::{game_from_title, reads};
@@ -1685,6 +1686,18 @@ pub fn portal_menu_family() -> String {
 pub fn portal_game(app: AppHandle) -> Option<crate::core::figures::Game> {
     let playing = app.state::<Session>().playing()?;
     crate::core::figures::game_from_title(&playing.title)
+}
+
+/// Whether the running game takes the figures its emulator makes, so the
+/// menu can say why before making one the game would turn away.
+#[tauri::command]
+pub fn portal_made_figures(app: AppHandle) -> crate::core::community::MadeFigures {
+    let Some(playing) = app.state::<Session>().playing() else {
+        return crate::core::community::MadeFigures::default();
+    };
+    crate::backends::for_console(playing.console)
+        .map(|backend| backend.made_figures(&app, &playing.title))
+        .unwrap_or_default()
 }
 
 /// Everything held on any pad, for a menu any player may use. Nothing while
