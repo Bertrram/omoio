@@ -868,6 +868,51 @@ mod tests {
     }
 
     #[test]
+    fn an_xinput_players_files_are_what_cemu_has_always_been_given() {
+        // Every byte, so nothing done for other pads changes an Xbox pad's.
+        fn text(kind: &str, controller: u32, entries: &[(u64, u64)]) -> String {
+            let entries: String = entries
+                .iter()
+                .map(|(mapping, button)| {
+                    format!("\t\t\t<entry>\n\t\t\t\t<mapping>{mapping}</mapping>\n\t\t\t\t<button>{button}</button>\n\t\t\t</entry>\n")
+                })
+                .collect();
+            format!(
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<emulated_controller>\n\t<type>{kind}</type>\n\t<controller>\n\
+                 \t\t<api>XInput</api>\n\t\t<uuid>{controller}</uuid>\n\t\t<display_name>Controller {}</display_name>\n\
+                 \t\t<mappings>\n{entries}\t\t</mappings>\n\t</controller>\n</emulated_controller>\n",
+                controller + 1
+            )
+        }
+        let gamepad = text(
+            "Wii U GamePad",
+            0,
+            &[
+                (1, 13), (2, 12), (3, 15), (4, 14), (5, 8), (6, 9), (7, 42), (8, 43), (9, 4), (10, 5), (11, 0), (12, 1),
+                (13, 2), (14, 3), (15, 6), (16, 7), (17, 39), (18, 45), (19, 44), (20, 38), (21, 41), (22, 47), (23, 46),
+                (24, 40),
+            ],
+        );
+        let pro = text(
+            "Wii U Pro Controller",
+            1,
+            &[
+                (1, 13), (2, 12), (3, 15), (4, 14), (5, 8), (6, 9), (7, 42), (8, 43), (9, 4), (10, 5), (12, 0), (13, 1),
+                (14, 2), (15, 3), (16, 6), (17, 7), (18, 39), (19, 45), (20, 44), (21, 38), (22, 41), (23, 47), (24, 46),
+                (25, 40),
+            ],
+        );
+        let dir = scratch("xinput-bytes");
+        let players: Vec<Player> = (1..=4).map(|slot| Player::on(xinput(slot))).collect();
+        let readers: Vec<Option<Reader>> = players.iter().map(|p| reader_for(p, &[dualsense_hid()], &no_ids)).collect();
+        write_all(&dir, &players, &readers).unwrap();
+        assert_eq!(std::fs::read_to_string(dir.join("controller0.xml")).unwrap(), gamepad);
+        assert_eq!(std::fs::read_to_string(dir.join(FIRST_AS_GAMEPAD)).unwrap(), gamepad);
+        assert_eq!(std::fs::read_to_string(dir.join("controller1.xml")).unwrap(), pro);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn hid_devices_are_only_looked_at_for_a_pad_gilrs_reads() {
         let players = vec![Player::on(xinput(1)), Player::on(xinput(2))];
         assert!(hid_for(&players, Some("2.6"), not_looked_for).is_empty());
