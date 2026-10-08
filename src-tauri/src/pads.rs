@@ -227,8 +227,10 @@ fn watch() {
             };
             loop {
                 while gilrs.next_event().is_some() {}
-                // RPCS3 numbers pads of the same name from zero, which is how
-                // two identical controllers are told apart in its file.
+                // Pads of the same name are numbered from zero, which tells
+                // two identical controllers apart in the saved layout. RPCS3
+                // names them its own way; backends/rpcs3/controllers.rs turns
+                // this name into RPCS3's.
                 let mut named: HashMap<String, u32> = HashMap::new();
                 let now = gilrs
                     .gamepads()
