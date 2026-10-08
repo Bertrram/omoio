@@ -364,6 +364,28 @@ mod tests {
         assert_eq!(unknown.better, "The Wii U version is rated Perfect in Cemu.");
     }
 
+    /// The Dolphin wiki lists a release per id, as RPCS3's list does. It
+    /// rated Spyro's Adventure on the Wii five stars on 8 October 2026.
+    #[test]
+    fn a_wii_version_that_plays_well_in_dolphin_is_offered() {
+        let mut lists = lists();
+        let spyro = "Skylanders: Spyro's Adventure";
+        lists.push(List::new(
+            Console::Wii,
+            "Dolphin",
+            vec![
+                Entry { regions: vec!["EU"], ..entry(Console::Wii, "SSPP52", spyro, "Perfect") },
+                Entry { regions: vec!["US"], ..entry(Console::Wii, "SSPE52", spyro, "Perfect") },
+            ],
+        ));
+        // The Wii U version came out in Japan only, so the Wii's is offered.
+        let european = warning(&ps3_game("BLES01272", "Skylanders Spyro's Adventure"), &lists).unwrap();
+        assert_eq!(
+            european.better,
+            "The Wii version is rated Perfect in Dolphin, and the portal menu works in it."
+        );
+    }
+
     #[test]
     fn a_release_the_list_lacks_is_rated_like_the_rest_of_its_game() {
         let warning = warning(&ps3_game("BLUS31600", "Skylanders Imaginators"), &lists()).unwrap();

@@ -10,6 +10,7 @@
 //! only the plain header at the front of a disc image, which names the game,
 //! and never decrypts anything itself.
 
+pub mod compat;
 pub mod controllers;
 pub mod copy;
 pub mod disc;
@@ -349,5 +350,23 @@ impl super::EmulatorBackend for Dolphin {
             portal::give_back_to_game(pid);
         }
         Ok(())
+    }
+
+    fn catalogue(&self, app: &AppHandle) -> Option<Vec<crate::core::catalogue::Entry>> {
+        compat::entries(app, self.console)
+    }
+
+    fn refresh_catalogue<'a>(
+        &'a self,
+        app: &'a AppHandle,
+        cancel: &'a AtomicBool,
+    ) -> futures_util::future::BoxFuture<'a, Result<usize, String>> {
+        Box::pin(compat::refresh(app, self.console, cancel))
+    }
+
+    /// The Dolphin wiki's ratings, which Dolphin's compatibility list is made
+    /// from, as a list for each console.
+    fn catalogue_source(&self) -> Option<(&'static str, &'static str)> {
+        Some(compat::source(self.console))
     }
 }

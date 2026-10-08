@@ -860,8 +860,9 @@ pub fn game_compatibility(app: AppHandle, title_id: String) -> CompatView {
 }
 
 /// Getting RPCS3's list means an export plus a page-at-a-time pass for the
-/// names, around 22 seconds, and the Cemu wiki's takes a few more, so it
-/// reports progress and can be stopped. `console` narrows it to one list.
+/// names, around 22 seconds, and the Cemu wiki's and the Dolphin wiki's take
+/// a few more, so it reports progress and can be stopped. `console` narrows
+/// it to one list.
 #[tauri::command]
 pub async fn refresh_compatibility(
     app: AppHandle,
