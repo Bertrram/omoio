@@ -877,6 +877,13 @@ fn wanted(rules: &Rules, kept: Option<&Kept>, entry: Option<&Entry>) -> Option<K
     })
 }
 
+/// The user's choice for a pack, kept under its settings.xml name; for one
+/// of Omoio's own also under its path, so switching it off outlasts its
+/// folder moving in a later download.
+fn kept_for<'a>(kept: &'a BTreeMap<String, Kept>, key: &str, rules: &Rules) -> Option<&'a Kept> {
+    kept.get(key).or_else(|| own(rules).and_then(|own| kept.get(own.path)))
+}
+
 /// settings.xml with every pack Omoio has a say in written in. A kept pack
 /// no longer in the download is left alone, as is everything else in the
 /// file.
@@ -885,7 +892,7 @@ fn settings_with(text: &str, packs: &[(String, Rules)], kept: &BTreeMap<String, 
     let mut text = text.to_string();
     for (key, rules) in packs {
         let entry = before.iter().find(|entry| same_file(&entry.filename, key));
-        if let Some(wanted) = wanted(rules, kept.get(key), entry) {
+        if let Some(wanted) = wanted(rules, kept_for(kept, key, rules), entry) {
             text = with_entry(&text, key, rules.default_on, &wanted);
         }
     }
@@ -971,7 +978,7 @@ pub fn view(app: &AppHandle, title: Option<&str>) -> Packs {
         .unwrap_or_default();
     for (key, rules) in packs_for(app, title) {
         let entry = in_settings.iter().find(|entry| same_file(&entry.filename, &key));
-        let (on, asked, changed) = state(&rules, kept.get(&key), entry);
+        let (on, asked, changed) = state(&rules, kept_for(&kept, &key, &rules), entry);
         let (chosen, visible) = settle(&rules, &asked);
         let (what, who) = about(&rules.description);
         answer.packs.push(Pack {
@@ -1004,13 +1011,14 @@ pub fn set(app: &AppHandle, title: Option<&str>, change: &PackChange) -> Result<
     // Omoio shows rather than working out its own.
     let (choices, _) = settle(&rules, &change.choices);
     let mut kept = load_kept(app);
-    kept.insert(
-        key,
-        Kept {
-            on: change.on,
-            choices: if change.on { choices } else { BTreeMap::new() },
-        },
-    );
+    let chosen = Kept {
+        on: change.on,
+        choices: if change.on { choices } else { BTreeMap::new() },
+    };
+    if let Some(own) = own(&rules) {
+        kept.insert(own.path.to_string(), chosen.clone());
+    }
+    kept.insert(key, chosen);
     save_kept(app, &kept)?;
     write(app);
     Ok(())
@@ -1035,8 +1043,9 @@ pub fn signature_patch(app: &AppHandle) -> MadeFigures {
 fn made_figures(packs: &[(String, Rules)], kept: &BTreeMap<String, Kept>, started_with: &str) -> MadeFigures {
     let found = packs.iter().find(|(_, rules)| rules.path.eq_ignore_ascii_case(SIGNATURE_PATCH));
     let check = match found {
-        None => Check::NotDownloaded,
-        Some((key, _)) if kept.get(key).is_some_and(|kept| !kept.on) => Check::Off,
+        None if packs.is_empty() => Check::NotDownloaded,
+        None => Check::Missing,
+        Some((key, rules)) if kept_for(kept, key, rules).is_some_and(|kept| !kept.on) => Check::Off,
         Some((key, rules)) => {
             let entry = entries(started_with).into_iter().find(|entry| same_file(&entry.filename, key));
             if cemu_has_on(rules, entry.as_ref()) {
@@ -1320,6 +1329,15 @@ condition = ((($aspectRatioWidth - 21) == 0) + (($aspectRatioHeight - 9) == 0)) 
         // Switched on again, it is written as kept.
         let on = BTreeMap::from([(SIGNATURE_KEY.to_string(), Kept { on: true, choices: BTreeMap::new() })]);
         assert!(has_on(&settings_with(&text, &three_packs(), &on), SIGNATURE_KEY));
+
+        // Off is kept under the pack's path too, so it stays off when a later
+        // download moves its folder.
+        let moved = r"graphicPacks\downloadedGraphicPacks\Imaginators\SignaturePatch\rules.txt";
+        let packs = vec![(moved.to_string(), parse_rules(SIGNATURE).unwrap())];
+        let off_by_path = BTreeMap::from([(SIGNATURE_PATCH.to_string(), Kept::default())]);
+        assert_eq!(settings_with(SETTINGS, &packs, &off_by_path), SETTINGS, "never written");
+        assert_eq!(made_figures(&packs, &off_by_path, SETTINGS).check, Check::Off);
+        assert!(has_on(&settings_with(SETTINGS, &packs, &BTreeMap::new()), moved));
     }
 
     #[test]
@@ -1396,7 +1414,7 @@ condition = ((($aspectRatioWidth - 21) == 0) + (($aspectRatioHeight - 9) == 0)) 
 
         // Not downloaded, or not in the download.
         assert_eq!(check(&[], &none, &written), Check::NotDownloaded);
-        assert_eq!(check(&three_packs()[..2], &none, &written), Check::NotDownloaded);
+        assert_eq!(check(&three_packs()[..2], &none, &written), Check::Missing);
         assert_eq!(made_figures(&[], &none, "").pack, "Signature Patch");
 
         assert_eq!(check(&three_packs(), &none, &written), Check::Passed);

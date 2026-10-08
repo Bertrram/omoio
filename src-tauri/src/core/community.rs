@@ -81,6 +81,8 @@ pub enum Check {
     NextStart,
     /// The user switched the pack off.
     Off,
-    /// The emulator's packs aren't downloaded, or this one isn't among them.
+    /// The emulator's packs aren't downloaded.
     NotDownloaded,
+    /// The packs are downloaded, but this one isn't among them.
+    Missing,
 }
