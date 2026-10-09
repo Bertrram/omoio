@@ -3,27 +3,27 @@
 </p>
 <h1 align="center">Omoio</h1>
 <p align="center">Your PS3, Wii U, Wii and GameCube games in one library. Press Play and Omoio sets up the emulator for you.</p>
-<p align="center"><a href="https://omoio.app">omoio.app</a> · <a href="https://ko-fi.com/omoio">Support on Ko-fi</a></p>
+<p align="center"><a href="https://omoio.app">omoio.app</a> · <a href="https://discord.gg/ghnAm5CbdP">Discord</a> · <a href="https://ko-fi.com/omoio">Support on Ko-fi</a></p>
 
 [![The Omoio video on YouTube, 1 minute 10 seconds](design/screenshots/video.jpg)](https://youtu.be/wWmthRdoImE)
 
 ![The library, with the panel for The Last of Us open](design/screenshots/library.png)
 <sub>Covers in these pictures come from [RAWG](https://rawg.io).</sub>
 
-Omoio is a game library for Windows. You import the dumps of games you own
-and press Play. Omoio installs the emulator and sets up your controller, then
-starts the game in its own window. It's made for big collections spread across
+Omoio is a game library for Windows. Import the dumps of games you own and
+press Play. Omoio installs the emulator, sets up your controller and starts the
+game in its own window. It's made for big collections spread over several
 systems, the kind that sits on a few drives in a home lab.
 
 Omoio is in very early development. PS3 games run through RPCS3, Wii U games
 through Cemu, and Wii and GameCube games through Dolphin. More systems are
-planned. Things will break, and feedback is really appreciated, so open an
-issue.
+planned. Things will break, and feedback really helps, so open an issue or
+come and say hi on [Discord](https://discord.gg/ghnAm5CbdP).
 
 ## What you get
 
-- One library for every system. Import a folder, a zip or 7z file, or scan a
-  whole drive at once.
+- One library for every system, with each game tagged by its console. Import
+  a folder, a zip or 7z file, or scan a whole drive at once.
 - Games run inside Omoio's window, fullscreen with F11, and you never see the
   emulator.
 - RPCS3, Cemu and Dolphin installed for you. RPCS3 is kept up to date, and Cemu
@@ -92,9 +92,12 @@ so the figure keeps what it has earned. Giants and Trap Masters come first in
 each element and Minis last, and a newer game's own come before them: the
 SuperChargers in SuperChargers, the Senseis in Imaginators. Trap Masters,
 SuperChargers, Senseis and Minis carry a mark, and Giants show the game's own
-Giant badge once the pictures are read. In
-SWAP Force, swappers can be mixed: pick a top, then a bottom, and each one shows
-how it moves.
+Giant badge once the pictures are read. In SWAP Force, swappers can be mixed:
+pick a top, then a bottom, and each one shows how it moves.
+
+To delete a saved figure, hold the top face button on it for five seconds. A
+bar fills the picture while you hold, and the file goes to the Recycle Bin, so
+you can still get it back. A figure on the portal has to come off first.
 
 In Spyro's Adventure on Wii, the menu works Dolphin's own Skylanders Manager out
 of sight: it puts figures on, takes them off and makes new ones. A figure made
@@ -142,12 +145,13 @@ sprites from the game. A Wii U game imported as an unpacked folder or a .wua
 file is read as it is. A Wii U or Wii disc image can't be read as it is, so
 Omoio asks first, then has the emulator make a temporary copy, reads the
 pictures from it and deletes it again: Cemu makes it for a Wii U game, and
-Dolphin's own DolphinTool for a Wii game. Omoio never decrypts anything itself.
-It says how much room the copy needs for the few minutes it takes. For a PS3 game it reads the game's folder. A small
-separate program, [omoio-portraits](https://github.com/Bertrram/omoio-portraits), does the reading.
-Omoio downloads it only when you ask and checks it before it runs. The pictures
-stay on your computer, and the screenshots above show them as they look once
-read.
+Dolphin's own DolphinTool for a Wii game. Omoio never decrypts anything
+itself, and it tells you how much room the copy needs for the few minutes it
+takes. For a PS3 game it reads the game's folder. A small separate program,
+[omoio-portraits](https://github.com/Bertrram/omoio-portraits), does the
+reading. Omoio downloads it only when you ask and checks it before it runs. The
+pictures stay on your computer, and the screenshots above show them as they
+look once read.
 
 The menu isn't in SuperChargers and Imaginators on PS3 or in Giants, SWAP Force,
 Trap Team and SuperChargers on Wii yet, and the other Skylanders games aren't
@@ -171,6 +175,13 @@ library.
 The installer isn't code signed yet, so Windows SmartScreen may warn you. Click
 More info, then Run anyway.
 
+[![The Omoio 0.3.0 setup guide on YouTube, 3 minutes 58 seconds](site/guide.jpg)](https://youtu.be/ioL5LjZmEXs)
+
+The [setup guide](https://youtu.be/ioL5LjZmEXs) shows every step on screen,
+from the download to your first game, then Big Picture, community packs, save
+backups and the Skylanders portal menu. It has chapters, so you can skip to the
+one you need.
+
 ## Q&A
 
 <details>
@@ -192,9 +203,7 @@ PS Vita and DS. Each one is added once its download and its licence have been
 checked. PS4 isn't among them: its emulator runs only games that are already
 decrypted, and a PS4 game you bought is locked to Sony's keys.
 
-<!-- A new screenshot of the Emulators screen goes here, with RPCS3, Cemu and
-     Dolphin installed and six more coming: design/screenshots/emulators.png -->
-![The Emulators screen, with RPCS3 and Cemu installed and seven more coming](design/screenshots/emulators.png)
+![The Emulators screen, with RPCS3, Dolphin and Cemu installed and six more coming](design/screenshots/emulators.png)
 
 </details>
 
@@ -250,7 +259,9 @@ Disc images in the forms Dolphin reads: .iso, .gcm, .wbfs, .rvz, .wia, .gcz,
 .ciso and .tgc. Omoio plays them where they are, as it does a Wii U .wua, and a
 disc's files unpacked into a folder work too. Scanning a folder finds them. A
 Wii channel (.wad) won't import: a channel is installed into the console's own
-storage rather than played from a disc, and Omoio doesn't do that.
+storage rather than played from a disc, and Omoio doesn't do that. For a game on
+two discs, import both disc images. Omoio gives Dolphin both, and Dolphin puts
+in the next one by itself when the game asks for it.
 
 </details>
 
@@ -274,11 +285,11 @@ A Wii game plays as a Wii Remote with a Nunchuk. The left stick is the
 Nunchuk's stick, and the right stick moves the pointer. A and B are the bottom and right
 buttons, with B on the right trigger too. The Nunchuk's Z is the left button and
 the left trigger, C is the top button, and the right shoulder shakes the remote.
-A GameCube game uses Dolphin's own layout for a gamepad.
+A GameCube game uses Dolphin's own layout for a gamepad. A real Wii Remote, the
+Balance Board or another GameCube device you set up in Dolphin yourself stays
+the way you set it up.
 
-<!-- A new screenshot of the Controller screen goes here, with the Wii's and the
-     GameCube's words on the labels: design/screenshots/controller.png -->
-![The Controller screen, with an Xbox pad and what each button does](design/screenshots/controller.png)
+![The Controller screen, with an Xbox pad and what each button does on PS3, Wii U, Wii and GameCube](design/screenshots/controller.png)
 
 </details>
 
@@ -371,10 +382,11 @@ lot.
 
 Omoio doesn't come with games and won't help you find any, so bring your own
 dumps of games you own. It doesn't crack anything: Wii U disc images need your
-own keys file, and Cemu does the decrypting, as Dolphin does for Wii discs. PS3 firmware comes from Sony's page,
-downloaded by you. Covers come only from RAWG or your own games and saves, and the
-Skylanders pictures only from your own copy of the game. Omoio has no connection with Activision, who
-publish Skylanders. RPCS3, Cemu and Dolphin are separate projects, run as
+own keys file, and Cemu does the decrypting, as Dolphin does for Wii discs.
+PS3 firmware comes from Sony's page, downloaded by you. Covers come only from
+RAWG or your own games and saves, and the Skylanders pictures only from your own
+copy of the game. Omoio has no connection with Activision, who publish
+Skylanders. RPCS3, Cemu and Dolphin are separate projects, run as
 their official builds, and all credit for the emulation goes to them. The
 Emulators screen shows each emulator's own icon, unchanged, under its project's
 licence; [the notice beside them](src/icons/emulators/NOTICE.md) lists which.
