@@ -1,6 +1,6 @@
 [package]
 name = "omoio"
-version = "0.3.0"
+version = "0.3.1"
 description = "A game library for Windows that sets up and runs PS3 and Wii U games through RPCS3 and Cemu"
 authors = ["Bertram Bech"]
 license = "MIT"
