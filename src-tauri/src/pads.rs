@@ -7,7 +7,9 @@
 //! export is missing, everything but Guide still works.
 //!
 //! Every other pad, a DualSense or a Switch Pro or an 8BitDo, is read with
-//! gilrs, which names buttons by place the way layouts do. gilrs keeps its
+//! gilrs, which names buttons by place the way layouts do. A Pro Controller
+//! that Steam or an emulator switched to its full reports is read from those
+//! instead, which gilrs can't (switch_pro.rs). gilrs keeps its
 //! picture of each pad current as events arrive, so one thread owns it for as
 //! long as Omoio runs and publishes what it sees, starting it again whenever a
 //! pad leaves and before a game starts (`watch`, `rescan`).
@@ -23,6 +25,8 @@ use std::time::Duration;
 const MICROSOFT: u16 = 0x045E;
 const SONY: u16 = 0x054C;
 const NINTENDO: u16 = 0x057E;
+/// Nintendo's Pro Controller, and an 8BitDo pad in its Switch mode.
+const PRO_CONTROLLER: u16 = 0x2009;
 
 /// One of the four XInput slots, counted from zero. What sits in a slot is not
 /// known, only that it is laid out like an Xbox pad, which is what XInput
@@ -252,6 +256,7 @@ static NO_GILRS: AtomicBool = AtomicBool::new(false);
 fn watch() {
     static STARTED: OnceLock<()> = OnceLock::new();
     STARTED.get_or_init(|| {
+        crate::switch_pro::watch();
         std::thread::spawn(|| {
             let start = || gilrs::GilrsBuilder::new().with_force_feedback(false).build();
             let Ok(mut gilrs) = start() else {
@@ -275,6 +280,9 @@ fn watch() {
                 // names them its own way; backends/rpcs3/controllers.rs turns
                 // this name into RPCS3's.
                 let mut named: HashMap<String, u32> = HashMap::new();
+                // Pro Controllers are matched to the ones switch_pro.rs reads
+                // in the order each finds them.
+                let mut pros = 0;
                 let now = gilrs
                     .gamepads()
                     .map(|(_, pad)| {
@@ -283,6 +291,13 @@ fn watch() {
                         let device = format!("{name} {at}");
                         *at += 1;
                         let xbox_like = pad.uuid() == [0; 16];
+                        let mut held = sdl_held(&pad);
+                        if (pad.vendor_id(), pad.product_id()) == (Some(NINTENDO), Some(PRO_CONTROLLER)) {
+                            if let Some(full) = crate::switch_pro::held(pros) {
+                                held = full;
+                            }
+                            pros += 1;
+                        }
                         Seen {
                             pad: Pad {
                                 device,
@@ -293,7 +308,7 @@ fn watch() {
                             vendor: pad.vendor_id(),
                             product: pad.product_id(),
                             xbox_like,
-                            held: sdl_held(&pad),
+                            held,
                         }
                     })
                     .collect();
