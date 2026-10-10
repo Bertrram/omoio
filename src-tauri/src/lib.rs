@@ -12,6 +12,8 @@ mod figure_pictures;
 mod portal_menu;
 mod saves;
 pub mod session;
+mod switch_pro;
+mod vc_runtime;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {

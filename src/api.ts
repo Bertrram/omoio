@@ -34,7 +34,9 @@ export function getHardwareInfo(): Promise<HardwareInfo> {
 }
 
 export interface InstallProgress {
-  stage: "checking" | "downloading" | "verifying" | "extracting" | "done";
+  /// "runtime" while Microsoft's Visual C++ runtime, which the emulators
+  /// need, is installed first.
+  stage: "checking" | "runtime" | "downloading" | "verifying" | "extracting" | "done";
   bytes: number;
   total: number;
 }

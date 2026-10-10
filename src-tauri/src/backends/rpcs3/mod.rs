@@ -85,6 +85,12 @@ pub fn detect_version(app: &AppHandle) -> Option<String> {
     if installing {
         return None;
     }
+    // Without the runtime RPCS3 can't start, and each try would put up
+    // Windows' "was not found" box. Installing it again puts the runtime in
+    // first.
+    if !crate::vc_runtime::present() {
+        return None;
+    }
     let version = if running(&exe) {
         let log = std::fs::read_to_string(install_dir(app).ok()?.join("log").join("RPCS3.log")).ok()?;
         log_version(&log)?
@@ -229,6 +235,12 @@ pub async fn install(app: AppHandle, cancel: Arc<AtomicBool>) -> Result<String, 
 
     emit(&app, "checking", 0, 0);
     let release = latest_release(&client).await?;
+
+    // Asked before the download, since RPCS3 is started once it is unpacked.
+    if !crate::vc_runtime::present() {
+        emit(&app, "runtime", 0, 0);
+        crate::vc_runtime::ensure_async().await?;
+    }
 
     let archive = release
         .assets

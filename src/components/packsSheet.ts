@@ -12,6 +12,7 @@ import {
 
 const STAGE: Record<InstallProgress["stage"], string> = {
   checking: "Finding the newest packs…",
+  runtime: "Installing Microsoft's Visual C++ runtime…",
   downloading: "Downloading…",
   verifying: "Checking the download…",
   extracting: "Unpacking…",

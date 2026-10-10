@@ -76,6 +76,10 @@ pub async fn install(app: AppHandle, cancel: Arc<AtomicBool>) -> Result<String, 
     let client = reqwest::Client::new();
 
     emit(&app, "checking", 0, 0);
+    if !crate::vc_runtime::present() {
+        emit(&app, "runtime", 0, 0);
+        crate::vc_runtime::ensure_async().await?;
+    }
     let dir = install_dir(&app)?;
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let zip_path = dir.join(release::FILE);

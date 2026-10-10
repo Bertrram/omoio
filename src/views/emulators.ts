@@ -67,6 +67,7 @@ const EMULATORS: Emulator[] = [
 
 const STAGE: Record<InstallProgress["stage"], string> = {
   checking: "Finding the newest release…",
+  runtime: "Installing Microsoft's Visual C++ runtime…",
   downloading: "Downloading…",
   verifying: "Checking the download…",
   extracting: "Unpacking…",
