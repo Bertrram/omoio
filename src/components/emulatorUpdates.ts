@@ -36,6 +36,7 @@ const INSTALL: Record<
 
 const STAGE: Record<InstallProgress["stage"], string> = {
   checking: "Starting",
+  runtime: "Installing Microsoft's Visual C++ runtime",
   downloading: "Downloading",
   verifying: "Checking the download",
   extracting: "Unpacking",

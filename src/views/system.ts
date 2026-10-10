@@ -48,6 +48,7 @@ function renderHardware(hw: HardwareInfo): HTMLElement {
 
 const STAGE_LABEL: Record<InstallProgress["stage"], string> = {
   checking: "Checking for the latest build…",
+  runtime: "Installing Microsoft's Visual C++ runtime…",
   downloading: "Downloading…",
   verifying: "Verifying…",
   extracting: "Extracting…",

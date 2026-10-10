@@ -275,7 +275,9 @@ export async function renderSettings(): Promise<View> {
       rpcs3Progress.textContent =
         p.stage === "downloading" && p.total > 0
           ? `Downloading ${Math.round((p.bytes / p.total) * 100)}%`
-          : `${p.stage}…`;
+          : p.stage === "runtime"
+            ? "Installing Microsoft's Visual C++ runtime…"
+            : `${p.stage}…`;
     });
     try {
       const installed = await installRpcs3();

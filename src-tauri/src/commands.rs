@@ -606,6 +606,10 @@ fn launch(app: AppHandle, title_id: &str) -> Result<(), String> {
         ));
     }
 
+    // An emulator installed before Omoio put the runtime in first can't start
+    // without it.
+    crate::vc_runtime::ensure()?;
+
     // One game at a time: starting another stops the one already running.
     app.state::<Session>().stop();
     // The known fixes for this game go in before it starts, each only once,

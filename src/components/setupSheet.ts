@@ -30,6 +30,7 @@ const SONY_FIRMWARE_PAGE =
 
 const STAGE: Record<InstallProgress["stage"], string> = {
   checking: "Looking for the latest build",
+  runtime: "Installing Microsoft's Visual C++ runtime",
   downloading: "Downloading",
   verifying: "Checking the download",
   extracting: "Unpacking",
