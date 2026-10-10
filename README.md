@@ -163,6 +163,11 @@ It doesn't need admin rights. On first start it asks which emulators you want.
 PS3 games also need Sony's free firmware: Omoio opens Sony's download page and
 installs the file you pick.
 
+The emulators need Microsoft's Visual C++ runtime, which Windows doesn't come
+with. If it's missing or too old, Omoio installs it before the first emulator,
+or before a game starts. That one step needs admin rights, so Windows asks
+first.
+
 From 0.2.2 on, Omoio updates itself. It downloads a new version in the
 background and asks before it restarts, never while a game is running. If you
 have an older version, install the newest one once by hand; it keeps your
@@ -262,7 +267,8 @@ Xbox controllers, and other pads that speak XInput, work in all three
 emulators. So do PS5 and PS4 controllers (DualSense, DualSense Edge and
 DualShock 4), without DS4Windows, and the Switch Pro Controller. An 8BitDo pad
 works set to its XInput mode, and in RPCS3 and Cemu set to its Switch mode too.
-Other pads work in RPCS3 through SDL, but not in Cemu or Dolphin yet. Plug a pad
+Other pads work in RPCS3 through SDL, but not in Cemu or Dolphin yet. A Switch
+Pro Controller works in Omoio's menus with Steam running too. Plug a pad
 in before you press Play, since Omoio tells Cemu and Dolphin about the pads it
 finds then. A PlayStation or Switch pad on its own is player 1 without being
 picked. You set one layout on the Controller screen and Omoio uses it
