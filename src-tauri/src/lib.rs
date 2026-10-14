@@ -52,6 +52,15 @@ pub fn run() {
                 WindowEvent::Destroyed if window.label() == "main" => {
                     session.stop();
                 }
+                // Omoio's window came to the front, as Alt+Tab back to Omoio
+                // brings it. Over a game that fills the screen the game gets
+                // the front, since Omoio has nothing there to use. On Windows
+                // Tauri sends this from WebView2's GotFocus, so it comes a
+                // moment after the window became active (tauri-runtime-wry
+                // 2.11.4, lib.rs).
+                WindowEvent::Focused(true) if window.label() == "main" => {
+                    session::omoio_activated(app);
+                }
                 _ => {}
             }
         })

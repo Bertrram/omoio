@@ -810,7 +810,7 @@ pub fn set_game_fullscreen(app: AppHandle, fullscreen: bool) {
         crate::session::place(&window, &session);
     }
     // The button that asked took the keyboard from the game.
-    session.focus_game();
+    crate::session::give_game_front(&app);
 }
 
 #[tauri::command]
