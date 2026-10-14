@@ -229,6 +229,40 @@ fn answers_through_xinput(vendor: Option<u16>, xbox_like: bool) -> bool {
     vendor == Some(MICROSOFT) || xbox_like
 }
 
+/// vJoy's USB vendor id, and its product ids: 0xBEAD in Shaul Eizikovich's
+/// vJoy (shauleiz/vJoy, `inc/public.h` lines 76 and 77) and in njz3's fork
+/// with force feedback, 0x0FFB in that fork without it (njz3/vJoy,
+/// `inc/public.h` lines 110 to 118, both read 14 October 2026). 0x1FFB is
+/// the fork's third, left in its source as a comment (line 116). vJoy is a
+/// joystick only a program moves, such as a mapper or a script, and
+/// Windows lists it as "vJoy Device" (reported 10 October 2026).
+const VJOY: u16 = 0x1234;
+const VJOY_PRODUCTS: [u16; 3] = [0xBEAD, 0x0FFB, 0x1FFB];
+
+/// Whether a pad is a joystick no hand holds, which is never given to a
+/// player unless someone picks it. Pads that stand in for a real one in
+/// someone's hands, such as the Xbox pads DS4Windows makes with ViGEm, are
+/// not: they are read through XInput, and people set them up to play on.
+fn is_virtual_joystick(vendor: Option<u16>, product: Option<u16>) -> bool {
+    vendor == Some(VJOY) && product.is_some_and(|product| VJOY_PRODUCTS.contains(&product))
+}
+
+/// The pads among `connected` that a player may be given without anyone
+/// choosing them, as pads plugged in are when Play is pressed: all but a
+/// joystick no hand holds (`is_virtual_joystick`). That one can still be
+/// picked on the Controller screen.
+pub fn seatable(connected: &[Pad]) -> Vec<Pad> {
+    // Only looks at what gilrs has seen, so asking never starts it.
+    let seen = seen().lock().unwrap();
+    let virtual_joystick = |pad: &Pad| {
+        seen.as_ref().is_some_and(|seen| {
+            seen.iter()
+                .any(|s| s.pad.device == pad.device && is_virtual_joystick(s.vendor, s.product))
+        })
+    };
+    connected.iter().filter(|pad| !virtual_joystick(pad)).cloned().collect()
+}
+
 /// What is kept of a DualSense or DualShock 4 between looks, to tell whether
 /// gilrs still hears it.
 #[derive(Debug, Clone, PartialEq)]
@@ -592,6 +626,16 @@ mod tests {
         assert_eq!(ids_before(&listed, "DualSense Wireless Controller 0", maker), Some((SONY, 0x0CE6, 2)));
         assert_eq!(ids_before(&listed, "Mystery Pad 0", model), None, "no ids");
         assert_eq!(ids_before(&listed, "Unplugged 0", model), None);
+    }
+
+    #[test]
+    fn vjoy_is_known_by_its_ids() {
+        assert!(is_virtual_joystick(Some(0x1234), Some(0xBEAD)));
+        assert!(is_virtual_joystick(Some(0x1234), Some(0x0FFB)), "njz3's vJoy without force feedback");
+        assert!(!is_virtual_joystick(Some(0x1234), Some(0x0001)));
+        assert!(!is_virtual_joystick(Some(MICROSOFT), Some(0x028E)), "an Xbox 360 pad, which ViGEm makes too");
+        assert!(!is_virtual_joystick(Some(SONY), Some(0x05C4)), "a DualShock 4, which DS4Windows can make");
+        assert!(!is_virtual_joystick(None, None));
     }
 
     use crate::sony_pad::Heard;

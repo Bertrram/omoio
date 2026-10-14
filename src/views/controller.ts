@@ -5,6 +5,7 @@ import {
   saveController,
   setUpController,
   type ControllerView,
+  type Pad,
 } from "../api";
 import { capFace, partOf } from "../components/padArt";
 import { nameOf } from "../components/padNames";
@@ -31,6 +32,23 @@ let refocus: string | null = null;
 
 /// How long a label waits for a press before giving up.
 const LISTEN_MS = 6000;
+
+/// No controller, chosen for a player so no pad is given to them by itself.
+/// Kept in the layout as Omoio keeps it (core/pad_layout.rs, `Pad::none`):
+/// no device, and a handler of its own.
+const NO_PAD: Pad = { device: "", name: "No controller", handler: "None", family: "generic" };
+
+function isNoPad(pad: Pad): boolean {
+  return pad.handler === NO_PAD.handler;
+}
+
+function subtitleOf(view: ControllerView): string {
+  return view.connected.length === 0
+    ? "Nothing plugged in right now"
+    : view.connected.length === 1
+      ? "1 controller plugged in"
+      : `${view.connected.length} controllers plugged in`;
+}
 
 function scopePicker(scope: string): HTMLElement {
   const games = (store.get().games ?? []).filter((game) => game.set_up);
@@ -134,6 +152,7 @@ export async function renderController(): Promise<View> {
   // it, and the pad they have.
   const player = view.players[shownPlayer];
   const pad = player.pad;
+  const none = isNoPad(pad);
   const family = pad.family;
   const buttons: Record<string, string> = { ...player.buttons };
 
@@ -148,12 +167,14 @@ export async function renderController(): Promise<View> {
   picker.className = "select";
   picker.setAttribute("aria-label", `Pad for player ${shownPlayer + 1}`);
   for (const option of view.pads) {
+    if (isNoPad(option)) continue;
     const isIn = view.connected.some((c) => c.device === option.device);
     picker.add(new Option(isIn ? `${option.name} (plugged in)` : option.name, option.device));
   }
-  picker.value = pad.device;
+  picker.add(new Option(NO_PAD.name, NO_PAD.device));
+  picker.value = none ? NO_PAD.device : pad.device;
   picker.onchange = async () => {
-    const chosen = view.pads.find((p) => p.device === picker.value);
+    const chosen = picker.value === NO_PAD.device ? NO_PAD : view.pads.find((p) => p.device === picker.value);
     if (!chosen) return;
     try {
       await saveController(scope, shownPlayer + 1, chosen, player.buttons);
@@ -166,8 +187,24 @@ export async function renderController(): Promise<View> {
   const state = document.createElement("span");
   state.className = "pad-board-state";
   state.innerHTML = `<span class="dot${player.connected ? " on" : ""}"></span>`;
-  state.append(player.connected ? "Plugged in" : "Waiting for this pad");
+  state.append(none ? "No controller" : player.connected ? "Plugged in" : "Waiting for this pad");
   boardHead.append(boardTitle, picker, state);
+
+  const how = document.createElement("div");
+  how.className = "note plain";
+  how.textContent =
+    "One layout works in every emulator. A pad plugged in that no player has takes the place of the first player whose pad is missing when you press Play. A player set to No controller keeps none. A virtual joystick such as vJoy only plays once you pick it. Changes take effect the next time a game starts.";
+
+  // A player with no controller has no buttons to show or test, and the
+  // layout they had is kept for when they get a pad again.
+  if (none) {
+    const empty = document.createElement("div");
+    empty.className = "note plain";
+    empty.textContent = `Player ${shownPlayer + 1} has no controller, so games see no one there. Pick a pad above to give them one.`;
+    board.append(boardHead, empty);
+    content.append(board, how);
+    return { title: "Controller", subtitle: subtitleOf(view), content };
+  }
 
   const save = async () => {
     try {
@@ -348,10 +385,6 @@ export async function renderController(): Promise<View> {
   board.append(boardHead, stage, foot, dirs);
   content.appendChild(board);
 
-  const how = document.createElement("div");
-  how.className = "note plain";
-  how.textContent =
-    "One layout works in every emulator. A pad plugged in that no player has takes the place of the first player whose pad is missing when you press Play. Changes take effect the next time a game starts.";
   content.appendChild(how);
 
   if (refocus) {
@@ -405,12 +438,6 @@ export async function renderController(): Promise<View> {
     }
   }, player.connected ? 60 : 500);
 
-  const subtitle =
-    view.connected.length === 0
-      ? "Nothing plugged in right now"
-      : view.connected.length === 1
-        ? "1 controller plugged in"
-        : `${view.connected.length} controllers plugged in`;
-  return { title: "Controller", subtitle, content };
+  return { title: "Controller", subtitle: subtitleOf(view), content };
 }
 
