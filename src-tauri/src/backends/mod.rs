@@ -106,8 +106,9 @@ pub trait EmulatorBackend: Sync {
 
     /// Whether the emulator's figure maker lists its characters with their
     /// numbers, for `portal_characters` to read. One that makes a figure
-    /// from any numbers but names them alone is offered the characters Omoio
-    /// read from the other emulators' makers instead.
+    /// from any numbers but names them alone gives `portal_characters` only
+    /// the figures Omoio could learn from it, and is offered the characters
+    /// Omoio read from the other emulators' makers beside them.
     fn lists_characters(&self) -> bool {
         true
     }

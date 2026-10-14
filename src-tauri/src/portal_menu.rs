@@ -414,23 +414,32 @@ pub fn characters(
 ) -> Result<Vec<Character>, String> {
     let key = serde_json::to_string(&console).unwrap_or_default().replace('"', "");
     let own = format!("characters-{key}.json");
-    if !backend.lists_characters() {
-        return from_the_others(app, &own);
-    }
     let version = backend.detect_version(app).unwrap_or_default();
-    let file = data_dir(app)?.join(own);
+    let file = data_dir(app)?.join(&own);
     let kept = std::fs::read_to_string(&file)
         .ok()
         .and_then(|text| serde_json::from_str::<Kept>(&text).ok())
         .filter(|kept| kept.version == version && !kept.characters.is_empty());
-    if let Some(kept) = kept {
-        return Ok(kept.characters);
+    let listed = match kept {
+        Some(kept) => Ok(kept.characters),
+        None => backend.portal_characters(pid).inspect(|characters| {
+            if let Ok(text) = serde_json::to_string(&Kept { version, characters: characters.clone() }) {
+                let _ = std::fs::write(&file, text);
+            }
+        }),
+    };
+    if backend.lists_characters() {
+        return listed;
     }
-    let characters = backend.portal_characters(pid)?;
-    if let Ok(text) = serde_json::to_string(&Kept { version, characters: characters.clone() }) {
-        let _ = std::fs::write(&file, text);
+    // A maker that names only some of its figures with their numbers, as
+    // Dolphin's does (backends/dolphin/portal.rs, `characters`): those, and
+    // the ones read from the other emulators' makers beside them.
+    let listed = listed.unwrap_or_default();
+    match from_the_others(app, &own) {
+        Ok(others) => Ok(merge([listed, others].into_iter())),
+        Err(_) if !listed.is_empty() => Ok(listed),
+        Err(why) => Err(why),
     }
-    Ok(characters)
 }
 
 /// The characters kept from every other emulator's maker, each once by its
