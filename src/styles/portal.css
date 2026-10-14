@@ -1977,6 +1977,11 @@ body {
   color: var(--mute);
 }
 
+/* "B or Insert Close": the pad's button and the keyboard's key. */
+.portal-or {
+  margin-right: 7px;
+}
+
 .portal-hint kbd {
   margin-right: 7px;
   padding: 2px 8px;

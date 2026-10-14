@@ -23,6 +23,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
+use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VIRTUAL_KEY, VK_INSERT};
 
 const LABEL: &str = "portal";
 
@@ -35,6 +36,70 @@ const RECENT: usize = 30;
 /// The kind of pad that opened the menu, so its buttons are named as printed
 /// on that pad.
 static FAMILY: Mutex<String> = Mutex::new(String::new());
+
+/// The key that opens and closes the menu as the pad button does, for a
+/// player with no pad Omoio can read (a player tried F8 and other keys,
+/// reported 8 to 14 October 2026). Insert, since none of the three
+/// emulators uses it unless the user binds it:
+/// - RPCS3's shortcuts are Ctrl, Alt or Shift with a letter, a number, plus,
+///   minus, F5, F10 or F11, and Alt+Return, Esc, F11 and F12, and its
+///   keyboard pad uses W A S D, Q E R T F G, Z X C V, the arrows, Return,
+///   Space, Backspace, Delete, End, Page Down and Home
+///   (`rpcs3qt/shortcut_settings.cpp`, `shortcut_settings::shortcut_settings`,
+///   lines 64 to 97; `Input/keyboard_pad_handler.cpp`, `init_config`, lines
+///   37 to 61; commit 6d7020d5). Its game window hears no other key
+///   (`rpcs3qt/gs_frame.cpp`, `handle_shortcut`).
+/// - Cemu 2.6 hears Escape, Alt+Return, F11 and F12 in its game window, and
+///   Alt+F4 and Ctrl+Q (`gui/MainWindow.cpp`, `OnKeyUp` and `OnKeyDown`,
+///   lines 1426 to 1453, tag v2.6), and gives a pad no key unless the user
+///   does: its own layouts are for SDL and XInput pads only
+///   (`input/emulated/VPADController.cpp`, `set_default_mapping`, line 509).
+/// - Dolphin 2609a's hotkeys are Escape, Tab, F1 to F12 alone or with Shift
+///   or Alt, Alt+Return, Alt+A, Ctrl with O, P or I, and for a Game Boy
+///   Advance Ctrl+Shift with O, W or R, M, and the numeric keypad's 1 to 4,
+///   plus and minus (`Core/HotkeyManager.cpp`, `HotkeyManager::LoadDefaults`,
+///   lines 395 to 476). Its Wii Remote uses 1, 2, Q, E, Return and the
+///   arrows, and its Nunchuk W A S D, left Ctrl and left Shift
+///   (`Core/HW/WiimoteEmu/WiimoteEmu.cpp`, `Wiimote::LoadDefaults`, lines 689
+///   to 798; `Extension/Nunchuk.cpp`, `Nunchuk::LoadDefaults`, line 177);
+///   its GameCube pad X Z C S D, Return, T F G H, I J K L, 1 2 3, Q W, Ctrl,
+///   Shift and the arrows (`Core/HW/GCPadEmu.cpp`, `GCPad::LoadDefaults`,
+///   lines 190 to 262; tag 2609a).
+/// - The menu itself uses the arrows, Page Up and Down, Enter, Delete,
+///   Backspace, Escape, P and Y (`src/portal.ts`).
+/// It types no character, so it does nothing in a text box. All read 14
+/// October 2026. The menu and the Portal button's setting name it.
+const MENU_KEY: VIRTUAL_KEY = VK_INSERT;
+
+/// Whether the menu key went down since the last look, from whether it was
+/// down then (`was`), is down now (`down`), and Windows' note that it went
+/// down since the last ask (`tapped`). Looked at every 50 ms, a tap of about
+/// a tenth of a second is seen down; one shorter than a look is caught by
+/// the note. The note isn't relied on alone, since another program asking
+/// can take it (`GetAsyncKeyState`, Microsoft's documentation, Remarks). Once
+/// the key has been seen down, nothing counts again until it has been seen
+/// up, so holding it never opens and closes the menu over and over.
+fn key_went_down(was: bool, down: bool, tapped: bool) -> bool {
+    !was && (down || tapped)
+}
+
+/// Reads the menu key, remembering in `was` whether it was down.
+fn menu_key_pressed(was: &mut bool) -> bool {
+    let state = unsafe { GetAsyncKeyState(i32::from(MENU_KEY.0)) } as u16;
+    let down = state & 0x8000 != 0;
+    let pressed = key_went_down(*was, down, state & 0x0001 != 0);
+    *was = down;
+    pressed
+}
+
+/// Whether Omoio or the game's emulator is the program in front, so a key
+/// pressed in another program does nothing here. The key is read from
+/// anywhere, as F11 is (`session::watch`); this asks the same thing that
+/// `pads_held` does, by process, so the menu's window and the emulator's
+/// own windows count too.
+fn omoio_or_game_in_front(pid: u32) -> bool {
+    crate::backends::rpcs3::overlay::front_belongs_to(&[std::process::id(), pid])
+}
 
 fn data_dir(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(app.path().data_dir().map_err(|e| e.to_string())?.join("Omoio"))
@@ -489,12 +554,20 @@ fn open(app: &AppHandle) -> Result<(), String> {
 }
 
 /// Hides the menu. The game underneath carries on, and hears the pad again:
-/// an RPCS3 game hears it only while its window is in front.
+/// an RPCS3 game hears it only while its window is in front. While Cemu's
+/// figure maker is at work, the game is let hear only once it is done
+/// (`take_front`, which every portal command calls at its end): letting it
+/// hear closes a window of Cemu's that the maker's own window sits over,
+/// which Cemu can't do then, and the game stayed deaf
+/// (`backends::cemu::portal::making`). The figure is made and kept all the
+/// same, and is on the portal when the menu opens again.
 pub fn close(app: &AppHandle) {
     if let Some(window) = app.get_webview_window(LABEL) {
         let _ = window.hide();
         tell(app, false);
-        crate::session::quiet_game(app);
+        if !crate::backends::cemu::portal::making() {
+            crate::session::quiet_game(app);
+        }
         app.state::<Session>().focus_game();
     }
 }
@@ -503,13 +576,37 @@ pub fn close(app: &AppHandle) {
 /// a figure, so the game stays deaf to the pad until the menu closes, and
 /// Omoio may hand the game the keyboard then. With the menu closed while
 /// the figure went on, the game is let hear again instead: those windows
-/// may have taken the keyboard from it after the menu handed it over.
+/// may have taken the keyboard from it after the menu handed it over, and
+/// with Cemu's figure maker at work `close` left the game deaf until now.
 pub fn take_front(app: &AppHandle) {
     if let Some(window) = app.get_webview_window(LABEL).filter(|_| showing(app)) {
         let _ = window.set_focus();
     } else {
         crate::session::quiet_game(app);
     }
+}
+
+/// Opens the menu from the Portal button over the running game, for a
+/// player whose pad Omoio can't read. Only in a game the menu works in, as
+/// the button shows only there. The window is made on the main thread, as
+/// the pad's press makes it, and this waits until it is up.
+pub fn open_by_button(app: &AppHandle) -> Result<(), String> {
+    let playing = app.state::<Session>().playing().ok_or("Start a game first.")?;
+    let works = crate::backends::for_console(playing.console)
+        .is_some_and(|backend| figures::offers_portal_menu(backend.features(), playing.console, &playing.title));
+    if !works {
+        return Err("The portal menu doesn't work in this game.".to_string());
+    }
+    let (done, opened) = std::sync::mpsc::channel();
+    let handle = app.clone();
+    app.run_on_main_thread(move || {
+        let _ = done.send(if showing(&handle) { Ok(()) } else { open(&handle) });
+    })
+    .map_err(|_| "Couldn't open the portal menu.".to_string())?;
+    opened
+        .recv_timeout(Duration::from_secs(10))
+        .map_err(|_| "Couldn't open the portal menu.".to_string())?
+        .map_err(|_| "Couldn't open the portal menu.".to_string())
 }
 
 /// The pad button that opens the menu, as a place on the pad.
@@ -531,20 +628,28 @@ pub fn set_button(app: &AppHandle, place: &str) -> Result<(), String> {
 }
 
 /// While a Skylanders game runs, the chosen button on any pad opens or
-/// closes the menu. Read twenty times a second, since a press lasts about a
-/// tenth of one, and the choice is read again every two seconds so one made
-/// while playing counts. It ends with the game and takes the menu with it.
+/// closes the menu, and so does the menu key while Omoio or the game is in
+/// front. Read twenty times a second, since a press lasts about a tenth of
+/// one, and the choice is read again every two seconds so one made while
+/// playing counts. It ends with the game and takes the menu with it.
 pub fn watch(app: AppHandle, pid: u32) {
     std::thread::spawn(move || {
         let mut was = false;
         let mut wanted = button(&app);
         let mut ticks = 0u32;
+        // Windows keeps its note of a press until asked, so one from before
+        // the game started is cleared rather than taken for a press now.
+        let mut key_was = false;
+        menu_key_pressed(&mut key_was);
         loop {
             std::thread::sleep(Duration::from_millis(50));
             ticks = ticks.wrapping_add(1);
             if ticks % 40 == 0 {
                 wanted = button(&app);
             }
+            // Read every time, in front or not, so a press meant for another
+            // program is used up rather than kept for later.
+            let key = menu_key_pressed(&mut key_was);
             let session = app.state::<Session>();
             if session.pid() != Some(pid) {
                 let handle = app.clone();
@@ -565,8 +670,10 @@ pub fn watch(app: AppHandle, pid: u32) {
                 .into_iter()
                 .find(|pad| crate::pads::held(&pad.device).is_some_and(|held| held.iter().any(|h| *h == wanted)));
             let now = pressing.is_some();
-            if now && !was {
-                if let Some(pad) = pressing {
+            let by_pad = now && !was;
+            let by_key = key && omoio_or_game_in_front(pid);
+            if by_pad || by_key {
+                if let Some(pad) = pressing.filter(|_| by_pad) {
                     *FAMILY.lock().unwrap() = pad.family;
                 }
                 let handle = app.clone();
@@ -587,6 +694,21 @@ pub fn watch(app: AppHandle, pid: u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_menu_key_counts_once_for_each_press() {
+        // Seen down at a look: a press.
+        assert!(key_went_down(false, true, true));
+        assert!(key_went_down(false, true, false), "Windows' note was taken by another program");
+        // Down and up between two looks: only the note says so.
+        assert!(key_went_down(false, false, true));
+        // Held: not again, whatever the note says.
+        assert!(!key_went_down(true, true, true));
+        assert!(!key_went_down(true, true, false));
+        // Let go: nothing, even with a note still there.
+        assert!(!key_went_down(true, false, true));
+        assert!(!key_went_down(false, false, false));
+    }
 
     #[test]
     fn figure_files_are_told_by_the_emulators_own_extensions() {

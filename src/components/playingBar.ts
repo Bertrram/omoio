@@ -1,4 +1,4 @@
-import { listGames, setGameFullscreen, stopGame, type Playing } from "../api";
+import { listGames, openPortalMenu, setGameFullscreen, stopGame, type Playing } from "../api";
 import { store } from "../state";
 
 /// Shown across the top of the content area while a game is running. The game
@@ -12,11 +12,29 @@ export function renderPlayingBar(playing: Playing): HTMLElement {
     <span class="playing-name"></span>
     <span class="playing-note" role="status"></span>
     <div class="playing-actions">
+      <button class="small-btn gone" id="open-portal">Portal (Insert)</button>
       <button class="small-btn" id="toggle-fullscreen">Fullscreen</button>
       <button class="small-btn danger" id="stop-game">Stop</button>
     </div>
   `;
   bar.querySelector<HTMLElement>(".playing-name")!.textContent = playing.title;
+
+  // The portal menu for a player whose pad Omoio can't read, only in a game
+  // the menu works in. Insert opens and closes it too while the game or
+  // Omoio is in front (MENU_KEY in src-tauri/src/portal_menu.rs), which also
+  // works once the picture covers the screen and this button is behind it.
+  const portalButton = bar.querySelector<HTMLButtonElement>("#open-portal")!;
+  const game = store.get().games?.find((each) => each.title_id === playing.title_id);
+  if (game?.portal_menu) {
+    portalButton.classList.remove("gone");
+    portalButton.onclick = async () => {
+      try {
+        await openPortalMenu();
+      } catch (err) {
+        showPlayingNote(typeof err === "string" ? err : "Couldn't open the portal menu.");
+      }
+    };
+  }
 
   const fullscreenButton = bar.querySelector<HTMLButtonElement>("#toggle-fullscreen")!;
   // The key is on the button because once the picture covers the screen the
