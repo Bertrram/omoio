@@ -23,7 +23,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
-use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VIRTUAL_KEY, VK_INSERT};
+use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VIRTUAL_KEY, VK_CONTROL, VK_INSERT, VK_SHIFT};
 
 const LABEL: &str = "portal";
 
@@ -67,8 +67,9 @@ static FAMILY: Mutex<String> = Mutex::new(String::new());
 ///   lines 190 to 262; tag 2609a).
 /// - The menu itself uses the arrows, Page Up and Down, Enter, Delete,
 ///   Backspace, Escape, P and Y (`src/portal.ts`).
-/// It types no character, so it does nothing in a text box. All read 14
-/// October 2026. The menu and the Portal button's setting name it.
+/// With Shift or Ctrl held it is left alone, since text boxes paste and copy
+/// with those. All read 14 October 2026. The menu and the Portal button's
+/// setting name it.
 const MENU_KEY: VIRTUAL_KEY = VK_INSERT;
 
 /// Whether the menu key went down since the last look, from whether it was
@@ -92,13 +93,20 @@ fn menu_key_pressed(was: &mut bool) -> bool {
     pressed
 }
 
-/// Whether Omoio or the game's emulator is the program in front, so a key
-/// pressed in another program does nothing here. The key is read from
-/// anywhere, as F11 is (`session::watch`); this asks the same thing that
-/// `pads_held` does, by process, so the menu's window and the emulator's
-/// own windows count too.
-fn omoio_or_game_in_front(pid: u32) -> bool {
-    crate::backends::rpcs3::overlay::front_belongs_to(&[std::process::id(), pid])
+/// Whether one of Omoio's windows or the game's own window is in front, so
+/// a key pressed in another program, or typed in one of the emulator's
+/// other windows such as its settings, does nothing here. The key is read
+/// from anywhere, as F11 is (`session::watch`).
+fn omoio_or_game_in_front(game: Option<isize>) -> bool {
+    use crate::backends::rpcs3::overlay;
+    let front = overlay::front();
+    front != 0 && (Some(front) == game || overlay::process_of(front) == std::process::id())
+}
+
+/// Whether Shift or Ctrl is held with the menu key.
+fn with_shift_or_ctrl() -> bool {
+    let held = |key: VIRTUAL_KEY| unsafe { GetAsyncKeyState(i32::from(key.0)) } as u16 & 0x8000 != 0;
+    held(VK_SHIFT) || held(VK_CONTROL)
 }
 
 fn data_dir(app: &AppHandle) -> Result<PathBuf, String> {
@@ -685,7 +693,7 @@ pub fn watch(app: AppHandle, pid: u32) {
                 .find(|pad| crate::pads::held(&pad.device).is_some_and(|held| held.iter().any(|h| *h == wanted)));
             let now = pressing.is_some();
             let by_pad = now && !was;
-            let by_key = key && omoio_or_game_in_front(pid);
+            let by_key = key && !with_shift_or_ctrl() && omoio_or_game_in_front(session.window());
             if by_pad || by_key {
                 if let Some(pad) = pressing.filter(|_| by_pad) {
                     *FAMILY.lock().unwrap() = pad.family;
