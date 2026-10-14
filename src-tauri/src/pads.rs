@@ -9,16 +9,17 @@
 //! Every other pad, a DualSense or a Switch Pro or an 8BitDo, is read with
 //! gilrs, which names buttons by place the way layouts do. A Pro Controller
 //! that Steam or an emulator switched to its full reports is read from those
-//! instead, which gilrs can't (switch_pro.rs). gilrs keeps its
-//! picture of each pad current as events arrive, so one thread owns it for as
-//! long as Omoio runs and publishes what it sees, starting it again whenever a
-//! pad leaves and before a game starts (`watch`, `rescan`).
+//! instead, which gilrs can't (switch_pro.rs), and so is a DualSense or a
+//! DualShock 4 while gilrs can't hear it (sony_pad.rs, `sony_held`). gilrs
+//! keeps its picture of each pad current as events arrive, so one thread owns
+//! it for as long as Omoio runs and publishes what it sees, starting it again
+//! whenever a pad leaves and before a game starts (`watch`, `rescan`).
 
 use crate::core::pad_layout::Pad;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// USB vendor ids, which say who made a pad and so how its buttons are
 /// marked.
@@ -228,6 +229,89 @@ fn answers_through_xinput(vendor: Option<u16>, xbox_like: bool) -> bool {
     vendor == Some(MICROSOFT) || xbox_like
 }
 
+/// What is kept of a DualSense or DualShock 4 between looks, to tell whether
+/// gilrs still hears it.
+#[derive(Debug, Clone, PartialEq)]
+struct Hearing {
+    /// The buttons gilrs has held since it last saw them change
+    /// (`sony_pad::buttons`).
+    buttons: Vec<&'static str>,
+    /// How many times the pad's reports had seen its buttons change by then.
+    reported: u64,
+    /// Whether gilrs has missed what the reports say, and so is not used
+    /// until it sees a change of its own.
+    deaf: bool,
+}
+
+impl Hearing {
+    fn new(gilrs: &[&'static str], heard: Option<&crate::sony_pad::Heard>) -> Self {
+        Self {
+            buttons: crate::sony_pad::buttons(gilrs),
+            reported: heard.map_or(0, |heard| heard.changes),
+            deaf: false,
+        }
+    }
+}
+
+/// A report counts only this soon after it came: the pad sends one every
+/// few milliseconds, or at least as its buttons change, so one older than
+/// this is from a pad gone or switched off.
+const FRESH: Duration = Duration::from_millis(500);
+/// When gilrs hears a pad it sees a change within a few tens of
+/// milliseconds of the pad's report: its Windows.Gaming.Input thread looks
+/// every 8 ms (`EVENT_THREAD_SLEEP_TIME`, gilrs-core 0.6.8's
+/// `windows_wgi/gamepad.rs`) and the thread in `watch` every 16. One that
+/// hasn't after this long, or has missed this many changes, is taken not to
+/// hear the pad.
+const MISSED_FOR: Duration = Duration::from_millis(250);
+const MISSED_CHANGES: u64 = 3;
+
+/// What is held on a DualSense or DualShock 4, from what gilrs holds and
+/// what the pad's own reports last said (sony_pad.rs).
+///
+/// - A full report over Bluetooth is one gilrs can't read at all, so it is
+///   always what counts.
+/// - Otherwise gilrs is read, as it was before Omoio read these reports, but
+///   for a pad gilrs doesn't hear: one whose reports show changes to its
+///   buttons that gilrs hasn't seen, `MISSED_CHANGES` of them or one
+///   `MISSED_FOR` ago that still differs. gilrs says Windows.Gaming.Input
+///   needs a window of the program in focus to hear pads (gilrs 0.11.2,
+///   `lib.rs`), which a game in front takes. Once gilrs sees a change of its
+///   own it is read again.
+///
+/// Buttons alone are compared: a stick or trigger near the line can count
+/// for one and not the other. Where gilrs hears the pad, each change in its
+/// reports reaches gilrs too within a look or two, so a pad no game has
+/// switched reads as it did through gilrs alone.
+fn sony_held(
+    gilrs: Vec<&'static str>,
+    heard: Option<&crate::sony_pad::Heard>,
+    hearing: &mut Hearing,
+    now: Instant,
+) -> Vec<&'static str> {
+    let buttons = crate::sony_pad::buttons(&gilrs);
+    if buttons != hearing.buttons {
+        *hearing = Hearing::new(&gilrs, heard);
+    }
+    let Some(heard) = heard.filter(|heard| now.saturating_duration_since(heard.at) < FRESH) else {
+        return gilrs;
+    };
+    if heard.full {
+        return heard.held.clone();
+    }
+    if !hearing.deaf {
+        let missed = heard.changes.saturating_sub(hearing.reported);
+        let late = now.saturating_duration_since(heard.changed) >= MISSED_FOR
+            && crate::sony_pad::buttons(&heard.held) != hearing.buttons;
+        hearing.deaf = missed >= MISSED_CHANGES || (missed > 0 && late);
+    }
+    if hearing.deaf {
+        heard.held.clone()
+    } else {
+        gilrs
+    }
+}
+
 /// `None` until gilrs has had its first look.
 fn seen() -> &'static Mutex<Option<Vec<Seen>>> {
     static SEEN: OnceLock<Mutex<Option<Vec<Seen>>>> = OnceLock::new();
@@ -257,6 +341,7 @@ fn watch() {
     static STARTED: OnceLock<()> = OnceLock::new();
     STARTED.get_or_init(|| {
         crate::switch_pro::watch();
+        crate::sony_pad::watch();
         std::thread::spawn(|| {
             let start = || gilrs::GilrsBuilder::new().with_force_feedback(false).build();
             let Ok(mut gilrs) = start() else {
@@ -264,6 +349,9 @@ fn watch() {
                 *seen().lock().unwrap() = Some(Vec::new());
                 return;
             };
+            // Each Sony pad's `Hearing`, by device, kept while gilrs is
+            // started again, since the pad is the same.
+            let mut hearings: HashMap<String, Hearing> = HashMap::new();
             loop {
                 let asked = LOOK_AGAIN.load(Ordering::SeqCst);
                 let mut left = false;
@@ -283,6 +371,8 @@ fn watch() {
                 // Pro Controllers are matched to the ones switch_pro.rs reads
                 // in the order each finds them.
                 let mut pros = 0;
+                // Sony's pads likewise, among those of the same model.
+                let mut sonys: HashMap<u16, usize> = HashMap::new();
                 let now = gilrs
                     .gamepads()
                     .map(|(_, pad)| {
@@ -298,6 +388,15 @@ fn watch() {
                             }
                             pros += 1;
                         }
+                        if let Some(product) = crate::sony_pad::reads(pad.vendor_id(), pad.product_id()) {
+                            let nth = sonys.entry(product).or_insert(0);
+                            let heard = crate::sony_pad::heard(product, *nth);
+                            *nth += 1;
+                            let hearing = hearings
+                                .entry(device.clone())
+                                .or_insert_with(|| Hearing::new(&held, heard.as_ref()));
+                            held = sony_held(held, heard.as_ref(), hearing, Instant::now());
+                        }
                         Seen {
                             pad: Pad {
                                 device,
@@ -311,7 +410,8 @@ fn watch() {
                             held,
                         }
                     })
-                    .collect();
+                    .collect::<Vec<Seen>>();
+                hearings.retain(|device, _| now.iter().any(|s| s.pad.device == *device));
                 *seen().lock().unwrap() = Some(now);
                 if asked {
                     LOOK_AGAIN.store(false, Ordering::SeqCst);
@@ -492,6 +592,86 @@ mod tests {
         assert_eq!(ids_before(&listed, "DualSense Wireless Controller 0", maker), Some((SONY, 0x0CE6, 2)));
         assert_eq!(ids_before(&listed, "Mystery Pad 0", model), None, "no ids");
         assert_eq!(ids_before(&listed, "Unplugged 0", model), None);
+    }
+
+    use crate::sony_pad::Heard;
+
+    /// What a Sony pad's reports said, `ago` before `now`, with its buttons
+    /// last changed `changed_ago` before `now`.
+    fn heard(held: Vec<&'static str>, full: bool, changes: u64, now: Instant, ago: u64, changed_ago: u64) -> Heard {
+        Heard {
+            held,
+            full,
+            at: now - Duration::from_millis(ago),
+            changes,
+            changed: now - Duration::from_millis(changed_ago),
+        }
+    }
+
+    #[test]
+    fn a_pad_gilrs_hears_is_read_through_gilrs() {
+        let now = Instant::now() + Duration::from_secs(10);
+        let mut hearing = Hearing::new(&[], Some(&heard(vec![], false, 4, now, 5, 2_000)));
+        // The reports see Cross go down a moment before gilrs does.
+        let report = heard(vec!["South", "LS X+"], false, 5, now, 5, 10);
+        assert_eq!(sony_held(vec![], Some(&report), &mut hearing, now), Vec::<&str>::new());
+        let held = sony_held(vec!["South"], Some(&report), &mut hearing, now + Duration::from_millis(16));
+        assert_eq!(held, ["South"], "gilrs's own, the stick under the line for it");
+        // Long after, held down, still gilrs.
+        let held = sony_held(vec!["South"], Some(&report), &mut hearing, now + Duration::from_secs(3));
+        assert_eq!(held, ["South"]);
+        assert!(!hearing.deaf);
+    }
+
+    #[test]
+    fn a_bluetooth_full_report_is_read_whatever_gilrs_says() {
+        let now = Instant::now() + Duration::from_secs(10);
+        let report = heard(vec!["Guide"], true, 0, now, 5, 5);
+        let mut hearing = Hearing::new(&[], Some(&report));
+        assert_eq!(sony_held(vec![], Some(&report), &mut hearing, now), ["Guide"]);
+    }
+
+    #[test]
+    fn an_old_report_is_left_for_gilrs() {
+        let now = Instant::now() + Duration::from_secs(10);
+        let report = heard(vec!["Guide"], true, 0, now, 800, 800);
+        let mut hearing = Hearing::new(&[], Some(&report));
+        assert_eq!(sony_held(vec![], Some(&report), &mut hearing, now), Vec::<&str>::new());
+        assert_eq!(sony_held(vec!["East"], None, &mut hearing, now), ["East"]);
+    }
+
+    #[test]
+    fn gilrs_missing_a_press_held_a_while_is_taken_as_deaf_until_it_hears_again() {
+        let now = Instant::now() + Duration::from_secs(10);
+        let mut hearing = Hearing::new(&[], Some(&heard(vec![], false, 7, now, 5, 5_000)));
+        let pressed = heard(vec!["Guide"], false, 8, now, 5, 100);
+        assert!(sony_held(vec![], Some(&pressed), &mut hearing, now).is_empty(), "too soon to tell");
+        let pressed = heard(vec!["Guide"], false, 8, now, 5, 300);
+        assert_eq!(sony_held(vec![], Some(&pressed), &mut hearing, now), ["Guide"]);
+        // Let go, the reports still count, as gilrs has heard nothing.
+        let released = heard(vec![], false, 9, now, 5, 5);
+        assert!(sony_held(vec![], Some(&released), &mut hearing, now).is_empty());
+        let quick = heard(vec!["North"], false, 10, now, 5, 5);
+        assert_eq!(sony_held(vec![], Some(&quick), &mut hearing, now), ["North"], "a quick press counts at once");
+        // gilrs hears a change of its own, and is read again.
+        assert_eq!(sony_held(vec!["North", "East"], Some(&quick), &mut hearing, now), ["North", "East"]);
+        assert!(!hearing.deaf);
+    }
+
+    #[test]
+    fn gilrs_missing_quick_presses_is_taken_as_deaf() {
+        let now = Instant::now() + Duration::from_secs(10);
+        let mut hearing = Hearing::new(&[], Some(&heard(vec![], false, 0, now, 5, 5_000)));
+        // Pressed and let go twice, quickly, and pressed again.
+        for (changes, held) in [(1, vec!["Guide"]), (2, vec![]), (3, vec!["Guide"])] {
+            let report = heard(held.clone(), false, changes, now, 5, 5);
+            let read = sony_held(vec![], Some(&report), &mut hearing, now);
+            if changes < 3 {
+                assert!(read.is_empty());
+            } else {
+                assert_eq!(read, ["Guide"]);
+            }
+        }
     }
 
     #[test]
