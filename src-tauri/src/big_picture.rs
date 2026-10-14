@@ -45,7 +45,9 @@ fn tell(app: &AppHandle) {
 /// Switches Big Picture on or off. Coming in with a game on the screen takes
 /// the game off it, since whoever asked for Big Picture wants to see it.
 /// Going out puts a waiting game back where the desktop keeps it, without
-/// taking the keyboard from Omoio.
+/// taking the keyboard from Omoio, unless the desktop keeps it over the
+/// whole screen: then nothing of Omoio's is left to use, and the game gets
+/// the keyboard and the pad.
 pub fn set(app: &AppHandle, on: bool) -> Result<(), String> {
     let window = app.get_webview_window("main").ok_or("Omoio's window isn't there.")?;
     let session = app.state::<Session>();
@@ -60,6 +62,9 @@ pub fn set(app: &AppHandle, on: bool) -> Result<(), String> {
     } else if session.is_hidden() {
         crate::session::place(&window, &session);
         session.show_game(false);
+        if session.is_fullscreen() {
+            crate::session::give_game_front(app);
+        }
     }
     crate::session::quiet_game(app);
     tell(app);
@@ -67,7 +72,8 @@ pub fn set(app: &AppHandle, on: bool) -> Result<(), String> {
 }
 
 /// Puts the game waiting behind Big Picture back on the screen, and gives it
-/// the keyboard and the pad.
+/// the keyboard and the pad, making sure it keeps them
+/// (`session::give_game_front`).
 pub fn resume(app: &AppHandle) {
     let session = app.state::<Session>();
     if session.playing().is_none() {
@@ -77,6 +83,7 @@ pub fn resume(app: &AppHandle) {
         crate::session::place(&window, &session);
     }
     session.show_game(true);
+    crate::session::give_game_front(app);
     crate::session::quiet_game(app);
     tell(app);
 }
