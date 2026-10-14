@@ -563,12 +563,17 @@ fn open(app: &AppHandle) -> Result<(), String> {
 /// same, and is on the portal when the menu opens again.
 pub fn close(app: &AppHandle) {
     if let Some(window) = app.get_webview_window(LABEL) {
+        // The game takes the front while the menu still has it: hiding the
+        // window in front lets Windows choose who gets the front next, and
+        // in Big Picture Omoio may then be refused it
+        // (session::give_game_front).
+        app.state::<Session>().focus_game();
         let _ = window.hide();
         tell(app, false);
         if !crate::backends::cemu::portal::making() {
             crate::session::quiet_game(app);
         }
-        app.state::<Session>().focus_game();
+        crate::session::give_game_front(app);
     }
 }
 
