@@ -540,13 +540,29 @@ fn make(automation: &Automation, pid: u32, maker: HWND, character: &Character, f
 /// shows without making the figure, so those still come from the other
 /// emulators' makers (portal_menu.rs, `characters`).
 ///
-/// Each question takes its own turn in Dolphin's windows, so a figure the
-/// user puts on meanwhile isn't kept waiting behind all of them.
+/// The menu waits for this while it says it is getting the characters, so
+/// it is done once for each Dolphin version (portal_menu.rs keeps the list).
+/// A question that goes wrong costs that figure alone, so the names already
+/// read are kept; a few going wrong in a row means Dolphin's windows aren't
+/// as expected, and asking on would only add waits.
 pub fn characters(pid: u32) -> Result<Vec<Character>, String> {
+    const GIVE_UP_AFTER: usize = 3;
     let mut found = Vec::new();
+    let mut wrong_in_a_row = 0;
     for (id, variant) in first_game_figures() {
-        if let Some(name) = listed_name(&name_for(pid, id, variant)?) {
-            found.push(Character { name, id, variant });
+        match name_for(pid, id, variant) {
+            Ok(answer) => {
+                wrong_in_a_row = 0;
+                if let Some(name) = listed_name(&answer) {
+                    found.push(Character { name, id, variant });
+                }
+            }
+            Err(_) => {
+                wrong_in_a_row += 1;
+                if wrong_in_a_row == GIVE_UP_AFTER {
+                    break;
+                }
+            }
         }
     }
     {
