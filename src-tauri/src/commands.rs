@@ -1705,9 +1705,10 @@ fn running_emulator(app: &AppHandle) -> Result<(&'static dyn crate::backends::Em
 pub async fn portal_figures(app: AppHandle) -> Result<Vec<String>, String> {
     let (backend, pid) = running_emulator(&app)?;
     let names = tauri::async_runtime::spawn_blocking(move || backend.portal_figures(pid))
-        .await
-        .map_err(|e| e.to_string())?;
+        .await;
+    // Even when the errand panicked, so the game is let hear again.
     crate::portal_menu::take_front(&app);
+    let names = names.map_err(|e| e.to_string())?;
     names
 }
 
@@ -1718,9 +1719,10 @@ pub async fn portal_load(app: AppHandle, slot: usize, figure: String) -> Result<
     let (backend, pid) = running_emulator(&app)?;
     let path = figure.clone();
     let names = tauri::async_runtime::spawn_blocking(move || backend.portal_load(pid, slot, Path::new(&path)))
-        .await
-        .map_err(|e| e.to_string())?;
+        .await;
+    // Even when the errand panicked, so the game is let hear again.
     crate::portal_menu::take_front(&app);
+    let names = names.map_err(|e| e.to_string())?;
     let names = names?;
     crate::portal_menu::used(&app, &figure);
     Ok(names)
@@ -1842,9 +1844,10 @@ pub async fn figure_characters(app: AppHandle) -> Result<Vec<crate::core::figure
     let characters = tauri::async_runtime::spawn_blocking(move || {
         crate::portal_menu::characters(&handle, backend, playing.console, pid)
     })
-    .await
-    .map_err(|e| e.to_string())?;
+    .await;
+    // Even when the errand panicked, so the game is let hear again.
     crate::portal_menu::take_front(&app);
+    let characters = characters.map_err(|e| e.to_string())?;
     Ok(crate::core::figures::offers(characters?, game, playing.console))
 }
 
@@ -1869,9 +1872,10 @@ pub async fn portal_create(
     let path = file.clone();
     let made = character.clone();
     let names = tauri::async_runtime::spawn_blocking(move || backend.portal_create(pid, slot, &character, &path))
-        .await
-        .map_err(|e| e.to_string())?;
+        .await;
+    // Even when the errand panicked, so the game is let hear again.
     crate::portal_menu::take_front(&app);
+    let names = names.map_err(|e| e.to_string())?;
     // The emulator can write the figure and only then run into a problem, so
     // a file it wrote is recorded as its character either way.
     if file.is_file() {
@@ -1898,9 +1902,10 @@ pub fn set_portal_button(app: AppHandle, button: String) -> Result<(), String> {
 pub async fn portal_clear(app: AppHandle, slot: usize) -> Result<Vec<String>, String> {
     let (backend, pid) = running_emulator(&app)?;
     let names = tauri::async_runtime::spawn_blocking(move || backend.portal_clear(pid, slot))
-        .await
-        .map_err(|e| e.to_string())?;
+        .await;
+    // Even when the errand panicked, so the game is let hear again.
     crate::portal_menu::take_front(&app);
+    let names = names.map_err(|e| e.to_string())?;
     names
 }
 
