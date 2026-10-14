@@ -79,7 +79,10 @@ pub fn current(app: &AppHandle, title_id: &str, connected: &[Pad]) -> Current {
         None => pad_layout::default_players(&seatable, &spare),
     };
     pad_layout::refresh(&mut players, connected);
-    let lone = pad_layout::give_lone_pad(&mut players, &seatable);
+    // Only when the one pad plugged in is one Omoio may seat: with vJoy
+    // plugged in as well, the pad isn't alone, and player 1 may have chosen
+    // vJoy by hand.
+    let lone = seatable.len() == connected.len() && pad_layout::give_lone_pad(&mut players, connected);
     Current { players, own, saved, lone }
 }
 
