@@ -71,12 +71,15 @@ pub fn current(app: &AppHandle, title_id: &str, connected: &[Pad]) -> Current {
     let found = layouts.get(if own { title_id } else { "" }).cloned();
     let saved = found.is_some();
     let spare = crate::pads::xinput_slots();
+    // A joystick no hand holds, such as vJoy, is given to a player only when
+    // someone picks it (pads.rs, `seatable`).
+    let seatable = crate::pads::seatable(connected);
     let mut players = match found {
         Some(players) => pad_layout::fill(players.into_iter().map(Some).collect(), &spare),
-        None => pad_layout::default_players(connected, &spare),
+        None => pad_layout::default_players(&seatable, &spare),
     };
     pad_layout::refresh(&mut players, connected);
-    let lone = pad_layout::give_lone_pad(&mut players, connected);
+    let lone = pad_layout::give_lone_pad(&mut players, &seatable);
     Current { players, own, saved, lone }
 }
 
@@ -98,7 +101,8 @@ pub fn save_player(app: &AppHandle, title_id: &str, number: usize, player: Playe
 
 /// Gives all four players their pad's own layout, pads plugged in first.
 pub fn restore_defaults(app: &AppHandle, title_id: &str) -> Result<(), String> {
-    let players = pad_layout::default_players(&crate::pads::connected(), &crate::pads::xinput_slots());
+    let connected = crate::pads::connected();
+    let players = pad_layout::default_players(&crate::pads::seatable(&connected), &crate::pads::xinput_slots());
     let mut layouts = load(app);
     layouts.set(title_id, players.clone());
     store(app, &layouts)?;
@@ -141,7 +145,7 @@ fn warning(
         return None;
     }
     let mut players = current.players;
-    pad_layout::seat(&mut players, connected);
+    pad_layout::seat_from(&mut players, connected, &crate::pads::seatable(connected));
     ask(&players, connected)
 }
 
@@ -153,7 +157,7 @@ pub fn before_launch(app: &AppHandle, backend: &dyn EmulatorBackend, title_id: &
     crate::pads::rescan();
     let connected = crate::pads::connected();
     let Current { mut players, own, saved, lone } = current(app, title_id, &connected);
-    let moved = pad_layout::seat(&mut players, &connected);
+    let moved = pad_layout::seat_from(&mut players, &connected, &crate::pads::seatable(&connected));
     let scope = if own { title_id } else { "" };
     if moved || lone || !saved {
         let mut layouts = load(app);
