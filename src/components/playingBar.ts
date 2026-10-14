@@ -23,18 +23,25 @@ export function renderPlayingBar(playing: Playing): HTMLElement {
   // the menu works in. Insert opens and closes it too while the game or
   // Omoio is in front (MENU_KEY in src-tauri/src/portal_menu.rs), which also
   // works once the picture covers the screen and this button is behind it.
+  // The list of games may come in after the bar is drawn, as when a game
+  // is started from Big Picture before the library was ever shown, so the
+  // button is shown once it does. The bar goes when the game ends.
   const portalButton = bar.querySelector<HTMLButtonElement>("#open-portal")!;
-  const game = store.get().games?.find((each) => each.title_id === playing.title_id);
-  if (game?.portal_menu) {
-    portalButton.classList.remove("gone");
-    portalButton.onclick = async () => {
-      try {
-        await openPortalMenu();
-      } catch (err) {
-        showPlayingNote(typeof err === "string" ? err : "Couldn't open the portal menu.");
-      }
-    };
-  }
+  portalButton.onclick = async () => {
+    try {
+      await openPortalMenu();
+    } catch (err) {
+      showPlayingNote(typeof err === "string" ? err : "Couldn't open the portal menu.");
+    }
+  };
+  const stopWatching = store.subscribe(({ games, playing: now }) => {
+    if (now?.title_id !== playing.title_id) {
+      queueMicrotask(() => stopWatching());
+      return;
+    }
+    const game = games?.find((each) => each.title_id === playing.title_id);
+    portalButton.classList.toggle("gone", !game?.portal_menu);
+  });
 
   const fullscreenButton = bar.querySelector<HTMLButtonElement>("#toggle-fullscreen")!;
   // The key is on the button because once the picture covers the screen the
