@@ -427,6 +427,17 @@ fn stand_in(players: &[Player], plugged: &[Pad], usable: &dyn Fn(&Player) -> boo
     players
 }
 
+/// The file Dolphin keeps the layout for every game in, for `console`
+/// (`InputConfig`'s file name, given in Core/HW/GCPad.cpp and
+/// `WIIMOTE_INI_NAME` in Core/HW/Wiimote.h).
+fn every_game_file(console: Console) -> &'static str {
+    if console == Console::GameCube {
+        "GCPadNew.ini"
+    } else {
+        "WiimoteNew.ini"
+    }
+}
+
 /// Writes the players' layout into Dolphin's files for `console`. An empty
 /// `title_id` is the layout for every game: GCPadNew.ini or WiimoteNew.ini.
 /// A game's own goes in profiles its settings file names, for this
@@ -436,6 +447,23 @@ fn stand_in(players: &[Player], plugged: &[Pad], usable: &dyn Fn(&Player) -> boo
 /// player who never presses anything. A real Wii Remote, the Balance Board
 /// and a GameCube port given another device stay as the user set them up
 /// in Dolphin (`file`, `left_alone`).
+///
+/// A game's own layout goes into the file for every game too, under its
+/// profiles. Dolphin reads a game's profiles only on top of that file
+/// (`InputConfig::LoadConfig`, InputCommon/InputConfig.cpp lines 70 to 118,
+/// Dolphin 2609a, read 14 October 2026): a player without a profile Dolphin
+/// can load takes their section of it, and when the file has no section at
+/// all, as before Dolphin first started, no profile is read and player 1
+/// gets Dolphin's own layout, the keyboard and mouse, with the left click
+/// as the Wii Remote's A (`Wiimote::LoadDefaults`, Core/HW/WiimoteEmu/
+/// WiimoteEmu.cpp lines 722 to 726). Dolphin saves that layout into the file
+/// as its main window opens, before any game (`MainWindow::InitControllers`,
+/// DolphinQt/MainWindow.cpp lines 389 to 393), so without Omoio's the file
+/// holds the keyboard from Dolphin's first start on. With the players' pads
+/// in it, a game whose profile isn't read answers the pad all the same. The
+/// file is the layout for every game only between games: a game without a
+/// layout of its own has it written afresh before it starts
+/// (controllers.rs, `before_launch`).
 pub fn write(app: &AppHandle, console: Console, title_id: &str, players: &[Player]) -> Result<(), String> {
     let config = config_dir(app)?;
     if !super::install::exe_path(app)?.is_file() {
@@ -452,18 +480,23 @@ pub fn write(app: &AppHandle, console: Console, title_id: &str, players: &[Playe
         .map(|(at, player)| at == 0 || plugged.iter().any(|pad| pad.device == player.pad.device))
         .collect();
     let failed = |_| "Couldn't save the controller settings for Dolphin.".to_string();
-    if title_id.is_empty() {
-        let left = left_alone_in(console, &config).map_err(failed)?;
-        let path = config.join(if console == Console::GameCube { "GCPadNew.ini" } else { "WiimoteNew.ini" });
+    // A file that can't be read is left as it is rather than written over
+    // (`ini::read`).
+    let every_game = |left: &[bool]| -> Result<(), String> {
+        let path = config.join(every_game_file(console));
         let before = ini::read(&path).map_err(failed)?;
-        let after = file(console, &before, &players, &devices, &emulated, &left);
+        let after = file(console, &before, &players, &devices, &emulated, left);
         if after != before {
             ini::write(&path, &after).map_err(failed)?;
         }
         if console == Console::GameCube {
             standard_controllers(&config.join("Dolphin.ini")).map_err(failed)?;
         }
-        return Ok(());
+        Ok(())
+    };
+    if title_id.is_empty() {
+        let left = left_alone_in(console, &config).map_err(failed)?;
+        return every_game(&left);
     }
     let Some(game) = game_id(title_id).filter(|_| is_own_game(app, console, title_id)) else {
         return Ok(());
@@ -489,7 +522,10 @@ pub fn write(app: &AppHandle, console: Console, title_id: &str, players: &[Playe
     }
     let values: Vec<(&str, &str, &str)> = settings.iter().map(|(k, v)| ("Controls", k.as_str(), v.as_str())).collect();
     let game_settings = super::install::user_dir(app)?.join("GameSettings").join(format!("{game}.ini"));
-    ini::update(&game_settings, &values).map_err(failed)
+    ini::update(&game_settings, &values).map_err(failed)?;
+    // After the game's own, so a file for every game that can't be read
+    // keeps nothing of the game's from being written.
+    every_game(&left)
 }
 
 /// A standard GameCube pad in every port Dolphin has left empty, so a second
@@ -606,6 +642,150 @@ fn missing(players: &[Player], connected: &[Pad], usable: &dyn Fn(&Player) -> bo
          Plug in an Xbox, PlayStation or Switch Pro controller, or choose another for player 1 on the Controller screen.",
         first.pad.name
     ))
+}
+
+/// The device each player was bound to as the game started, as Dolphin
+/// picks it (`InputConfig::LoadConfig`, InputCommon/InputConfig.cpp lines 37
+/// to 99, Dolphin 2609a, read 14 October 2026): the profile the game's
+/// settings name for the player, the first of a list, else the player's
+/// section of the file for every game. A profile that isn't there is
+/// skipped with a warning, and the player takes their section. `None`
+/// where Omoio can't tell:
+///
+/// - The file for every game has no section, so Dolphin took its own
+///   layout for every player (`has_sections`).
+/// - The profile named is one Omoio can't read, such as a folder of them,
+///   whose first Dolphin takes (`GetProfilesFromSetting`, InputCommon/
+///   InputProfile.cpp).
+/// - A player without a profile after one with a profile: Dolphin reads
+///   them from that profile's file, which has no section of theirs, and
+///   their device stays as it was (line 87, and `EmulatedController::
+///   LoadConfig`, InputCommon/ControllerEmu/ControllerEmu.cpp line 118).
+///
+/// `profile` gives a profile by its name: `None` when there is none, and
+/// its text when Omoio can read it. Only the game's own
+/// settings file in User/GameSettings is read, the one Omoio names profiles
+/// in. Dolphin also reads the ones it ships and the user's for the game's
+/// region and revision (`GetGameIniFilenames`, Core/ConfigLoaders/
+/// GameConfigLoader.cpp). Omoio doesn't, and where only those name a
+/// profile, takes the player's device from the file for every game.
+fn bound_devices(
+    console: Console,
+    every_game: &str,
+    game_settings: &str,
+    profile: &dyn Fn(&str) -> Option<Option<String>>,
+) -> Vec<Option<String>> {
+    if !has_sections(every_game) {
+        return vec![None; PLAYERS];
+    }
+    let (_, key) = profile_kind(console);
+    let section = if console == Console::GameCube { "GCPad" } else { "Wiimote" };
+    let mut after_profile = false;
+    (0..PLAYERS)
+        .map(|at| {
+            let named = ini::get(game_settings, "Controls", &format!("{key}Profile{}", at + 1));
+            let found = named.and_then(|setting| profile(setting.split(',').next().unwrap_or_default().trim()));
+            let device = match found {
+                Some(text) => {
+                    after_profile = true;
+                    text.and_then(|text| ini::get(&text, "Profile", "Device"))
+                }
+                None if after_profile => None,
+                None => ini::get(every_game, &format!("{section}{}", at + 1), "Device"),
+            };
+            device.filter(|device| !device.is_empty())
+        })
+        .collect()
+}
+
+/// Whether Dolphin finds a section in this text: a line that opens with `[`
+/// and has a `]` after it, the first line read past a UTF-8 byte order mark
+/// (`IniFile::Load`, Common/IniFile.cpp lines 239 to 317, Dolphin 2609a).
+/// A file without one is taken as missing (`InputConfig::LoadConfig`, line
+/// 71).
+fn has_sections(text: &str) -> bool {
+    text.trim_start_matches('\u{feff}')
+        .lines()
+        .any(|line| line.starts_with('[') && line.contains(']'))
+}
+
+/// The first player, counted from 0, bound to a pad that is plugged in but
+/// that Dolphin never `added`, and that pad's name. `plugged` is each pad
+/// plugged in, by its name and the name Dolphin would know it by (`device`).
+/// A player `left` as the user set them up, such as a real Wii Remote, is
+/// not Omoio's to ask about.
+fn unfound_player(
+    bound: &[Option<String>],
+    left: &[bool],
+    added: &[&str],
+    plugged: &[(String, Option<String>)],
+) -> Option<(usize, String)> {
+    bound.iter().enumerate().find_map(|(at, device)| {
+        let device = device.as_deref()?;
+        if left.get(at).copied().unwrap_or(false) || added.contains(&device) {
+            return None;
+        }
+        plugged
+            .iter()
+            .find(|(_, known_as)| known_as.as_deref() == Some(device))
+            .map(|(name, _)| (at, name.clone()))
+    })
+}
+
+/// What Omoio says about a player whose pad Dolphin didn't find. `player`
+/// counts from zero.
+fn notice(player: usize, pad_name: &str) -> String {
+    format!(
+        "Dolphin couldn't find player {}'s controller, {pad_name}, so the game won't answer it. Start the game again. If that doesn't help, the log on the Logs page shows what Dolphin saw.",
+        player + 1
+    )
+}
+
+/// Why a player's pad, plugged in, isn't reaching the game started for
+/// `title_id`: the device the player is bound to is one Omoio knows as a
+/// pad plugged in now, and Dolphin's log of this game has no "Added device"
+/// for it (log.rs, `added_devices`). A pad Dolphin names some other way than
+/// Omoio told it, as a pad another program has taken over may be, is found
+/// so. `None` when Dolphin found every pad plugged in, or the log has no
+/// device at all, as when Dolphin hasn't logged its pads yet: Dolphin always
+/// takes in the keyboard and mouse.
+pub fn unfound(app: &AppHandle, console: Console, title_id: &str) -> Option<String> {
+    let user = super::install::user_dir(app).ok()?;
+    let log = std::fs::read(super::log::path(&user)).ok()?;
+    let log = String::from_utf8_lossy(&log);
+    let added = super::log::added_devices(&log);
+    if added.is_empty() {
+        return None;
+    }
+    let config = user.join("Config");
+    let every_game = ini::read(&config.join(every_game_file(console))).ok()?;
+    let game_settings = game_id(title_id)
+        .and_then(|game| ini::read(&user.join("GameSettings").join(format!("{game}.ini"))).ok())
+        .unwrap_or_default();
+    let (folder, _) = profile_kind(console);
+    let profiles = config.join("Profiles").join(folder);
+    // Found as Dolphin finds it: a folder of that name, else the file with
+    // ".ini" after it (`GetProfilesFromSetting`, InputCommon/
+    // InputProfile.cpp lines 30 to 54). A folder isn't followed.
+    let profile = |name: &str| {
+        let path = profiles.join(format!("{name}.ini"));
+        if !name.is_empty() && profiles.join(name).is_dir() {
+            Some(None)
+        } else if !name.is_empty() && path.is_file() {
+            Some(ini::read(&path).ok())
+        } else {
+            None
+        }
+    };
+    let bound = bound_devices(console, &every_game, &game_settings, &profile);
+    let left = left_alone_in(console, &config).ok()?;
+    let ids = |device: &str| usb_ids(device);
+    let plugged: Vec<(String, Option<String>)> = crate::pads::connected()
+        .iter()
+        .map(|pad| (pad.name.clone(), device(pad, &ids)))
+        .collect();
+    let (at, name) = unfound_player(&bound, &left, &added, &plugged)?;
+    Some(notice(at, &name))
 }
 
 #[cfg(test)]
@@ -729,6 +909,104 @@ mod tests {
         let dolphin_ini = "[Core]\r\nSIDevice0 = 6\r\nSIDevice1 = 9\r\nSIDevice2 = 0\r\nSIDevice3 = 12\r\n";
         assert_eq!(left_alone(Console::GameCube, dolphin_ini), [false, true, false, true]);
         assert_eq!(left_alone(Console::GameCube, ""), [false; 4]);
+    }
+
+    /// A DualSense as player 1, as Omoio tells Dolphin of it.
+    fn on_a_dualsense() -> (Vec<Player>, Vec<Option<String>>) {
+        let ids = |device: &str| (device == "PS5 Controller 0").then_some((0x054C, 0x0CE6, 0));
+        let players = vec![Player::on(pad("PS5 Controller 0", "SDL"))];
+        let devices = players.iter().map(|player| device(&player.pad, &ids)).collect();
+        (players, devices)
+    }
+
+    #[test]
+    fn a_games_own_layout_fills_the_file_for_every_game_when_there_is_none() {
+        let (players, devices) = on_a_dualsense();
+        assert!(!has_sections(""), "before Dolphin first started");
+        let left = left_alone(Console::Wii, "");
+        let text = file(Console::Wii, "", &players, &devices, &[true], &left);
+        assert!(has_sections(&text));
+        assert!(text.starts_with("[Wiimote1]\r\nDevice = SDL/0/DualSense Wireless Controller\r\nButtons/A = `Button A`\r\n"), "{text}");
+        assert!(!text.contains("Click"), "{text}");
+    }
+
+    #[test]
+    fn dolphins_own_keyboard_layout_gives_way_and_the_balance_board_stays() {
+        // As Dolphin saves the file on its first start, with the keyboard
+        // and mouse for player 1 (`MainWindow::InitControllers`).
+        let before = "[Wiimote1]\r\nDevice = DInput/0/Keyboard Mouse\r\nButtons/A = `Click 0`\r\nButtons/B = `Click 1`\r\n\
+                      [Wiimote2]\r\nDevice = \r\n[BalanceBoard]\r\nDevice = DInput/0/Keyboard Mouse\r\nSource = 2\r\n";
+        let (players, devices) = on_a_dualsense();
+        let after = file(Console::Wii, before, &players, &devices, &[true], &left_alone(Console::Wii, before));
+        assert!(after.starts_with("[Wiimote1]\r\nDevice = SDL/0/DualSense Wireless Controller\r\n"), "{after}");
+        assert!(!after.contains("Click 0"), "{after}");
+        assert!(after.ends_with("[BalanceBoard]\r\nDevice = DInput/0/Keyboard Mouse\r\nSource = 2\r\n"), "{after}");
+    }
+
+    #[test]
+    fn a_section_is_what_dolphin_takes_as_one() {
+        assert!(has_sections("[Wiimote1]\r\nSource = 1\r\n"));
+        assert!(has_sections("\u{feff}[Wiimote1]\r\n"), "after a byte order mark");
+        assert!(has_sections("# a note\r\n[GCPad1]\r\n"));
+        assert!(!has_sections("# a note\r\nDevice = XInput/0/Gamepad\r\n"), "values before any section are dropped");
+        assert!(!has_sections(" [Wiimote1]\r\n"), "Dolphin wants the bracket first");
+        assert!(!has_sections("[Wiimote1\r\n"));
+    }
+
+    #[test]
+    fn each_player_is_bound_as_dolphin_picks_it() {
+        let every_game = "[Wiimote1]\r\nDevice = XInput/0/Gamepad\r\n[Wiimote2]\r\nDevice = XInput/1/Gamepad\r\n\
+                          [Wiimote3]\r\nDevice = \r\n";
+        let profiles = |name: &str| match name {
+            "Omoio SSPE52 1" => Some(Some("[Profile]\r\nDevice = SDL/0/DualSense Wireless Controller\r\n".to_string())),
+            "A folder of them" => Some(None),
+            _ => None,
+        };
+        // No game settings: the file for every game.
+        assert_eq!(
+            bound_devices(Console::Wii, every_game, "", &profiles),
+            [Some("XInput/0/Gamepad".to_string()), Some("XInput/1/Gamepad".to_string()), None, None]
+        );
+        // Player 1's profile, and player 2 read from that profile's file.
+        let game = "[Controls]\r\nWiimoteProfile1 = Omoio SSPE52 1, Another\r\nWiimoteSource0 = 1\r\n";
+        assert_eq!(
+            bound_devices(Console::Wii, every_game, game, &profiles),
+            [Some("SDL/0/DualSense Wireless Controller".to_string()), None, None, None]
+        );
+        // A profile that isn't there is skipped, and the player takes their
+        // section.
+        let missing = "[Controls]\r\nWiimoteProfile1 = Gone\r\n";
+        assert_eq!(
+            bound_devices(Console::Wii, every_game, missing, &profiles)[..2],
+            [Some("XInput/0/Gamepad".to_string()), Some("XInput/1/Gamepad".to_string())]
+        );
+        // One Omoio can't read says nothing, nor of the players after it.
+        let folder = "[Controls]\r\nWiimoteProfile1 = A folder of them\r\n";
+        assert_eq!(bound_devices(Console::Wii, every_game, folder, &profiles), [None, None, None, None]);
+        // No section: Dolphin's own layout, which Omoio can't say anything of.
+        assert_eq!(bound_devices(Console::Wii, "", game, &profiles), [None, None, None, None]);
+        // The GameCube's profiles and sections.
+        let pads = "[GCPad1]\r\nDevice = XInput/0/Gamepad\r\n";
+        assert_eq!(bound_devices(Console::GameCube, pads, "", &profiles)[0].as_deref(), Some("XInput/0/Gamepad"));
+    }
+
+    #[test]
+    fn a_plugged_pad_dolphin_never_added_is_reported() {
+        let bound = [Some("SDL/0/DualSense Wireless Controller".to_string()), Some("XInput/0/Gamepad".to_string())];
+        let plugged = [
+            ("DualSense".to_string(), Some("SDL/0/DualSense Wireless Controller".to_string())),
+            ("Xbox Controller".to_string(), Some("XInput/0/Gamepad".to_string())),
+        ];
+        let added = ["DInput/0/Keyboard Mouse", "XInput/0/Gamepad"];
+        assert_eq!(unfound_player(&bound, &[], &added, &plugged), Some((0, "DualSense".to_string())));
+        let all = ["DInput/0/Keyboard Mouse", "SDL/0/DualSense Wireless Controller", "XInput/0/Gamepad"];
+        assert_eq!(unfound_player(&bound, &[], &all, &plugged), None);
+        // Not plugged in: nothing for Dolphin to find.
+        assert_eq!(unfound_player(&bound, &[], &added, &plugged[1..]), None);
+        // A real Wii Remote's place is the user's.
+        assert_eq!(unfound_player(&bound, &[true, false], &added, &plugged), None);
+        let said = notice(0, "DualSense");
+        assert!(said.starts_with("Dolphin couldn't find player 1's controller, DualSense,"), "{said}");
     }
 
     #[test]

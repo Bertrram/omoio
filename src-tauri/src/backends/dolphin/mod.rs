@@ -376,6 +376,11 @@ impl super::EmulatorBackend for Dolphin {
         controllers::missing_first_player(players, connected)
     }
 
+    /// From the pads Dolphin's log says it found (log.rs, `added_devices`).
+    fn unfound_pad(&self, app: &AppHandle, title_id: &str) -> Option<String> {
+        controllers::unfound(app, self.console, title_id)
+    }
+
     fn forget_layout(&self, app: &AppHandle, title_id: &str) -> Result<(), String> {
         controllers::forget(app, self.console, title_id)
     }
