@@ -415,7 +415,8 @@ fn stand_in(players: &[Player], plugged: &[Pad], usable: &dyn Fn(&Player) -> boo
     let Some(first) = players.first() else {
         return players;
     };
-    if usable(first) {
+    // No controller is what someone chose for player 1, so it stays.
+    if usable(first) || first.pad.is_none() {
         return players;
     }
     let mut xinput = plugged.iter().filter(|pad| xinput_slot(pad).is_some());
@@ -636,6 +637,12 @@ fn missing(players: &[Player], connected: &[Pad], usable: &dyn Fn(&Player) -> bo
     let first = players.first()?;
     if stand_in(players, connected, usable).first().is_some_and(usable) {
         return None;
+    }
+    if first.pad.is_none() {
+        return Some(
+            "Player 1 has no controller, so the game won't answer anyone as player 1. Choose one for player 1 on the Controller screen."
+                .to_string(),
+        );
     }
     Some(format!(
         "Dolphin can't use player 1's controller, {}, so the game won't answer it. \
@@ -1043,6 +1050,15 @@ mod tests {
         assert!(same_sdl_name(second, second));
         assert!(!same_sdl_name(first, (0x054C, 0x0CE6)), "a DualSense");
         assert!(!same_sdl_name((0x2DC8, 0x6001), (0x2DC8, 0x6001)), "a pad SDL names some other way");
+    }
+
+    #[test]
+    fn player_one_with_no_controller_keeps_none() {
+        let players = vec![Player::on(Pad::none()), Player::on(crate::pads::xinput_slot(1))];
+        let plugged = [crate::pads::xinput_slot(0)];
+        let usable = |player: &Player| xinput_slot(&player.pad).is_some();
+        assert_eq!(stand_in(&players, &plugged, &usable), players);
+        assert!(missing(&players, &plugged, &usable).unwrap().contains("Player 1 has no controller"));
     }
 
     #[test]
