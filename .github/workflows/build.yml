@@ -6,6 +6,11 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      notes:
+        description: "What Omoio's update prompt says about this version"
+        required: false
+        default: ""
 
 # No token rights by default; the one job below asks only for what it needs.
 permissions: {}
@@ -63,10 +68,45 @@ jobs:
             npx tauri build --config '{"bundle":{"createUpdaterArtifacts":false}}'
           fi
 
+      # The file the in-app updater reads from the latest release, written
+      # from the installer's signature so it never has to be put together by
+      # hand. Only with a signature, which needs the update key. The notes
+      # come in through the environment, never pasted into the script.
+      - name: Write latest.json
+        shell: bash
+        env:
+          NOTES: ${{ inputs.notes }}
+        run: |
+          sig=$(ls src-tauri/target/release/bundle/nsis/*_x64-setup.exe.sig 2>/dev/null | head -n 1)
+          if [ -z "$sig" ]; then
+            echo "No signature, so no latest.json."
+            exit 0
+          fi
+          SIG="$sig" node -e '
+            const fs = require("fs");
+            const path = require("path");
+            const version = require("./src-tauri/tauri.conf.json").version;
+            const exe = path.basename(process.env.SIG).replace(/\.sig$/, "");
+            const latest = {
+              version,
+              notes: process.env.NOTES || "",
+              pub_date: new Date().toISOString().replace(/\.\d{3}Z$/, "Z"),
+              platforms: {
+                "windows-x86_64": {
+                  signature: fs.readFileSync(process.env.SIG, "utf8"),
+                  url: `https://github.com/Bertrram/omoio/releases/download/v${version}/${exe}`,
+                },
+              },
+            };
+            fs.writeFileSync(path.join(path.dirname(process.env.SIG), "latest.json"), JSON.stringify(latest, null, 2) + "\n");
+          '
+          cat src-tauri/target/release/bundle/nsis/latest.json
+
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: omoio-installer
           path: |
             src-tauri/target/release/bundle/nsis/*_x64-setup.exe
             src-tauri/target/release/bundle/nsis/*_x64-setup.exe.sig
+            src-tauri/target/release/bundle/nsis/latest.json
           if-no-files-found: error
