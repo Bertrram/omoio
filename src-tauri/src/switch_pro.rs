@@ -171,6 +171,18 @@ mod imp {
     /// Opens a HID device for reading, shared, when it is a Pro Controller,
     /// with the length of its input reports, which each read has to be.
     fn open(path: &str) -> Option<(std::fs::File, usize)> {
+        let (file, length, _) = open_shared(path, |vendor, product| vendor == NINTENDO && product == PRO_CONTROLLER)?;
+        (length >= 12).then_some((file, length))
+    }
+
+    /// Opens a HID device for reading only, shared with every other program
+    /// that has it open, when `wanted` takes its USB vendor and product ids,
+    /// with the length of its input reports, which each read has to be, and
+    /// its product id. Nothing is sent to the device: its ids and report
+    /// length are what Windows already knows of it (`HidD_GetAttributes`,
+    /// `HidD_GetPreparsedData`, `HidP_GetCaps`), not a report asked of it.
+    /// sony_pad.rs opens Sony's pads this way too.
+    pub(crate) fn open_shared(path: &str, wanted: impl Fn(u16, u16) -> bool) -> Option<(std::fs::File, usize, u16)> {
         use std::os::windows::fs::OpenOptionsExt;
         use std::os::windows::io::AsRawHandle;
         use windows::Win32::Devices::HumanInterfaceDevice::{
@@ -193,10 +205,7 @@ mod imp {
         // Each call fills in what it is handed, and the preparsed data is
         // freed once read.
         let length = unsafe {
-            if !HidD_GetAttributes(handle, &mut attributes)
-                || attributes.VendorID != NINTENDO
-                || attributes.ProductID != PRO_CONTROLLER
-            {
+            if !HidD_GetAttributes(handle, &mut attributes) || !wanted(attributes.VendorID, attributes.ProductID) {
                 return None;
             }
             let mut preparsed = PHIDP_PREPARSED_DATA::default();
@@ -211,11 +220,12 @@ mod imp {
             }
             usize::from(caps.InputReportByteLength)
         };
-        (length >= 12).then_some((file, length))
+        Some((file, length, attributes.ProductID))
     }
 
-    /// The paths of the HID devices plugged in.
-    fn hid_paths() -> Vec<String> {
+    /// The paths of the HID devices plugged in. sony_pad.rs looks among them
+    /// too.
+    pub(crate) fn hid_paths() -> Vec<String> {
         use windows::core::PCWSTR;
         use windows::Win32::Devices::DeviceAndDriverInstallation::{
             SetupDiDestroyDeviceInfoList, SetupDiEnumDeviceInterfaces, SetupDiGetClassDevsW,
@@ -265,6 +275,10 @@ mod imp {
         paths
     }
 }
+
+/// What sony_pad.rs shares with this reader.
+#[cfg(windows)]
+pub(crate) use imp::{hid_paths, open_shared};
 
 #[cfg(not(windows))]
 mod imp {

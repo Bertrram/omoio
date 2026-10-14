@@ -10,8 +10,13 @@
 //! their z-order, so the game ran but stayed invisible. Owning the window
 //! instead keeps it above the webview and out of the taskbar.
 
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 use windows::core::BOOL;
 use windows::Win32::Foundation::{HWND, LPARAM};
+use windows::Win32::UI::Input::KeyboardAndMouse::{
+    SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, VK_LMENU,
+};
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GetForegroundWindow, GetWindow, GetWindowLongPtrW, GetWindowThreadProcessId, IsWindow,
     IsWindowVisible, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, ShowWindow, GWLP_HWNDPARENT, GWL_STYLE,
@@ -140,7 +145,10 @@ pub fn ours_has_focus(game: isize, host: isize) -> bool {
 }
 
 /// Takes the game picture off the screen without touching the game. Hiding
-/// the window in front hands the keyboard to its owner, which is Omoio.
+/// the window in front hands the keyboard on to another window, which
+/// Windows picks ("ShowWindow function", SW_HIDE: "Hides the window and
+/// activates another window"). Big Picture gives its own window the front
+/// straight after.
 pub fn hide(game: isize) {
     unsafe {
         let _ = ShowWindow(HWND(game as *mut _), SW_HIDE);
@@ -163,9 +171,86 @@ pub fn show(game: isize, activate: bool) {
 /// only while its window is the one in front. Windows allows this only from
 /// the program in front, so it is asked for only when that is Omoio.
 pub fn focus(game: isize) {
-    unsafe {
-        let _ = SetForegroundWindow(HWND(game as *mut _));
+    bring_to_front(game);
+}
+
+/// Puts `window` in front, and says whether it is in front afterwards.
+///
+/// SetForegroundWindow works only for the program in front, or one that
+/// had the last keyboard or mouse input, among a few others, and says so
+/// when it is refused ("SetForegroundWindow function", Remarks, Microsoft
+/// Learn, read 14 October 2026). A game played with a pad alone, as in Big
+/// Picture, gives Omoio no such input: Omoio reads the pad itself, and a
+/// pad's state is asked for (XInputGetState), not sent to any window. So
+/// once something else is in front, a plain call fails, and before
+/// 14 October 2026 that went unnoticed. "The system automatically enables
+/// calls to SetForegroundWindow if the user presses the ALT key"
+/// ("LockSetForegroundWindow function", Remarks), so a press of Alt goes
+/// first when the plain call is refused. It goes to the window in front at
+/// that moment, which callers allow to be only Omoio's, the emulator's own
+/// main window or none; one with a menu bar may mark its menu for that
+/// moment (on the test list of 14 October 2026). Tao
+/// does the same to bring Tauri's windows forward (`force_window_active`,
+/// platform_impl/windows/window.rs, tao 0.35.3), and so do the emulators'
+/// own hand-backs. Callers decide first whether the front may be taken at
+/// all: never from another program.
+pub fn bring_to_front(window: isize) -> bool {
+    let hwnd = HWND(window as *mut _);
+    if unsafe { SetForegroundWindow(hwnd) }.as_bool() && front() == window {
+        return true;
     }
+    if !may_press_alt(&mut PRESSED.lock().unwrap_or_else(std::sync::PoisonError::into_inner), Instant::now()) {
+        return false;
+    }
+    let alt = |flags| INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 { ki: KEYBDINPUT { wVk: VK_LMENU, dwFlags: flags, ..Default::default() } },
+    };
+    let presses = [alt(KEYBD_EVENT_FLAGS(0)), alt(KEYEVENTF_KEYUP)];
+    unsafe {
+        SendInput(&presses, std::mem::size_of::<INPUT>() as i32);
+        let _ = SetForegroundWindow(hwnd);
+    }
+    front() == window
+}
+
+/// At most this many presses of Alt in `PRESS_SPELL`, whoever asks. Each
+/// hand-over watches only briefly, but Omoio's window coming to the front
+/// starts one too, so something that kept taking the front from the game
+/// would otherwise be answered with Alt after Alt for as long as it went on.
+const PRESSES: usize = 6;
+const PRESS_SPELL: Duration = Duration::from_secs(10);
+
+static PRESSED: Mutex<Vec<Instant>> = Mutex::new(Vec::new());
+
+/// Whether another press of Alt fits in the spell, and if so counts it.
+fn may_press_alt(pressed: &mut Vec<Instant>, now: Instant) -> bool {
+    pressed.retain(|&at| now.duration_since(at) < PRESS_SPELL);
+    if pressed.len() >= PRESSES {
+        return false;
+    }
+    pressed.push(now);
+    true
+}
+
+/// The window in front, or 0 for none. Windows has none for a moment while
+/// one window loses the front to another ("GetForegroundWindow function",
+/// Return value, Microsoft Learn).
+pub fn front() -> isize {
+    unsafe { GetForegroundWindow() }.0 as isize
+}
+
+/// The process a window belongs to, 0 for none.
+pub fn process_of(window: isize) -> u32 {
+    let mut pid = 0u32;
+    unsafe { GetWindowThreadProcessId(HWND(window as *mut _), Some(&mut pid)) };
+    pid
+}
+
+/// Whether another window owns this one, as a program owns its dialogs and
+/// messages.
+pub fn has_owner(window: isize) -> bool {
+    unsafe { GetWindow(HWND(window as *mut _), GW_OWNER) }.is_ok()
 }
 
 /// Whether the window in front belongs to one of these processes. Asked by
@@ -197,5 +282,23 @@ pub fn place(game: isize, x: i32, y: i32, width: i32, height: i32) {
             height,
             SWP_NOACTIVATE | SWP_NOZORDER,
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn alt_is_pressed_at_most_six_times_in_ten_seconds() {
+        let start = Instant::now();
+        let mut pressed = Vec::new();
+        for _ in 0..PRESSES {
+            assert!(may_press_alt(&mut pressed, start));
+        }
+        assert!(!may_press_alt(&mut pressed, start + Duration::from_secs(9)));
+        // Once the first ones are ten seconds old there is room again.
+        assert!(may_press_alt(&mut pressed, start + PRESS_SPELL));
+        assert_eq!(pressed.len(), 1);
     }
 }

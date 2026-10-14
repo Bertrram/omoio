@@ -371,7 +371,8 @@ fn stand_in(players: &[Player], plugged: &[Pad], usable: &dyn Fn(&Player) -> boo
     let Some(first) = players.first() else {
         return players;
     };
-    if usable(first) {
+    // No controller is what someone chose for player 1, so it stays.
+    if usable(first) || first.pad.is_none() {
         return players;
     }
     let mut xinput = plugged.iter().filter(|pad| xinput_slot(pad).is_some());
@@ -398,6 +399,12 @@ fn missing(players: &[Player], connected: &[Pad], usable: &dyn Fn(&Player) -> bo
     let first = players.first()?;
     if stand_in(players, connected, usable).first().is_some_and(usable) {
         return None;
+    }
+    if first.pad.is_none() {
+        return Some(
+            "Player 1 has no controller, so the game won't answer anyone as player 1. Choose one for player 1 on the Controller screen."
+                .to_string(),
+        );
     }
     Some(format!(
         "Cemu can't use player 1's controller, {}, so the game won't answer it. \
@@ -844,6 +851,14 @@ mod tests {
         let usable = |player: &Player| reader_for(player, &hid, &no_ids).is_some();
         assert_eq!(stand_in(&players, &[xinput(1)], &usable), players, "player 1 keeps the pad");
         assert_eq!(missing(&players, &[], &usable), None, "and Play says nothing");
+    }
+
+    #[test]
+    fn player_one_with_no_controller_keeps_none() {
+        let players = vec![Player::on(Pad::none()), Player::on(xinput(2))];
+        let usable = usable_with(&[]);
+        assert_eq!(stand_in(&players, &[xinput(1)], &usable), players);
+        assert!(missing(&players, &[xinput(1)], &usable).unwrap().contains("Player 1 has no controller"));
     }
 
     #[test]

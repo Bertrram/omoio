@@ -634,7 +634,7 @@ fn launch(app: AppHandle, title_id: &str) -> Result<(), String> {
     // buttons, a pad plugged in for the first time works, and the picture
     // fits this machine.
     backend.prepare(&app, game)?;
-    crate::controllers::before_launch(&app, backend, &game.title_id);
+    let unwritten = crate::controllers::before_launch(&app, backend, &game.title_id).is_err();
     tune_picture(&app, backend);
     let pid = backend.launch(&app, game)?;
     let session = app.state::<Session>();
@@ -648,6 +648,30 @@ fn launch(app: AppHandle, title_id: &str) -> Result<(), String> {
     );
     session.set_fullscreen(Settings::load(&settings_path(&app)?).start_fullscreen);
     crate::session::watch(app.clone(), pid);
+    // Said over the game, in the bar the interface puts up when the game's
+    // window comes (session::watch sends "game-started" then), so not before
+    // that window is there, however long the emulator takes to boot.
+    if unwritten {
+        let message = format!(
+            "Couldn't give {} Omoio's controller layout, so the game may not answer your controller. \
+             Check the Controller screen, then start the game again.",
+            backend.name()
+        );
+        let app = app.clone();
+        std::thread::spawn(move || loop {
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            let session = app.state::<Session>();
+            if session.pid() != Some(pid) {
+                return;
+            }
+            if session.window().is_some() {
+                // A moment for the bar to be drawn after "game-started".
+                std::thread::sleep(std::time::Duration::from_millis(500));
+                let _ = app.emit("pad-not-found", message);
+                return;
+            }
+        });
+    }
     crate::portal_menu::watch(app.clone(), pid);
     Ok(())
 }
@@ -810,7 +834,7 @@ pub fn set_game_fullscreen(app: AppHandle, fullscreen: bool) {
         crate::session::place(&window, &session);
     }
     // The button that asked took the keyboard from the game.
-    session.focus_game();
+    crate::session::give_game_front(&app);
 }
 
 #[tauri::command]
@@ -1689,9 +1713,10 @@ fn running_emulator(app: &AppHandle) -> Result<(&'static dyn crate::backends::Em
 pub async fn portal_figures(app: AppHandle) -> Result<Vec<String>, String> {
     let (backend, pid) = running_emulator(&app)?;
     let names = tauri::async_runtime::spawn_blocking(move || backend.portal_figures(pid))
-        .await
-        .map_err(|e| e.to_string())?;
+        .await;
+    // Even when the errand panicked, so the game is let hear again.
     crate::portal_menu::take_front(&app);
+    let names = names.map_err(|e| e.to_string())?;
     names
 }
 
@@ -1702,9 +1727,10 @@ pub async fn portal_load(app: AppHandle, slot: usize, figure: String) -> Result<
     let (backend, pid) = running_emulator(&app)?;
     let path = figure.clone();
     let names = tauri::async_runtime::spawn_blocking(move || backend.portal_load(pid, slot, Path::new(&path)))
-        .await
-        .map_err(|e| e.to_string())?;
+        .await;
+    // Even when the errand panicked, so the game is let hear again.
     crate::portal_menu::take_front(&app);
+    let names = names.map_err(|e| e.to_string())?;
     let names = names?;
     crate::portal_menu::used(&app, &figure);
     Ok(names)
@@ -1754,6 +1780,17 @@ pub fn delete_figure(app: AppHandle, path: String) -> Result<(), String> {
 #[tauri::command]
 pub fn close_portal_menu(app: AppHandle) {
     crate::portal_menu::close(&app);
+}
+
+/// Opens the portal menu over the running game, from the Portal button in
+/// the bar over it, for a player whose pad Omoio can't read. Off the main
+/// thread and async: making a window from a synchronous command deadlocks
+/// on Windows (`WebviewWindowBuilder::new`, "Known issues", tauri 2.11.5).
+#[tauri::command]
+pub async fn open_portal_menu(app: AppHandle) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || crate::portal_menu::open_by_button(&app))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 /// The kind of pad that opened the menu, to name its buttons as printed.
@@ -1815,9 +1852,10 @@ pub async fn figure_characters(app: AppHandle) -> Result<Vec<crate::core::figure
     let characters = tauri::async_runtime::spawn_blocking(move || {
         crate::portal_menu::characters(&handle, backend, playing.console, pid)
     })
-    .await
-    .map_err(|e| e.to_string())?;
+    .await;
+    // Even when the errand panicked, so the game is let hear again.
     crate::portal_menu::take_front(&app);
+    let characters = characters.map_err(|e| e.to_string())?;
     Ok(crate::core::figures::offers(characters?, game, playing.console))
 }
 
@@ -1842,9 +1880,10 @@ pub async fn portal_create(
     let path = file.clone();
     let made = character.clone();
     let names = tauri::async_runtime::spawn_blocking(move || backend.portal_create(pid, slot, &character, &path))
-        .await
-        .map_err(|e| e.to_string())?;
+        .await;
+    // Even when the errand panicked, so the game is let hear again.
     crate::portal_menu::take_front(&app);
+    let names = names.map_err(|e| e.to_string())?;
     // The emulator can write the figure and only then run into a problem, so
     // a file it wrote is recorded as its character either way.
     if file.is_file() {
@@ -1871,9 +1910,10 @@ pub fn set_portal_button(app: AppHandle, button: String) -> Result<(), String> {
 pub async fn portal_clear(app: AppHandle, slot: usize) -> Result<Vec<String>, String> {
     let (backend, pid) = running_emulator(&app)?;
     let names = tauri::async_runtime::spawn_blocking(move || backend.portal_clear(pid, slot))
-        .await
-        .map_err(|e| e.to_string())?;
+        .await;
+    // Even when the errand panicked, so the game is let hear again.
     crate::portal_menu::take_front(&app);
+    let names = names.map_err(|e| e.to_string())?;
     names
 }
 

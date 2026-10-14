@@ -174,6 +174,13 @@ const SONY_BY_NAME: [(&str, &str, &str); 2] = [
 /// `connected`), and named so that RPCS3 could find it, that pad would drive
 /// two players.
 fn rpcs3_pad(pad: &Pad, plugged: &[Plugged]) -> (String, String) {
+    // No controller is RPCS3's handler for no pad, "Null", which reports the
+    // player's pad as unplugged (`pad_thread::Init`, pad_thread.cpp lines
+    // 160 to 213, and the handler's name in pad_config_types.cpp line 11, at
+    // 222754bf, read 14 October 2026).
+    if pad.is_none() {
+        return ("Null".to_string(), String::new());
+    }
     if let Some(at) = plugged
         .iter()
         .position(|p| pad.handler == "SDL" && p.pad.device == pad.device)
@@ -488,7 +495,7 @@ fn quoted(value: &str) -> String {
 pub fn write(app: &AppHandle, title_id: &str, players: &[Player]) -> Result<(), String> {
     let usable = |p: &Player| {
         let handler = p.pad.handler.as_str();
-        !p.pad.device.is_empty() && (handler == "XInput" || handler == "SDL" || is_sony(handler))
+        p.pad.is_none() || (!p.pad.device.is_empty() && (handler == "XInput" || handler == "SDL" || is_sony(handler)))
     };
     if !players.iter().all(usable) {
         return Err("Couldn't save the controller settings.".to_string());
@@ -652,6 +659,13 @@ mod tests {
         places.dedup();
         assert_eq!(places.len(), 25);
         assert_eq!(BUTTON_NAMES.len(), 25);
+    }
+
+    #[test]
+    fn a_player_with_no_controller_gets_rpcs3s_null_handler() {
+        let players = [Player::on(pad("XInput", "XInput Pad #1")), Player::on(Pad::none())];
+        let text = profile_text(&players, &[]);
+        assert!(text.contains("Player 2 Input:\n  Handler: Null\n  Device: \"\"\n"), "{text}");
     }
 
     #[test]

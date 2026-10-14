@@ -77,12 +77,27 @@ impl Session {
     }
 
     /// Hands the keyboard and pad back to the game after Omoio moved it,
-    /// unless it is hidden behind Big Picture.
-    pub fn focus_game(&self) {
-        let window = self.inner.lock().unwrap().as_ref().filter(|r| !r.hidden).and_then(|r| r.window);
-        if let Some(window) = window {
-            overlay::focus(window);
+    /// unless it is hidden behind Big Picture, and says whether the game is
+    /// in front afterwards. Only from Omoio, the emulator or nobody: a
+    /// program the user went to keeps the front. Once, at once; see
+    /// `give_game_front` for the hand-over that also makes sure it held.
+    pub fn focus_game(&self) -> bool {
+        let Some((game, pid)) = self.shown() else {
+            return false;
+        };
+        match first_step(front_now(game, pid, 0)) {
+            Step::Wait => true,
+            Step::Take => overlay::bring_to_front(game),
+            Step::Stop => false,
         }
+    }
+
+    /// The game's window and its emulator, while the window is on the
+    /// screen.
+    fn shown(&self) -> Option<(isize, u32)> {
+        let inner = self.inner.lock().unwrap();
+        let running = inner.as_ref().filter(|r| !r.hidden)?;
+        Some((running.window?, running.pid))
     }
 
     /// Puts the game picture back, and with `activate` gives it the keyboard.
@@ -126,7 +141,7 @@ impl Session {
         self.inner.lock().unwrap().as_ref().map(|r| r.pid)
     }
 
-    fn window(&self) -> Option<isize> {
+    pub fn window(&self) -> Option<isize> {
         self.inner.lock().unwrap().as_ref().and_then(|r| r.window)
     }
 
@@ -256,7 +271,7 @@ pub fn watch(app: AppHandle, pid: u32) {
                     let now = !session.is_fullscreen();
                     session.set_fullscreen(now);
                     let _ = app.emit("game-fullscreen", now);
-                    session.focus_game();
+                    give_game_front(&app);
                 }
             }
 
@@ -343,6 +358,13 @@ pub fn quiet_game(app: &AppHandle) {
         };
         let portal = crate::portal_menu::showing(&app);
         let over = portal || session.is_hidden();
+        // Cemu can't close its input settings window while its figure maker
+        // is open over it (`backends::cemu::portal::making`); the portal
+        // command under way lets the game hear when it ends
+        // (`portal_menu::take_front`).
+        if !over && crate::backends::cemu::portal::making() {
+            return;
+        }
         if portal {
             backend.ready_portal(pid);
         }
@@ -352,6 +374,196 @@ pub fn quiet_game(app: &AppHandle) {
             }
         }
     });
+}
+
+/// What is in front, seen from a game Omoio is handing the front to.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Front {
+    Game,
+    /// No window, which Windows allows "in certain circumstances, such as
+    /// when a window is losing activation" ("GetForegroundWindow function",
+    /// Microsoft Learn, read 14 October 2026).
+    Nobody,
+    /// Omoio's own window, with the interface or Big Picture in it.
+    OmoioMain,
+    /// Another of Omoio's windows, such as the portal menu.
+    OmoioOther,
+    /// One of the emulator's windows that nothing owns, such as its main
+    /// window.
+    Emulator,
+    /// A window the emulator put up over one of its own: a dialog or a
+    /// message, which may be there to be read.
+    EmulatorDialog,
+    /// Any other program: the user went there, and stays there.
+    Other,
+}
+
+/// What to do about it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Step {
+    /// Nothing for now: the game is in front, or may be about to be.
+    Wait,
+    /// Give the game the front.
+    Take,
+    /// Leave the front where it is, and stop looking.
+    Stop,
+}
+
+/// At the moment Omoio hands over: the front is taken from Omoio's own
+/// windows, the emulator's and nobody, never from another program.
+fn first_step(front: Front) -> Step {
+    match front {
+        Front::Game => Step::Wait,
+        Front::Nobody | Front::OmoioMain | Front::OmoioOther | Front::Emulator => Step::Take,
+        Front::EmulatorDialog | Front::Other => Step::Stop,
+    }
+}
+
+/// Looking again after a hand-over, in case something took the front back.
+/// Omoio's window is taken from only while the game covers the screen; in
+/// a window the user may have gone to Omoio's on purpose. Nobody in front
+/// counts only when it was so at the look before too, so a switch to
+/// another program, which may pass through nobody (`Front::Nobody`), is
+/// never cut short.
+fn next_step(front: Front, covers_screen: bool, nobody_before: bool) -> Step {
+    match front {
+        Front::Game => Step::Wait,
+        Front::Nobody if nobody_before => Step::Take,
+        Front::Nobody => Step::Wait,
+        Front::OmoioMain if covers_screen => Step::Take,
+        Front::Emulator => Step::Take,
+        Front::OmoioMain | Front::OmoioOther | Front::EmulatorDialog | Front::Other => Step::Stop,
+    }
+}
+
+/// What is in front now. `main` is Omoio's own window, 0 when it doesn't
+/// matter which of Omoio's windows it is.
+fn front_now(game: isize, emulator: u32, main: isize) -> Front {
+    let front = overlay::front();
+    if front == 0 {
+        return Front::Nobody;
+    }
+    if front == game {
+        return Front::Game;
+    }
+    let owner = overlay::process_of(front);
+    if owner == std::process::id() {
+        if front == main {
+            Front::OmoioMain
+        } else {
+            Front::OmoioOther
+        }
+    } else if owner == emulator {
+        if overlay::has_owner(front) {
+            Front::EmulatorDialog
+        } else {
+            Front::Emulator
+        }
+    } else {
+        Front::Other
+    }
+}
+
+/// Whether the game's picture fills the screen, so Omoio's own window has
+/// nothing the user can see or use while the game is on it.
+fn covers_screen(session: &Session) -> bool {
+    crate::big_picture::is_on() || session.is_fullscreen()
+}
+
+/// How long, and how often, Omoio looks again after handing the game the
+/// front, and how many times at most it takes it back meanwhile. Long enough
+/// for what the hand-over set off in Omoio's own window and in the
+/// emulator's to have happened, short enough that nothing the user does
+/// later is answered.
+const KEEP_WATCH: std::time::Duration = std::time::Duration::from_millis(1500);
+const LOOK_EVERY: std::time::Duration = std::time::Duration::from_millis(50);
+const TAKES: u32 = 3;
+
+/// Which hand-over is being watched. A newer one ends the watch of the one
+/// before, so two never look at once.
+static HANDOVER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Gives the game the front and makes sure it keeps it: after the portal
+/// menu closes, after Resume, after leaving Big Picture into a game that
+/// fills the screen, and when Omoio's own window comes to the front over
+/// such a game.
+///
+/// Dolphin and RPCS3 hear the pad only while the game's window is the
+/// window in front: Dolphin compares `GetForegroundWindow()` with its render
+/// window when background input is off (`Host::GetRenderFocus` in
+/// DolphinQt/Host.cpp and `UpdateInputGate` in Core/Core.cpp, Dolphin
+/// 2609a), and RPCS3 follows Qt's word on whether its game window is active
+/// (`activeChanged` in rpcs3qt/gs_frame.cpp, master of 14 October 2026).
+/// Up to 0.3.1 the hand-over was one SetForegroundWindow whose answer was
+/// never read, and in Big Picture the game stayed deaf after every close of
+/// the menu (Discord, ticket #4, 9 and 10 October 2026). There Windows may
+/// refuse Omoio the front once Omoio no longer has it, since a pad gives
+/// Omoio no keyboard or mouse input (overlay::bring_to_front), and hiding
+/// the portal menu while it was in front let Windows give the front to a
+/// window of its own choosing first
+/// ("ShowWindow function", SW_HIDE: "Hides the window and activates another
+/// window"; Window Features: the next window "as determined by the ALT+ESC
+/// key combination"; both Microsoft Learn, read 14 October 2026). So the
+/// menu hands over before it hides (portal_menu::close), the hand-over
+/// presses Alt when Windows refuses, and this looks again for a moment in
+/// case something takes the front straight back. Never from another
+/// program, and off the calling thread after the first try.
+pub fn give_game_front(app: &AppHandle) {
+    let session = app.state::<Session>();
+    session.focus_game();
+    let Some((game, pid)) = session.shown() else {
+        return;
+    };
+    let turn = HANDOVER.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    let app = app.clone();
+    std::thread::spawn(move || keep_front(&app, game, pid, turn));
+}
+
+fn keep_front(app: &AppHandle, game: isize, pid: u32, turn: u64) {
+    use std::sync::atomic::Ordering;
+    let main = app
+        .get_webview_window("main")
+        .and_then(|window| window.hwnd().ok())
+        .map(|hwnd| hwnd.0 as isize)
+        .unwrap_or(0);
+    let until = std::time::Instant::now() + KEEP_WATCH;
+    let (mut takes, mut nobody_before) = (0, false);
+    while std::time::Instant::now() < until {
+        std::thread::sleep(LOOK_EVERY);
+        let session = app.state::<Session>();
+        // A newer hand-over, another game, the game taken off the screen,
+        // or a menu over it: none of that is this watch's business.
+        if HANDOVER.load(Ordering::Relaxed) != turn
+            || session.shown() != Some((game, pid))
+            || crate::portal_menu::showing(app)
+        {
+            return;
+        }
+        let front = front_now(game, pid, main);
+        match next_step(front, covers_screen(&session), nobody_before) {
+            Step::Wait => {}
+            Step::Stop => return,
+            Step::Take if takes == TAKES => return,
+            Step::Take => {
+                takes += 1;
+                overlay::bring_to_front(game);
+            }
+        }
+        nobody_before = front == Front::Nobody;
+    }
+}
+
+/// Omoio's own window came to the front. Over a game that fills the screen,
+/// in Big Picture or in Omoio's fullscreen, there is nothing of Omoio's to
+/// use, so the game gets the front. Alt+Tab back to Omoio brings Omoio's
+/// own window, not the game's, which Omoio owns and so keeps off the
+/// taskbar (attach() in overlay.rs). With the portal menu up, or the game
+/// in a window or hidden behind Big Picture, Omoio keeps the front.
+pub fn omoio_activated(app: &AppHandle) {
+    let session = app.state::<Session>();
+    if session.shown().is_some() && covers_screen(&session) && !crate::portal_menu::showing(app) {
+        give_game_front(app);
+    }
 }
 
 /// Fills in a game's version from the emulator's log when the game's own
@@ -468,4 +680,47 @@ pub fn place(window: &WebviewWindow, session: &Session) {
         size.width as i32 - left,
         size.height as i32 - top,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_front_is_never_taken_from_another_program() {
+        assert_eq!(first_step(Front::Other), Step::Stop);
+        for covers in [false, true] {
+            for nobody_before in [false, true] {
+                assert_eq!(next_step(Front::Other, covers, nobody_before), Step::Stop);
+            }
+        }
+    }
+
+    #[test]
+    fn a_hand_over_takes_the_front_from_omoio_the_emulator_and_nobody() {
+        assert_eq!(first_step(Front::OmoioMain), Step::Take);
+        assert_eq!(first_step(Front::OmoioOther), Step::Take);
+        assert_eq!(first_step(Front::Emulator), Step::Take);
+        assert_eq!(first_step(Front::Nobody), Step::Take);
+        assert_eq!(first_step(Front::Game), Step::Wait);
+        // A dialog or message of the emulator's is left to be read.
+        assert_eq!(first_step(Front::EmulatorDialog), Step::Stop);
+    }
+
+    #[test]
+    fn omoios_window_is_taken_back_only_over_a_game_that_fills_the_screen() {
+        assert_eq!(next_step(Front::OmoioMain, true, false), Step::Take);
+        assert_eq!(next_step(Front::OmoioMain, false, false), Step::Stop);
+        // The portal menu, opened again, keeps the front.
+        assert_eq!(next_step(Front::OmoioOther, true, false), Step::Stop);
+    }
+
+    #[test]
+    fn nobody_in_front_waits_one_look_before_it_counts() {
+        assert_eq!(next_step(Front::Nobody, true, false), Step::Wait);
+        assert_eq!(next_step(Front::Nobody, true, true), Step::Take);
+        assert_eq!(next_step(Front::Game, true, true), Step::Wait);
+        assert_eq!(next_step(Front::Emulator, false, false), Step::Take);
+        assert_eq!(next_step(Front::EmulatorDialog, true, true), Step::Stop);
+    }
 }

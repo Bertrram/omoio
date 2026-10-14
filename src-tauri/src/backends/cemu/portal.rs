@@ -14,6 +14,7 @@
 
 use crate::core::figures::{self, Character};
 use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 use windows::core::BOOL;
@@ -91,6 +92,64 @@ static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
 
 fn turn() -> MutexGuard<'static, ()> {
     ONE_AT_A_TIME.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// How many errands with Cemu's figure maker are under way or waiting their
+/// turn, so the portal menu closing meanwhile leaves Cemu's windows alone
+/// (`making`).
+static MAKING: AtomicUsize = AtomicUsize::new(0);
+
+/// Counts one errand with the figure maker for as long as it is kept.
+struct Making;
+
+impl Making {
+    fn new() -> Self {
+        MAKING.fetch_add(1, Ordering::SeqCst);
+        Self
+    }
+}
+
+impl Drop for Making {
+    fn drop(&mut self) {
+        MAKING.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// Whether Omoio is having Cemu's figure maker make a figure or list its
+/// characters, or is about to. Closing the input settings window `hush`
+/// keeps open meanwhile can't end well.
+///
+/// That window is modal, and the figure maker opened over it is modal too,
+/// with a modal loop of its own inside the first one (`MainWindow.cpp`,
+/// `OnOptionsInput`, and `EmulatedUSBDeviceFrame.cpp`, `CreateSkylander`,
+/// both `ShowModal`, v2.6). wxWidgets ends a modal loop only while it is
+/// the innermost one: closing the outer window ends in `Exit`, which checks
+/// `IsRunning()`, true only for the loop that is running now, and returns
+/// without ending anything (wxWidgets 3.2.5, `evtloopcmn.cpp`,
+/// `wxEventLoopBase::Exit`; `evtloop.h`, `IsRunning`; `dialog.cpp`,
+/// `wxDialog::Show` and `EndModal`). The window is hidden all the same, so
+/// its loop goes on with nothing left to end it: the game stays deaf
+/// (`g_inputConfigWindowHasFocus` is cleared only when the window is
+/// deleted, `InputSettings2.cpp`), Cemu's main window stays turned off, and
+/// Cemu writes "Encountered wxWidgets assert!" to its log
+/// (`CemuApp::OnAssertFailure`; all read 14 October 2026). That is what
+/// closing the menu while a Skylander was being made ran into (GitHub issue
+/// 24, 10 October 2026). So the menu leaves the window as it is until the
+/// maker is done, and Omoio lets the game hear then (`portal_menu::close`,
+/// `take_front`).
+pub fn making() -> bool {
+    MAKING.load(Ordering::SeqCst) > 0
+}
+
+/// Waits, before the figure maker opens, for an input settings window that
+/// is closing because the menu closed just before: opened over it, the
+/// maker would have that window's loop under its own, as above. Once Cemu
+/// has hidden the window, its loop has ended. A window a menu still wants
+/// open is left, as is one still there after `GONE_WAIT`.
+fn input_settings_gone(pid: u32) {
+    until(GONE_WAIT, || {
+        quiet().deaf || !windows_of(pid).into_iter().any(|window| title(window) == INPUT_SETTINGS)
+    });
 }
 
 /// A command from Cemu's menu bar, waiting for the bar to be read if Cemu
@@ -605,15 +664,18 @@ fn open(pid: u32) -> Result<HWND, String> {
     show_devices(pid, main, devices, START_WAIT).ok_or("Cemu's portal didn't open. Try again.".to_string())
 }
 
+/// Sends the command at least once, however little of `limit` is left.
 fn show_devices(pid: u32, main: HWND, devices: u32, limit: Duration) -> Option<HWND> {
     let until = Instant::now() + limit;
-    while Instant::now() < until {
+    loop {
         let _ = unsafe { PostMessageW(Some(main), WM_COMMAND, WPARAM(devices as usize), LPARAM(0)) };
         if let Some(window) = arrives(pid, WINDOW, RESEND) {
             return Some(window);
         }
+        if Instant::now() >= until {
+            return None;
+        }
     }
-    None
 }
 
 /// Opens the portal window as the portal menu opens, before Cemu's input
@@ -621,15 +683,45 @@ fn show_devices(pid: u32, main: HWND, devices: u32, limit: Duration) -> Option<H
 /// no menu command at all, and the portal menu's first read waited twenty
 /// seconds and failed (6 October 2026). The menu covers the screen as it
 /// opens, and the window stays open after.
+///
+/// Cemu answers the commands it is sent in the order they came: they are
+/// all posted to its main window, and a thread's posted messages wait in one
+/// first-in, first-out queue (Microsoft's "About Messages and Message
+/// Queues"). So one sent here, even if it isn't answered within
+/// `READY_WAIT`, is answered before the input settings window that `hush`
+/// asks for next. It is sent whenever the portal window isn't showing,
+/// also while an input settings window still is, such as one Big Picture
+/// asked for that is closing, and the command is waited for when Omoio
+/// hasn't read it from the menu bar yet. Neither was so until now, and then
+/// the first read sent it only after the input settings window, the order
+/// that failed (reported on Discord, 11 October 2026: "Cemu's portal didn't
+/// open", the first time only). Nothing in Cemu 2.6 or wxWidgets 3.2.5 drops
+/// a menu command while that window is up: its modal loop hands on every
+/// message (`evtloop.cpp`, `wxGUIEventLoop::PreProcessMessage`, which only
+/// eats them around a `wxSafeYield`), and the frame drops one only for a
+/// menu item that is turned off (`framecmn.cpp`,
+/// `wxFrameBase::ProcessCommand`), which Emulated USB Devices never is
+/// (`MainWindow.cpp`, `RecreateMenu`, v2.6; all read 14 October 2026). So a
+/// command sent then waits rather than being lost, and what counts is that
+/// the portal window's is ahead of it.
 pub fn ready(pid: u32) {
     let _turn = turn();
-    let open_now = windows_of(pid).into_iter().map(title).collect::<Vec<_>>();
-    if open_now.iter().any(|title| title == WINDOW || title == INPUT_SETTINGS) {
+    if windows_of(pid).into_iter().any(|w| title(w) == WINDOW) {
         return;
     }
-    tidy(pid);
-    if let (Some(main), Some(devices)) = (main_window(pid), command(pid, WINDOW)) {
-        let _ = show_devices(pid, main, devices, READY_WAIT);
+    let until = Instant::now() + READY_WAIT;
+    let devices = loop {
+        tidy(pid);
+        if let Some(found) = command(pid, WINDOW) {
+            break Some(found);
+        }
+        if Instant::now() >= until {
+            break None;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    };
+    if let (Some(main), Some(devices)) = (main_window(pid), devices) {
+        let _ = show_devices(pid, main, devices, until.saturating_duration_since(Instant::now()));
     }
 }
 
@@ -820,6 +912,7 @@ fn open_creator(pid: u32, window: HWND, slot: usize) -> Result<HWND, String> {
         .into_iter()
         .nth(slot)
         .ok_or(LOOKS_DIFFERENT)?;
+    input_settings_gone(pid);
     let _hurried = Hurried::new(window);
     press(create);
     let creator =
@@ -838,6 +931,7 @@ fn cancel_creator(creator: HWND) {
 /// each item shows and the id and variant it carries. The maker is closed
 /// again without making anything.
 pub fn characters(pid: u32) -> Result<Vec<Character>, String> {
+    let _making = Making::new();
     let _turn = turn();
     let window = open(pid)?;
     let creator = open_creator(pid, window, 0)?;
@@ -875,6 +969,7 @@ pub fn characters(pid: u32) -> Result<Vec<Character>, String> {
 /// holds afterwards.
 pub fn create(pid: u32, slot: usize, character: &Character, file: &Path) -> Result<Vec<String>, String> {
     check(slot)?;
+    let _making = Making::new();
     let _turn = turn();
     let window = open(pid)?;
     let creator = open_creator(pid, window, slot)?;
@@ -945,6 +1040,17 @@ mod tests {
         // A figure Cemu doesn't know stays as Cemu put it.
         assert_eq!(shown("Unknown (999 0)"), "Unknown (999 0)");
         assert_eq!(unknown("Unknown Spyro"), None);
+    }
+
+    #[test]
+    fn the_figure_maker_counts_as_at_work_until_its_errand_ends() {
+        let before = making();
+        {
+            let _one = Making::new();
+            let _two = Making::new();
+            assert!(making());
+        }
+        assert_eq!(making(), before);
     }
 
     fn quiet_with(closing: Vec<(isize, Instant)>) -> Quiet {

@@ -1,4 +1,5 @@
 import {
+  EMULATOR_OF,
   listSessions,
   readSessionLog,
   sessionPrompt,
@@ -61,12 +62,14 @@ function sessionCard(session: PlaySession): HTMLElement {
   `;
   card.querySelector<HTMLElement>(".session-title")!.textContent = session.title;
 
+  // Sessions kept before the console was recorded were all PS3 (api.ts).
+  const emulator = EMULATOR_OF[session.console ?? "ps3"];
   const problems = card.querySelector<HTMLElement>(".session-problems")!;
   const summary = document.createElement("div");
   summary.className = "session-summary";
   summary.textContent =
     session.problems.length === 0
-      ? "RPCS3 logged no errors."
+      ? `${emulator} logged no errors.`
       : `${session.problems.length} error${session.problems.length === 1 ? "" : "s"} logged.`;
   problems.appendChild(summary);
 
@@ -112,10 +115,17 @@ export async function renderLogs(): Promise<View> {
       )
     );
   } else {
+    // The list can hold sessions from every emulator, so the note names none.
+    // RPCS3 and Cemu each start their log afresh when they start (RPCS3
+    // opens it with fs::rewrite, logs::file_writer in rpcs3/util/logs.cpp,
+    // v0.0.43-20267, commit ff91404b; Cemu 2.6 opens log.txt with
+    // std::ios::out, cemuLog_createLogFile in
+    // src/Cemu/Logging/CemuLogging.cpp), and Dolphin only adds to its log, so
+    // Omoio empties it before each game (backends/dolphin/log.rs).
     const note = document.createElement("div");
     note.className = "notice plain";
     note.textContent =
-      "RPCS3 overwrites its own log each time it starts. Omoio keeps a copy of every session so a crash is still there afterwards.";
+      "Each emulator's log starts afresh with every game. Omoio keeps a copy of every session so a crash is still there afterwards.";
     content.appendChild(note);
     sessions.forEach((session) => content.appendChild(sessionCard(session)));
   }

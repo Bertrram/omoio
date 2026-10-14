@@ -293,10 +293,17 @@ impl super::EmulatorBackend for Dolphin {
         portal::create(pid, slot, character, file)
     }
 
+    /// The first game's figures, named as Dolphin's list names them, asked
+    /// of its Customize window one by one (portal.rs, `characters`).
+    fn portal_characters(&self, pid: u32) -> Result<Vec<Character>, String> {
+        portal::characters(pid)
+    }
+
     /// Dolphin's figure maker makes a figure from any ID and Variant typed
-    /// into it, and its list of characters shows their names alone, so
-    /// Omoio offers the characters it has read from the other emulators'
-    /// makers (`portal_menu::characters`).
+    /// into it, and its list of characters shows their names alone, so its
+    /// own list (`portal_characters`) has only the figures Omoio could ask
+    /// it about, and Omoio offers the characters it has read from the other
+    /// emulators' makers beside them (`portal_menu::characters`).
     fn lists_characters(&self) -> bool {
         false
     }
@@ -374,6 +381,11 @@ impl super::EmulatorBackend for Dolphin {
 
     fn missing_first_player(&self, _app: &AppHandle, players: &[Player], connected: &[Pad]) -> Option<String> {
         controllers::missing_first_player(players, connected)
+    }
+
+    /// From the pads Dolphin's log says it found (log.rs, `added_devices`).
+    fn unfound_pad(&self, app: &AppHandle, title_id: &str) -> Option<String> {
+        controllers::unfound(app, self.console, title_id)
     }
 
     fn forget_layout(&self, app: &AppHandle, title_id: &str) -> Result<(), String> {

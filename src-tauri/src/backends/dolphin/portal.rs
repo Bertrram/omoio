@@ -518,9 +518,166 @@ fn make(automation: &Automation, pid: u32, maker: HWND, character: &Character, f
     }
 }
 
+/// The first game's figures that Dolphin's list has, each under the name
+/// the list gives it, read without making any.
+///
+/// Dolphin's list of characters shows names alone: each entry keeps its ID
+/// and Variant as item data that only Dolphin reads (`RefreshList`,
+/// SkylanderPortalWindow.cpp lines 745 to 765, Dolphin 2609a, read 14
+/// October 2026), and UI Automation gives a list entry its text and no
+/// more. The Customize window says the rest. Given an ID and a Variant, its
+/// Create looks them up in that list and offers to save the figure under
+/// the entry's name, or under "Unknown(...)" for numbers the list doesn't
+/// have, before anything is made; when that file window is closed without a
+/// file, nothing is made, nothing goes on the portal, and the Customize
+/// window stays open for the next (`CreateSkylanderAdvanced`, lines 594 to
+/// 633). So Omoio asks it about each of the first game's figures and keeps
+/// the names it gives. Which numbers to ask about is Omoio's own knowledge:
+/// a figure of the first game, Spyro's Adventure, carries variant 0x0000
+/// (core/figures.rs, `variant_game`), and its ids are those Omoio knows
+/// the element or the kind of (`first_game_figures`). Later games' figures
+/// carry a variant for each release, which nothing in Dolphin's windows
+/// shows without making the figure, so those still come from the other
+/// emulators' makers (portal_menu.rs, `characters`).
+///
+/// The menu waits for this while it says it is getting the characters, so
+/// it is done once for each Dolphin version (portal_menu.rs keeps the list).
+/// A question that goes wrong costs that figure alone, so the names already
+/// read are kept; a few going wrong in a row means Dolphin's windows aren't
+/// as expected, and asking on would only add waits.
+pub fn characters(pid: u32) -> Result<Vec<Character>, String> {
+    const GIVE_UP_AFTER: usize = 3;
+    let mut found = Vec::new();
+    let mut wrong_in_a_row = 0;
+    for (id, variant) in first_game_figures() {
+        match name_for(pid, id, variant) {
+            Ok(answer) => {
+                wrong_in_a_row = 0;
+                if let Some(name) = listed_name(&answer) {
+                    found.push(Character { name, id, variant });
+                }
+            }
+            Err(_) => {
+                wrong_in_a_row += 1;
+                if wrong_in_a_row == GIVE_UP_AFTER {
+                    break;
+                }
+            }
+        }
+    }
+    {
+        let _turn = turn();
+        let automation = Automation::new()?;
+        if let Some(maker) = maker_window(&automation, pid) {
+            key(maker, VK_ESCAPE);
+            gone(maker);
+        }
+    }
+    if found.is_empty() {
+        Err("Couldn't read Dolphin's list of characters.".to_string())
+    } else {
+        Ok(found)
+    }
+}
+
+/// The ids and variant Omoio asks Dolphin about: every id of the first game
+/// that Omoio knows the element of, or that is an item or an adventure
+/// rather than a character (core/figures.rs, `reads`, `element`, `kind`),
+/// with the first game's variant.
+fn first_game_figures() -> Vec<(u16, u16)> {
+    (0..1000u16)
+        .filter(|&id| figures::reads(figures::Game::Spyro, id, 0))
+        .filter(|&id| figures::element(id).is_some() || figures::kind(id) != figures::Kind::Character)
+        .map(|id| (id, 0))
+        .collect()
+}
+
+/// The name a file window offered for a figure, as its name box holds it:
+/// the list's name, or `None` for numbers the list doesn't have. Dolphin
+/// offers the entry's name with ".sky" after it, and for numbers not in its
+/// list a name beginning "Unknown(" (`CreateSkylanderAdvanced`). The box may
+/// hold the whole path.
+fn listed_name(offered: &str) -> Option<String> {
+    let file = offered.rsplit(['/', '\\']).next().unwrap_or(offered).trim();
+    let name = file.strip_suffix(".sky").unwrap_or(file).trim();
+    (!name.is_empty() && !name.starts_with("Unknown(")).then(|| name.to_string())
+}
+
+/// What the Customize window offers to save a figure of `id` and `variant`
+/// as, the file window closed again without saving. The Customize window is
+/// opened if it isn't, and left open for the next question.
+fn name_for(pid: u32, id: u16, variant: u16) -> Result<String, String> {
+    let _turn = turn();
+    let automation = Automation::new()?;
+    let window = manager(&automation, pid)?;
+    let maker = match maker_window(&automation, pid) {
+        Some(maker) => maker,
+        None => {
+            put_away_leftovers(&automation, pid);
+            let buttons = automation.window(window)?;
+            qt::press(&automation.button(&buttons, CUSTOMIZE)?, window).ok_or(LOOKS_DIFFERENT)?;
+            soon(WAIT, || maker_window(&automation, pid)).ok_or("Dolphin's figure maker didn't open. Try again.")?
+        }
+    };
+    out_of_sight(maker);
+    let asked = ask(&automation, pid, maker, id, variant);
+    if asked.is_err() {
+        put_away_leftovers(&automation, pid);
+    }
+    asked
+}
+
+fn ask(automation: &Automation, pid: u32, maker: HWND, id: u16, variant: u16) -> Result<String, String> {
+    let window = automation.window(maker)?;
+    let boxes = automation.0.of_kind(&window, UIA_EditControlTypeId);
+    let [id_box, variant_box] = boxes.as_slice() else {
+        return Err(LOOKS_DIFFERENT.to_string());
+    };
+    qt::set_value(id_box, &id.to_string()).ok_or(LOOKS_DIFFERENT)?;
+    qt::set_value(variant_box, &variant.to_string()).ok_or(LOOKS_DIFFERENT)?;
+    qt::press(&automation.button(&window, CREATE)?, maker).ok_or(LOOKS_DIFFERENT)?;
+    let saver = arrives(pid, SAVE_FIGURE).ok_or("Dolphin's figure maker didn't answer. Try again.")?;
+    let saver_window = automation.window(saver)?;
+    let offered = soon(WAIT, || {
+        automation
+            .0
+            .of_kind(&saver_window, UIA_EditControlTypeId)
+            .into_iter()
+            .find(|edit| automation_id(edit).ends_with(FILE_NAME))
+            .map(|edit| value(&edit))
+            .filter(|offered| !offered.is_empty())
+    })
+    .ok_or(LOOKS_DIFFERENT);
+    // Closed without a file, Dolphin makes nothing.
+    key(saver, VK_ESCAPE);
+    if !gone(saver) {
+        return Err(LOOKS_DIFFERENT.to_string());
+    }
+    Ok(offered?)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_name_is_taken_from_what_dolphin_offers_to_save() {
+        assert_eq!(listed_name("Whirlwind.sky").as_deref(), Some("Whirlwind"));
+        assert_eq!(listed_name("C:\\Users\\me\\Omoio\\Figures\\Stealth Elf.sky").as_deref(), Some("Stealth Elf"));
+        assert_eq!(listed_name("Unknown(9 %2).sky"), None, "numbers the list doesn't have");
+        assert_eq!(listed_name("Unknown(9 0).sky"), None);
+        assert_eq!(listed_name(".sky"), None);
+        assert_eq!(listed_name(""), None);
+    }
+
+    #[test]
+    fn only_the_first_games_figures_are_asked_about() {
+        let asked = first_game_figures();
+        assert!(asked.iter().all(|&(id, variant)| variant == 0 && figures::reads(figures::Game::Spyro, id, 0)));
+        assert!(asked.contains(&(0, 0)), "the first game's first character");
+        assert!(!asked.iter().any(|&(id, _)| id == 100), "a figure of Giants");
+        assert!(asked.len() < 100, "a question each, so few: {}", asked.len());
+    }
 
     #[test]
     fn the_game_window_is_told_from_the_main_window_by_its_title() {
