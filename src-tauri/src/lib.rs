@@ -154,6 +154,7 @@ pub fn run() {
             commands::add_figures,
             commands::delete_figure,
             commands::close_portal_menu,
+            commands::open_portal_menu,
             commands::portal_menu_family,
             commands::portal_game,
             commands::portal_made_figures,

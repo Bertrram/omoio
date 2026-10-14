@@ -912,6 +912,11 @@ export function closePortalMenu(): Promise<void> {
   return invoke("close_portal_menu");
 }
 
+/// Opens the portal menu over the running game, as the pad's button does.
+export function openPortalMenu(): Promise<void> {
+  return invoke("open_portal_menu");
+}
+
 /// The kind of pad that opened the portal menu.
 export function portalMenuFamily(): Promise<string> {
   return invoke("portal_menu_family");

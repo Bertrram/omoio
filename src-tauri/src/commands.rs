@@ -1756,6 +1756,17 @@ pub fn close_portal_menu(app: AppHandle) {
     crate::portal_menu::close(&app);
 }
 
+/// Opens the portal menu over the running game, from the Portal button in
+/// the bar over it, for a player whose pad Omoio can't read. Off the main
+/// thread and async: making a window from a synchronous command deadlocks
+/// on Windows (`WebviewWindowBuilder::new`, "Known issues", tauri 2.11.5).
+#[tauri::command]
+pub async fn open_portal_menu(app: AppHandle) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || crate::portal_menu::open_by_button(&app))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 /// The kind of pad that opened the menu, to name its buttons as printed.
 #[tauri::command]
 pub fn portal_menu_family() -> String {
