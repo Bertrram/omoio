@@ -185,8 +185,11 @@ pub fn focus(game: isize) {
 /// once something else is in front, a plain call fails, and before
 /// 14 October 2026 that went unnoticed. "The system automatically enables
 /// calls to SetForegroundWindow if the user presses the ALT key"
-/// ("LockSetForegroundWindow function", Remarks), so a press of Alt, which
-/// no window acts on alone, goes first when the plain call is refused. Tao
+/// ("LockSetForegroundWindow function", Remarks), so a press of Alt goes
+/// first when the plain call is refused. It goes to the window in front at
+/// that moment, which callers allow to be only Omoio's, the emulator's own
+/// main window or none; one with a menu bar may mark its menu for that
+/// moment (on the test list of 14 October 2026). Tao
 /// does the same to bring Tauri's windows forward (`force_window_active`,
 /// platform_impl/windows/window.rs, tao 0.35.3), and so do the emulators'
 /// own hand-backs. Callers decide first whether the front may be taken at

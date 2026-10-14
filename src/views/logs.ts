@@ -116,8 +116,10 @@ export async function renderLogs(): Promise<View> {
     );
   } else {
     // The list can hold sessions from every emulator, so the note names none.
-    // RPCS3 and Cemu each start their log afresh when they start (Cemu 2.6
-    // opens log.txt with std::ios::out, cemuLog_createLogFile in
+    // RPCS3 and Cemu each start their log afresh when they start (RPCS3
+    // opens it with fs::rewrite, logs::file_writer in rpcs3/util/logs.cpp,
+    // v0.0.43-20267, commit ff91404b; Cemu 2.6 opens log.txt with
+    // std::ios::out, cemuLog_createLogFile in
     // src/Cemu/Logging/CemuLogging.cpp), and Dolphin only adds to its log, so
     // Omoio empties it before each game (backends/dolphin/log.rs).
     const note = document.createElement("div");

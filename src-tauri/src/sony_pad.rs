@@ -3,7 +3,7 @@
 //!
 //! Over Bluetooth these pads start out sending a simple report (0x01), laid
 //! out as their HID description says, which is what gilrs reads through
-//! Windows.Gaming.Input. An emulator's SDL, Steam and RPCS3's own handlers
+//! Windows.Gaming.Input. An emulator's SDL and RPCS3's own handlers
 //! switch them to a full report instead, 0x31 on a DualSense and 0x11 to 0x19
 //! on a DualShock 4, which the HID description doesn't lay out, so gilrs
 //! hears nothing more: the pad still shows as plugged in, but nothing it
@@ -19,10 +19,12 @@
 //!   serial number or firmware is enough on its own (release-3.4.0,
 //!   `SDL_hidapi_ps5.c` lines 419 to 431, `HIDAPI_DriverPS5_SetEnhancedMode`
 //!   at 844; `SDL_hidapi_ps4.c`, `HIDAPI_DriverPS4_UpdateEffects` at 656).
-//!   The SDL 2.30.3 in Cemu 2.6 switches one on Bluetooth once the PS4 or
-//!   PS5 rumble hint is on (release-2.30.3, `SDL_hidapi_ps5.c` lines 400 to
-//!   409, `SDL_hidapi_ps4.c` lines 772 to 778), which Cemu turns on (PR
-//!   #18).
+//!   The SDL 2.30.3 in Cemu 2.6 (its vcpkg.json, tag v2.6) switches one on
+//!   Bluetooth once the PS4 or PS5 rumble hint is on (release-2.30.3,
+//!   `SDL_hidapi_ps5.c` lines 400 to 409, `SDL_hidapi_ps4.c` lines 772 to
+//!   778), and Cemu turns both on (`SDL_HINT_JOYSTICK_HIDAPI_PS4_RUMBLE` and
+//!   `_PS5_RUMBLE`, src/input/api/SDL/SDLControllerProvider.cpp lines 24
+//!   and 25, tag v2.6).
 //! - RPCS3 asks a DualSense for feature report 0x09, which "will also enable
 //!   enhanced feature reports for bluetooth", and a DualShock 4 on Bluetooth
 //!   for feature report 0x02, which "tells controller to send 0x11 reports"

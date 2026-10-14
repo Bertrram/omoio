@@ -287,9 +287,11 @@ impl Hearing {
     }
 }
 
-/// A report counts only this soon after it came: the pad sends one every
-/// few milliseconds, or at least as its buttons change, so one older than
-/// this is from a pad gone or switched off.
+/// A report counts only this soon after it came. SDL takes half a second
+/// without a report from one of these pads on Bluetooth as a sign it may be
+/// gone (`BLUETOOTH_DISCONNECT_TIMEOUT_MS`, `SDL_hidapi_ps5.c` lines 44 and
+/// 1560, `SDL_hidapi_ps4.c` lines 45 and 1303, release-3.4.0), so a pad
+/// that is there sends more often than that, held buttons or not.
 const FRESH: Duration = Duration::from_millis(500);
 /// When gilrs hears a pad it sees a change within a few tens of
 /// milliseconds of the pad's report: its Windows.Gaming.Input thread looks
