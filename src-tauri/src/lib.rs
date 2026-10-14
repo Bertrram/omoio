@@ -12,6 +12,7 @@ mod figure_pictures;
 mod portal_menu;
 mod saves;
 pub mod session;
+mod sony_pad;
 mod switch_pro;
 mod vc_runtime;
 
