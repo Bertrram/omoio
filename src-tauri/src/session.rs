@@ -141,7 +141,7 @@ impl Session {
         self.inner.lock().unwrap().as_ref().map(|r| r.pid)
     }
 
-    fn window(&self) -> Option<isize> {
+    pub fn window(&self) -> Option<isize> {
         self.inner.lock().unwrap().as_ref().and_then(|r| r.window)
     }
 
@@ -423,7 +423,8 @@ fn first_step(front: Front) -> Step {
 /// Omoio's window is taken from only while the game covers the screen; in
 /// a window the user may have gone to Omoio's on purpose. Nobody in front
 /// counts only when it was so at the look before too, so a switch to
-/// another program, which passes through nobody, is never cut short.
+/// another program, which may pass through nobody (`Front::Nobody`), is
+/// never cut short.
 fn next_step(front: Front, covers_screen: bool, nobody_before: bool) -> Step {
     match front {
         Front::Game => Step::Wait,

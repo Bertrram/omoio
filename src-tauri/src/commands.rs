@@ -648,8 +648,9 @@ fn launch(app: AppHandle, title_id: &str) -> Result<(), String> {
     );
     session.set_fullscreen(Settings::load(&settings_path(&app)?).start_fullscreen);
     crate::session::watch(app.clone(), pid);
-    // Said over the game, in the bar the interface puts up once the game has
-    // started, so not before that has had time to show.
+    // Said over the game, in the bar the interface puts up when the game's
+    // window comes (session::watch sends "game-started" then), so not before
+    // that window is there, however long the emulator takes to boot.
     if unwritten {
         let message = format!(
             "Couldn't give {} Omoio's controller layout, so the game may not answer your controller. \
@@ -657,10 +658,17 @@ fn launch(app: AppHandle, title_id: &str) -> Result<(), String> {
             backend.name()
         );
         let app = app.clone();
-        std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_secs(3));
-            if app.state::<Session>().pid() == Some(pid) {
+        std::thread::spawn(move || loop {
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            let session = app.state::<Session>();
+            if session.pid() != Some(pid) {
+                return;
+            }
+            if session.window().is_some() {
+                // A moment for the bar to be drawn after "game-started".
+                std::thread::sleep(std::time::Duration::from_millis(500));
                 let _ = app.emit("pad-not-found", message);
+                return;
             }
         });
     }
