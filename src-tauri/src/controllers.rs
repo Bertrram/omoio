@@ -152,8 +152,12 @@ fn warning(
 /// Called before a game starts, so plugging in and pressing Play is enough.
 /// A pad plugged in that no player has takes the place of one whose pad is
 /// not there, buttons someone chose never change, and the layout goes to the
-/// game's emulator.
-pub fn before_launch(app: &AppHandle, backend: &dyn EmulatorBackend, title_id: &str) {
+/// game's emulator. Says when the emulator couldn't be given the layout:
+/// it then plays on whatever layout it had, which for Dolphin with none of
+/// Omoio's is its own keyboard and mouse (`InputConfig::LoadConfig`,
+/// InputCommon/InputConfig.cpp, Dolphin 2609a), and up to 0.3.1 that went
+/// unsaid (Discord, support-0016, 14 October 2026).
+pub fn before_launch(app: &AppHandle, backend: &dyn EmulatorBackend, title_id: &str) -> Result<(), String> {
     crate::pads::rescan();
     let connected = crate::pads::connected();
     let Current { mut players, own, saved, lone } = current(app, title_id, &connected);
@@ -164,7 +168,7 @@ pub fn before_launch(app: &AppHandle, backend: &dyn EmulatorBackend, title_id: &
         layouts.set(scope, players.clone());
         let _ = store(app, &layouts);
     }
-    let _ = backend.write_layout(app, scope, &players);
+    backend.write_layout(app, scope, &players)
 }
 
 #[cfg(test)]

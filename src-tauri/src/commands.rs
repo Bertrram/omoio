@@ -634,7 +634,7 @@ fn launch(app: AppHandle, title_id: &str) -> Result<(), String> {
     // buttons, a pad plugged in for the first time works, and the picture
     // fits this machine.
     backend.prepare(&app, game)?;
-    crate::controllers::before_launch(&app, backend, &game.title_id);
+    let unwritten = crate::controllers::before_launch(&app, backend, &game.title_id).is_err();
     tune_picture(&app, backend);
     let pid = backend.launch(&app, game)?;
     let session = app.state::<Session>();
@@ -648,6 +648,22 @@ fn launch(app: AppHandle, title_id: &str) -> Result<(), String> {
     );
     session.set_fullscreen(Settings::load(&settings_path(&app)?).start_fullscreen);
     crate::session::watch(app.clone(), pid);
+    // Said over the game, in the bar the interface puts up once the game has
+    // started, so not before that has had time to show.
+    if unwritten {
+        let message = format!(
+            "Couldn't give {} Omoio's controller layout, so the game may not answer your controller. \
+             Check the Controller screen, then start the game again.",
+            backend.name()
+        );
+        let app = app.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_secs(3));
+            if app.state::<Session>().pid() == Some(pid) {
+                let _ = app.emit("pad-not-found", message);
+            }
+        });
+    }
     crate::portal_menu::watch(app.clone(), pid);
     Ok(())
 }
