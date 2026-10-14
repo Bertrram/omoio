@@ -358,6 +358,13 @@ pub fn quiet_game(app: &AppHandle) {
         };
         let portal = crate::portal_menu::showing(&app);
         let over = portal || session.is_hidden();
+        // Cemu can't close its input settings window while its figure maker
+        // is open over it (`backends::cemu::portal::making`); the portal
+        // command under way lets the game hear when it ends
+        // (`portal_menu::take_front`).
+        if !over && crate::backends::cemu::portal::making() {
+            return;
+        }
         if portal {
             backend.ready_portal(pid);
         }
