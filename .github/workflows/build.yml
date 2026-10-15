@@ -11,12 +11,35 @@ on:
         description: "What Omoio's update prompt says about this version"
         required: false
         default: ""
+      # Filled in only to publish an installer an earlier run built. The
+      # build is then skipped, and the publish job below runs instead.
+      publish_run:
+        description: "Publish the installer from this earlier run (its run id)"
+        required: false
+        default: ""
+      tag:
+        description: "The release's tag, such as v0.3.2"
+        required: false
+        default: ""
+      title:
+        description: "The release's title"
+        required: false
+        default: ""
+      target:
+        description: "The commit the tag goes on"
+        required: false
+        default: ""
+      release_notes:
+        description: "The release's text"
+        required: false
+        default: ""
 
-# No token rights by default; the one job below asks only for what it needs.
+# No token rights by default; each job asks only for what it needs.
 permissions: {}
 
 jobs:
   windows:
+    if: inputs.publish_run == ''
     runs-on: windows-latest
     timeout-minutes: 60
     # Read the code, nothing else. The token cannot push, tag or publish.
@@ -110,3 +133,32 @@ jobs:
             src-tauri/target/release/bundle/nsis/*_x64-setup.exe.sig
             src-tauri/target/release/bundle/nsis/latest.json
           if-no-files-found: error
+
+  # Puts an installer an earlier run built up as a release, with the
+  # updater's latest.json beside it, when someone with write access asks
+  # for it by hand. A job of its own, on another machine, so the token that
+  # can publish is never next to the update key, and nothing is built here.
+  publish:
+    if: inputs.publish_run != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN: ${{ inputs.publish_run }}
+          TAG: ${{ inputs.tag }}
+          TITLE: ${{ inputs.title }}
+          TARGET: ${{ inputs.target }}
+          NOTES: ${{ inputs.release_notes }}
+        run: |
+          gh run download "$RUN" --name omoio-installer --dir out
+          ls -l out
+          test -f out/latest.json
+          printf '%s\n' "$NOTES" > notes.md
+          gh release create "$TAG" out/*_x64-setup.exe out/latest.json \
+            --target "$TARGET" --title "$TITLE" --notes-file notes.md
