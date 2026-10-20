@@ -750,6 +750,8 @@ export interface KeyboardChoices {
   refused: [string, string][];
   /// The slowest and fastest the mouse can go, in percent.
   mouse_range: [number, number];
+  /// What each place starts with on the keyboard, "" for nothing.
+  defaults: Record<string, string>;
 }
 
 /// What one console calls each place on a pad.

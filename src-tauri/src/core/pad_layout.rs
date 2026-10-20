@@ -321,13 +321,25 @@ pub fn give_lone_pad(players: &mut [Player], connected: &[Pad]) -> bool {
 /// over, so no pad ever drives two players, and the keyboard counts as one
 /// pad. Any number of players can have no controller (`Pad::none`), so that
 /// is never swapped.
+///
+/// Between two pads each player keeps their own buttons, as a place on one
+/// pad is the same place on any. A key means nothing on a pad and a pad's
+/// button nothing on the keyboard, so when the keyboard and a pad change
+/// hands, each player's buttons and mouse speed go with the device.
 pub fn give(players: &mut [Player], at: usize, player: Player) {
+    let mut player = player;
     let swapped = (!player.pad.is_none())
         .then(|| players.iter().position(|p| p.pad.device == player.pad.device))
-        .flatten();
+        .flatten()
+        .filter(|&other| other != at);
     if let Some(other) = swapped {
-        if other != at {
+        if players[other].pad.is_keyboard() == players[at].pad.is_keyboard() {
             players[other].pad = players[at].pad.clone();
+        } else {
+            let ours = players[at].clone();
+            let theirs = std::mem::replace(&mut players[other], ours);
+            player.buttons = theirs.buttons;
+            player.mouse = theirs.mouse;
         }
     }
     players[at] = player;
@@ -568,6 +580,24 @@ mod tests {
             devices(&players),
             ["XInput Pad #3", "XInput Pad #2", "Keyboard and mouse", "XInput Pad #4"]
         );
+    }
+
+    #[test]
+    fn buttons_go_with_the_device_between_the_keyboard_and_a_pad() {
+        let keys = BTreeMap::from([("South".to_string(), "KeyG".to_string())]);
+        let pad_buttons = BTreeMap::from([("South".to_string(), "East".to_string())]);
+        let mut players = default_players(&[], &slots());
+        players[0] = Player::with_buttons(Pad::keyboard(), keys).with_mouse(150);
+        players[1] = Player::with_buttons(pad("XInput Pad #2"), pad_buttons);
+        // Player 2 picks the keyboard, sending the buttons they had.
+        let sent = players[1].buttons.clone();
+        give(&mut players, 1, Player::with_buttons(Pad::keyboard(), sent));
+        assert!(players[1].pad.is_keyboard());
+        assert_eq!(players[1].input("South"), "KeyG", "the keys came with the keyboard");
+        assert_eq!(players[1].mouse, 150);
+        assert_eq!(players[0].pad.device, "XInput Pad #2");
+        assert_eq!(players[0].input("South"), "East", "the pad's buttons came with the pad");
+        assert_eq!(players[0].mouse, keys::DEFAULT_MOUSE);
     }
 
     #[test]

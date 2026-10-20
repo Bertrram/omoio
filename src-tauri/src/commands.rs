@@ -1411,6 +1411,9 @@ pub struct KeyboardView {
     pub refused: Vec<(&'static str, &'static str)>,
     /// The slowest and fastest the mouse can go, in percent.
     pub mouse_range: (u32, u32),
+    /// What each place starts with on the keyboard, for showing Reset only
+    /// when it would change something.
+    pub defaults: std::collections::BTreeMap<&'static str, &'static str>,
 }
 
 /// What one console calls each place on a pad.
@@ -1489,6 +1492,7 @@ pub fn controller_view(app: AppHandle, title_id: String) -> ControllerView {
                 mouse_moves: keys::MOUSE_MOVES.to_vec(),
                 refused: keys::REFUSED.to_vec(),
                 mouse_range: keys::MOUSE_RANGE,
+                defaults: crate::core::pad_layout::INPUTS.iter().map(|place| (*place, keys::default_input(place))).collect(),
             }
         },
     }
