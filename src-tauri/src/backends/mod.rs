@@ -258,6 +258,12 @@ pub trait EmulatorBackend: Sync {
     /// game.
     fn tidy_window(&self, _pid: u32, _game: isize) {}
 
+    /// Has the emulator hold the mouse in the game's window itself, for one
+    /// whose mouse aiming needs more than the cursor kept inside the window
+    /// (cursor.rs). Called with the game's window in front, once each time
+    /// the window has been shown.
+    fn hold_mouse(&self) {}
+
     /// Stops the running game hearing the pad while one of Omoio's menus is
     /// over it, or lets it hear again. An emulator that needs nothing done,
     /// or can't be told, leaves this alone.

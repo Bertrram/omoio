@@ -16,24 +16,44 @@
 //! Remarks, Microsoft Learn, read 20 October 2026). Windows changes the
 //! front without asking Omoio, as with Alt+Tab or the Windows key, so this
 //! looks often and lets go as soon as the game is no longer in front.
+//!
+//! Some emulators also need to hold the mouse themselves for aiming to go
+//! on past the window's edge (`EmulatorBackend::hold_mouse`). That is asked
+//! once each time the game's window has been shown and has stayed in front
+//! a moment, since showing it again is what makes such an emulator let go.
 
 use crate::backends::rpcs3::overlay;
 use crate::session::Session;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager};
 use windows::Win32::Foundation::{HWND, POINT, RECT};
 use windows::Win32::Graphics::Gdi::ClientToScreen;
-use windows::Win32::UI::WindowsAndMessaging::{ClipCursor, GetClientRect};
+use windows::Win32::UI::WindowsAndMessaging::{ClipCursor, GetClientRect, IsWindowVisible};
 
 /// How often the front is looked at. Short, so a switch away frees the
 /// mouse before the user reaches for it.
-const LOOK_EVERY: std::time::Duration = std::time::Duration::from_millis(50);
+const LOOK_EVERY: Duration = Duration::from_millis(50);
+
+/// How long the game's window stays shown and in front before the emulator
+/// is asked to hold the mouse: long enough for the window to have settled
+/// after Omoio places and shows it, so the emulator doesn't let go again
+/// straight after.
+const SETTLED: Duration = Duration::from_secs(1);
 
 /// Keeps the cursor inside the game started as `pid` while its window is
 /// in front, until the game ends. Started only when someone aims with the
 /// mouse in this game (`Features::mouse_aims`).
 pub fn watch(app: AppHandle, pid: u32) {
     std::thread::spawn(move || {
+        let backend = app
+            .state::<Session>()
+            .playing()
+            .and_then(|playing| crate::backends::for_console(playing.console));
         let mut holding = false;
+        // Whether the emulator holds the mouse, as far as Omoio knows, and
+        // since when the window has been in front without a break.
+        let mut held_by_emulator = false;
+        let mut in_front_since: Option<Instant> = None;
         loop {
             std::thread::sleep(LOOK_EVERY);
             let session = app.state::<Session>();
@@ -43,23 +63,34 @@ pub fn watch(app: AppHandle, pid: u32) {
                 }
                 return;
             }
-            let game = session
-                .shown()
-                .filter(|&(game, shown)| shown == pid && overlay::front() == game)
-                .filter(|_| !crate::portal_menu::showing(&app))
-                .and_then(|(game, _)| inside(game));
-            match game {
+            let window = session.shown().filter(|&(_, shown)| shown == pid).map(|(game, _)| game);
+            if !window.is_some_and(|game| unsafe { IsWindowVisible(HWND(game as *mut _)) }.as_bool()) {
+                held_by_emulator = false;
+            }
+            let game = window
+                .filter(|&game| overlay::front() == game)
+                .filter(|_| !crate::portal_menu::showing(&app));
+            match game.and_then(inside) {
                 Some(rect) => {
                     // Again at every look: the window moves and changes size
                     // when Omoio's window does, and Windows itself may have
                     // let the cursor go.
                     holding = unsafe { ClipCursor(Some(&rect)) }.is_ok();
+                    let since = *in_front_since.get_or_insert_with(Instant::now);
+                    if !held_by_emulator && since.elapsed() >= SETTLED {
+                        if let Some(backend) = backend {
+                            backend.hold_mouse();
+                        }
+                        held_by_emulator = true;
+                    }
                 }
-                None if holding => {
-                    let_go();
-                    holding = false;
+                None => {
+                    in_front_since = None;
+                    if holding {
+                        let_go();
+                        holding = false;
+                    }
                 }
-                None => {}
             }
         }
     });

@@ -5,6 +5,7 @@ pub mod firmware;
 pub mod fixes;
 pub mod game_config;
 pub mod graphics;
+mod keyboard;
 pub mod launch;
 #[cfg(windows)]
 pub mod overlay;
@@ -441,6 +442,12 @@ impl super::EmulatorBackend for Rpcs3 {
 
     fn tidy_window(&self, pid: u32, game: isize) {
         portal::tidy(pid, game);
+    }
+
+    /// RPCS3's mouse lock, without which aiming stops at the window's edge
+    /// (launch.rs, `KEYBOARD_SETTINGS`).
+    fn hold_mouse(&self) {
+        launch::lock_mouse();
     }
 
     /// Omoio's menus keep the game deaf by taking the keyboard from its
