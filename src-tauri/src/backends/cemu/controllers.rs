@@ -30,6 +30,10 @@
 //! Bluetooth, it has the same GUID only if Windows gives it the same version
 //! there (sdl.rs), and otherwise plays again from the next game.
 //!
+//! The keyboard is Cemu's own keyboard controller, one key for each button
+//! (`Keymap`). Cemu reads no mouse for a controller, so the mouse's buttons
+//! are left out and the mouse moving is the arrow keys (`arrow_for`).
+//!
 //! Player 1 is the one every game answers, so they are never left without a
 //! pad while an XInput one is plugged in (`stand_in`), and Play says so before
 //! a game starts with nobody to answer it (`missing_first_player`).
@@ -37,9 +41,15 @@
 //! Cemu keeps one layout for every game. A game's own layout is RPCS3's alone.
 
 use super::{release, sdl};
+use crate::core::keys;
 use crate::core::pad_layout::{self, Pad, Player, PLAYERS};
 use std::path::{Path, PathBuf};
 use tauri::AppHandle;
+use windows::Win32::UI::Input::KeyboardAndMouse::{
+    GetKeyboardLayout, MapVirtualKeyExW, MAPVK_VSC_TO_VK_EX, VIRTUAL_KEY, VK_DECIMAL, VK_DOWN, VK_LEFT, VK_LSHIFT,
+    VK_NUMPAD0, VK_NUMPAD1, VK_NUMPAD2, VK_NUMPAD3, VK_NUMPAD4, VK_NUMPAD5, VK_NUMPAD6, VK_NUMPAD7, VK_NUMPAD8,
+    VK_NUMPAD9, VK_RIGHT, VK_RSHIFT, VK_UP,
+};
 
 /// Games whose first player has to be a Wii U Pro Controller rather than the
 /// GamePad, by their title ids. Skylanders Trap Team asks for a language as
@@ -205,6 +215,115 @@ impl Kind {
     }
 }
 
+/// Cemu's number for each key a keyboard player can be given, by its name
+/// in core/keys.rs.
+///
+/// Cemu hears a key in whichever of its windows has the keyboard and keeps it
+/// by the virtual-key code Windows sends with it (`CemuApp::FilterEvent`,
+/// gui/CemuApp.cpp lines 389 to 409, Cemu v2.6), which wxWidgets passes on as
+/// it comes in `WM_KEYDOWN` (`MSWInitAnyKeyEvent`, src/msw/window.cpp line
+/// 6342, wxWidgets 3.2.5, the one Cemu 2.6 is built with; both read 20
+/// October 2026). A letter's code follows the keyboard layout: the key a US
+/// keyboard has Y on is Z on a German one, and Cemu keeps it as Z. Omoio
+/// keeps keys by where they sit, so the codes are worked out through the
+/// layout Windows has on this PC, each time the files are written before a
+/// game.
+#[derive(Debug, Clone, PartialEq)]
+struct Keymap(Vec<(&'static str, u64)>);
+
+impl Keymap {
+    /// With `layout` giving a scan code's virtual-key code, as `layout_vk`.
+    fn new(layout: &dyn Fn(u16) -> u32) -> Self {
+        let known = keys::KEYS.iter().filter_map(|&(name, scan)| Some((name, cemu_key(name, scan, layout)?)));
+        Keymap(known.collect())
+    }
+
+    fn number(&self, input: &str) -> Option<u64> {
+        if let Some(arrow) = arrow_for(input) {
+            return Some(u64::from(arrow.0));
+        }
+        self.0.iter().find(|(name, _)| *name == input).map(|&(_, number)| number)
+    }
+}
+
+/// Cemu's number for the key `name`, whose scan code is `scan`, with `layout`
+/// giving the virtual-key code a scan code has in the keyboard layout, 0 for
+/// none. Some keys are the same in every layout and are not looked up:
+///
+/// - Shift, which Cemu tells left from right by scan code, 0x2A as 160 and
+///   0x36 as 161 (`fix_raw_keycode`, gui/helpers/wxHelpers.cpp lines 38 to
+///   66, v2.6, read 20 October 2026).
+/// - The numeric keypad's digits and its point. Windows sends them as
+///   `VK_NUMPAD0` to `VK_NUMPAD9` and `VK_DECIMAL` while Num Lock is on,
+///   which no lookup by scan code gives, and they are written so. With Num
+///   Lock off the same keys come as Home, the arrows, Page Up and the like,
+///   so Cemu takes them for those keys: keypad 8 then presses what the up
+///   arrow does, and a button on keypad 8 doesn't answer.
+///
+/// Enter on the keypad comes as Enter itself, `VK_RETURN`, which the lookup
+/// gives too, so in Cemu it presses what Enter does.
+fn cemu_key(name: &str, scan: u16, layout: &dyn Fn(u16) -> u32) -> Option<u64> {
+    let fixed = match name {
+        "ShiftLeft" => Some(VK_LSHIFT),
+        "ShiftRight" => Some(VK_RSHIFT),
+        "Numpad0" => Some(VK_NUMPAD0),
+        "Numpad1" => Some(VK_NUMPAD1),
+        "Numpad2" => Some(VK_NUMPAD2),
+        "Numpad3" => Some(VK_NUMPAD3),
+        "Numpad4" => Some(VK_NUMPAD4),
+        "Numpad5" => Some(VK_NUMPAD5),
+        "Numpad6" => Some(VK_NUMPAD6),
+        "Numpad7" => Some(VK_NUMPAD7),
+        "Numpad8" => Some(VK_NUMPAD8),
+        "Numpad9" => Some(VK_NUMPAD9),
+        "NumpadDecimal" => Some(VK_DECIMAL),
+        _ => None,
+    };
+    let code = fixed.map_or_else(|| layout(scan), |key| u32::from(key.0));
+    (code != 0).then_some(u64::from(code))
+}
+
+/// The virtual-key code of a scan code in the keyboard layout Windows has
+/// now, 0 for none. An extended key's scan code carries 0xE0 in its high
+/// byte, as core/keys.rs keeps it, which `MAPVK_VSC_TO_VK_EX` reads
+/// ("MapVirtualKeyExW function", Microsoft Learn, read 20 October 2026).
+fn layout_vk(scan: u16) -> u32 {
+    unsafe { MapVirtualKeyExW(u32::from(scan), MAPVK_VSC_TO_VK_EX, Some(GetKeyboardLayout(0))) }
+}
+
+/// The arrow key that stands for the mouse moving one way. Cemu 2.6 reads
+/// controllers through its keyboard, SDL, XInput, DirectInput, DSU,
+/// GameCube adapter, Wii Remote and Windows.Gaming.Input apis, and none of
+/// them reads a mouse (`InputAPI::Type`, input/api/InputAPI.h lines 7 to 21,
+/// v2.6, read 20 October 2026). So until Omoio moves a stick for the mouse
+/// itself, the mouse moving is the arrow keys in Cemu, and the right stick,
+/// which the mouse moves by default, is on the arrows. The mouse's buttons
+/// and wheel have no stand-in, and are left out; the default layout has J, K
+/// and L beside them on the face buttons.
+fn arrow_for(input: &str) -> Option<VIRTUAL_KEY> {
+    Some(match input {
+        "MouseMoveLeft" => VK_LEFT,
+        "MouseMoveRight" => VK_RIGHT,
+        "MouseMoveUp" => VK_UP,
+        "MouseMoveDown" => VK_DOWN,
+        _ => return None,
+    })
+}
+
+/// What Cemu writes for its keyboard controller between its names and its
+/// mappings: the stick, rotation and trigger settings every controller has,
+/// at Cemu's own defaults (`AxisSetting`, input/api/Controller.h line 135),
+/// as `InputManager::save` writes them (input/InputManager.cpp lines 487 to
+/// 530, v2.6; both read 20 October 2026). Loading them changes nothing, but
+/// Cemu saves every player's file again each time its input settings window
+/// closes (`InputSettings2::~InputSettings2`, gui/input/InputSettings2.cpp
+/// lines 121 to 128, the window `hush` opens and closes for the portal
+/// menu), and then the file reads as Cemu would write it. Pad
+/// players' files have never had them, and stay as they were.
+const KEYBOARD_SETTINGS: &str = "\t\t<axis>\n\t\t\t<deadzone>0.25</deadzone>\n\t\t\t<range>1</range>\n\t\t</axis>\n\
+     \t\t<rotation>\n\t\t\t<deadzone>0.25</deadzone>\n\t\t\t<range>1</range>\n\t\t</rotation>\n\
+     \t\t<trigger>\n\t\t\t<deadzone>0.25</deadzone>\n\t\t\t<range>1</range>\n\t\t</trigger>\n";
+
 /// How Cemu reads a player's pad.
 #[derive(Debug, Clone, PartialEq)]
 enum Reader {
@@ -212,21 +331,40 @@ enum Reader {
     XInput(u32),
     /// One of Cemu's SDL pads.
     Sdl(sdl::Found),
+    /// Cemu's keyboard controller (`KeyboardController`, v2.6).
+    Keyboard(Keymap),
 }
 
 impl Reader {
-    fn number(&self, input: &str) -> Option<u64> {
+    /// Cemu's number for what `player` presses for `place`. Cemu keeps one
+    /// button for each of its own (`EmulatedController::set_mapping`, an
+    /// `unordered_map`, input/emulated/EmulatedController.cpp lines 325 to
+    /// 329, v2.6), so of a keyboard player's inputs for a place, the first
+    /// Cemu can read is the one.
+    fn number(&self, player: &Player, place: &str) -> Option<u64> {
         match self {
-            Reader::XInput(_) => xinput_number(input),
-            Reader::Sdl(found) => sdl_number(input, found.by_label),
+            Reader::XInput(_) => xinput_number(player.input(place)),
+            Reader::Sdl(found) => sdl_number(player.input(place), found.by_label),
+            Reader::Keyboard(keymap) => player.keys(place).find_map(|input| keymap.number(input)),
         }
     }
 
-    /// The `<api>`, `<uuid>` and `<display_name>` a profile gives the pad.
+    /// The `<api>`, `<uuid>` and `<display_name>` a profile gives the pad,
+    /// the keyboard's as Cemu names its own (`KeyboardController`'s
+    /// constructor, input/api/Keyboard/KeyboardController.cpp line 7, v2.6).
     fn names(&self, player: &Player) -> (&'static str, String, String) {
         match self {
             Reader::XInput(slot) => ("XInput", slot.to_string(), format!("Controller {}", slot + 1)),
             Reader::Sdl(found) => ("SDLController", found.uuid.clone(), escape(&player.pad.name)),
+            Reader::Keyboard(_) => ("Keyboard", "keyboard".to_string(), "Keyboard".to_string()),
+        }
+    }
+
+    /// What goes between the names and the mappings.
+    fn settings(&self) -> &'static str {
+        match self {
+            Reader::Keyboard(_) => KEYBOARD_SETTINGS,
+            Reader::XInput(_) | Reader::Sdl(_) => "",
         }
     }
 }
@@ -237,7 +375,8 @@ type UsbIds<'a> = &'a dyn Fn(&str) -> Option<(u16, u16, usize)>;
 
 /// How Cemu reads this player's pad, with `hid` the HID devices plugged in
 /// and `ids` what gilrs knows of the pads it reads. `None` for a pad Cemu
-/// cannot be told about: neither XInput nor one sdl.rs finds.
+/// cannot be told about: neither the keyboard, nor XInput, nor one sdl.rs
+/// finds. The keyboard is always there, so Cemu can always read it.
 ///
 /// A pad gilrs has no ids for may still be plugged in. gilrs keeps what it
 /// first learnt of each pad for as long as Omoio runs (`handle_event` in
@@ -247,6 +386,9 @@ type UsbIds<'a> = &'a dyn Fn(&str) -> Option<(u16, u16, usize)>;
 /// read afresh each time, so such a pad is looked for there, by the name and
 /// number it has in the layout.
 fn reader_for(player: &Player, hid: &[sdl::HidPad], ids: UsbIds) -> Option<Reader> {
+    if player.pad.is_keyboard() {
+        return Some(Reader::Keyboard(Keymap::new(&layout_vk)));
+    }
     if let Some(slot) = xinput_slot(&player.pad) {
         return Some(Reader::XInput(slot));
     }
@@ -325,7 +467,7 @@ fn profile(kind: Kind, player: &Player, reader: Option<&Reader>, stick_dpad: boo
                 .enumerate()
                 .filter_map(|(at, (place, _))| {
                     let place = if stick_dpad { dpad_from_stick(place) } else { place };
-                    let number = reader.number(player.input(place))?;
+                    let number = reader.number(player, place)?;
                     Some(format!(
                         "\t\t\t<entry>\n\t\t\t\t<mapping>{}</mapping>\n\t\t\t\t<button>{number}</button>\n\t\t\t</entry>\n",
                         kind.button_id(at)
@@ -333,11 +475,13 @@ fn profile(kind: Kind, player: &Player, reader: Option<&Reader>, stick_dpad: boo
                 })
                 .collect();
             let (api, uuid, display_name) = reader.names(player);
+            let settings = reader.settings();
             format!(
                 "\t<controller>\n\
                  \t\t<api>{api}</api>\n\
                  \t\t<uuid>{uuid}</uuid>\n\
                  \t\t<display_name>{display_name}</display_name>\n\
+                 {settings}\
                  \t\t<mappings>\n\
                  {entries}\
                  \t\t</mappings>\n\
@@ -356,8 +500,8 @@ fn profile(kind: Kind, player: &Player, reader: Option<&Reader>, stick_dpad: boo
 }
 
 /// The players as Cemu gets them, with `plugged` the pads plugged in now and
-/// `usable` whether Cemu can read a player's pad: an XInput one, or one of the
-/// SDL pads sdl.rs finds. Player 1 on a pad Cemu cannot read would leave every game without anyone
+/// `usable` whether Cemu can read a player's pad: the keyboard, an XInput
+/// one, or one of the SDL pads sdl.rs finds. Player 1 on a pad Cemu cannot read would leave every game without anyone
 /// to answer it, so they play on an XInput pad that is plugged in instead,
 /// keeping their own buttons: one no other player has, else another player's,
 /// who takes player 1's pad in return, so no pad drives two players. A PS5
@@ -925,6 +1069,157 @@ mod tests {
         assert_eq!(std::fs::read_to_string(dir.join(FIRST_AS_GAMEPAD)).unwrap(), gamepad);
         assert_eq!(std::fs::read_to_string(dir.join("controller1.xml")).unwrap(), pro);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A US keyboard's codes by scan code, as `MapVirtualKeyExW` gives them,
+    /// for the keys these tests use, with Shift as one key and keypad 8 as
+    /// the up arrow, as Windows' own lookup has them.
+    fn us(scan: u16) -> u32 {
+        let Some(&(name, _)) = keys::KEYS.iter().find(|&&(_, s)| s == scan) else {
+            return 0;
+        };
+        if let Some(letter) = name.strip_prefix("Key").or_else(|| name.strip_prefix("Digit")) {
+            return u32::from(letter.as_bytes()[0]);
+        }
+        match name {
+            "Space" => 0x20,
+            "Enter" | "NumpadEnter" => 0x0D,
+            "Backspace" => 0x08,
+            "ShiftLeft" | "ShiftRight" => 0x10,
+            "Numpad8" | "ArrowUp" => 0x26,
+            "ArrowLeft" => 0x25,
+            "ArrowRight" => 0x27,
+            "ArrowDown" => 0x28,
+            _ => 0,
+        }
+    }
+
+    /// A German keyboard's, with Y and Z the other way round.
+    fn german(scan: u16) -> u32 {
+        match scan {
+            0x15 => u32::from(b'Z'),
+            0x2C => u32::from(b'Y'),
+            other => us(other),
+        }
+    }
+
+    fn keyboard_on(layout: fn(u16) -> u32) -> Reader {
+        Reader::Keyboard(Keymap::new(&layout))
+    }
+
+    #[test]
+    fn a_key_is_kept_as_cemu_keeps_a_press_of_it() {
+        let us_keys = Keymap::new(&us);
+        assert_eq!(us_keys.number("KeyY"), Some(u64::from(b'Y')));
+        assert_eq!(us_keys.number("KeyW"), Some(u64::from(b'W')));
+        assert_eq!(us_keys.number("Digit1"), Some(u64::from(b'1')));
+        let german_keys = Keymap::new(&german);
+        assert_eq!(german_keys.number("KeyY"), Some(u64::from(b'Z')), "the key in the US Y's place is Z there");
+        assert_eq!(german_keys.number("KeyZ"), Some(u64::from(b'Y')));
+        assert_eq!(german_keys.number("KeyW"), Some(u64::from(b'W')));
+
+        assert_eq!(cemu_key("ShiftLeft", 0x2A, &us), Some(160), "left Shift apart from right");
+        assert_eq!(cemu_key("ShiftRight", 0x36, &us), Some(161));
+        assert_eq!(cemu_key("Numpad8", 0x48, &us), Some(0x68), "as with Num Lock on, not the up arrow");
+        assert_eq!(cemu_key("NumpadDecimal", 0x53, &us), Some(0x6E));
+        assert_eq!(cemu_key("NumpadEnter", 0xE01C, &us), Some(0x0D), "the keypad's Enter is Enter");
+        assert_eq!(cemu_key("CapsLock", 0x3A, &us), None, "a key the layout has no code for");
+        assert_eq!(us_keys.number("CapsLock"), None);
+
+        assert_eq!(us_keys.number("MouseMoveUp"), Some(0x26), "the mouse moving is the arrows");
+        assert_eq!(us_keys.number("MouseMoveLeft"), Some(0x25));
+        assert_eq!(us_keys.number("MouseLeft"), None, "Cemu reads no mouse button");
+        assert_eq!(us_keys.number("WheelUp"), None);
+    }
+
+    #[test]
+    fn windows_gives_the_codes_cemu_keeps() {
+        // The same on every keyboard layout.
+        assert_eq!(layout_vk(0x39), 0x20, "Space");
+        assert_eq!(layout_vk(0x2A), 160, "left Shift");
+        assert_eq!(layout_vk(0xE048), u32::from(VK_UP.0), "the up arrow, an extended key");
+        assert_eq!(layout_vk(0xE01C), 0x0D, "the keypad's Enter");
+    }
+
+    #[test]
+    fn a_keyboard_player_one_is_cemus_keyboard_as_the_gamepad() {
+        let entries: String = [
+            (1, b'L'), (2, b' '), (3, b'K'), (4, b'J'), (5, b'Q'), (6, b'E'), (7, b'R'), (8, b'F'), (9, 0x0D),
+            (10, 0x08), (11, b'1'), (12, b'3'), (13, b'4'), (14, b'2'), (15, 160), (16, b'C'), (17, b'W'), (18, b'S'),
+            (19, b'A'), (20, b'D'), (21, 0x26), (22, 0x28), (23, 0x25), (24, 0x27),
+        ]
+        .iter()
+        .map(|(mapping, button)| {
+            format!("\t\t\t<entry>\n\t\t\t\t<mapping>{mapping}</mapping>\n\t\t\t\t<button>{button}</button>\n\t\t\t</entry>\n")
+        })
+        .collect();
+        let expected = format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<emulated_controller>\n\t<type>Wii U GamePad</type>\n\t<controller>\n\
+             \t\t<api>Keyboard</api>\n\t\t<uuid>keyboard</uuid>\n\t\t<display_name>Keyboard</display_name>\n\
+             \t\t<axis>\n\t\t\t<deadzone>0.25</deadzone>\n\t\t\t<range>1</range>\n\t\t</axis>\n\
+             \t\t<rotation>\n\t\t\t<deadzone>0.25</deadzone>\n\t\t\t<range>1</range>\n\t\t</rotation>\n\
+             \t\t<trigger>\n\t\t\t<deadzone>0.25</deadzone>\n\t\t\t<range>1</range>\n\t\t</trigger>\n\
+             \t\t<mappings>\n{entries}\t\t</mappings>\n\t</controller>\n</emulated_controller>\n"
+        );
+        // The face buttons take J, K and L, beside the mouse buttons Cemu
+        // can't read; the right stick is on the arrows; Guide has no key.
+        let text = profile(Kind::for_player(0), &Player::on(Pad::keyboard()), Some(&keyboard_on(us)), false);
+        assert_eq!(text, expected);
+    }
+
+    #[test]
+    fn a_keyboard_player_gets_one_key_per_button_the_first_cemu_can_read() {
+        let buttons = BTreeMap::from([
+            ("West".to_string(), "MouseRight KeyK KeyJ".to_string()),
+            ("East".to_string(), "MouseLeft".to_string()),
+            ("RS Y+".to_string(), "KeyI MouseMoveUp".to_string()),
+        ]);
+        let player = Player::with_buttons(Pad::keyboard(), buttons);
+        let text = profile(Kind::for_player(1), &player, Some(&keyboard_on(german)), false);
+        assert!(text.contains("<type>Wii U Pro Controller</type>"), "{text}");
+        assert!(text.contains(&entry(4, u64::from(b'K'))), "Y on K, its first key: {text}");
+        assert_eq!(text.matches("<mapping>4</mapping>").count(), 1, "{text}");
+        assert!(!text.contains("<mapping>1</mapping>"), "A, on a mouse button alone, is left out: {text}");
+        assert!(text.contains(&entry(22, u64::from(b'I'))), "right stick up on I: {text}");
+        assert_eq!(text.matches("<entry>").count(), 23, "{text}");
+    }
+
+    #[test]
+    fn trap_team_on_the_keyboard_takes_the_d_pad_from_w_a_s_d_and_a_pad_beside_it_stays_as_it_was() {
+        let dir = scratch("keyboard");
+        let players = vec![Player::on(Pad::keyboard()), Player::on(xinput(1))];
+        let readers = vec![Some(keyboard_on(us)), Some(Reader::XInput(0))];
+        write_all(&dir, &players, &readers).unwrap();
+        let pro = std::fs::read_to_string(dir.join(FIRST_AS_PRO)).unwrap();
+        assert!(pro.contains("<type>Wii U Pro Controller</type>") && pro.contains("<api>Keyboard</api>"), "{pro}");
+        // D-pad up, numbered after Home, is W, the left stick pushed up, and
+        // W still pushes the stick too.
+        assert!(pro.contains(&entry(12, u64::from(b'W'))), "d-pad up: {pro}");
+        assert!(pro.contains(&entry(13, u64::from(b'S'))), "d-pad down: {pro}");
+        assert!(pro.contains(&entry(14, u64::from(b'A'))), "d-pad left: {pro}");
+        assert!(pro.contains(&entry(15, u64::from(b'D'))), "d-pad right: {pro}");
+        assert!(pro.contains(&entry(18, u64::from(b'W'))), "stick up: {pro}");
+        assert!(pro.contains(&entry(22, 0x26)), "right stick up on the up arrow: {pro}");
+        assert!(!pro.contains(&format!("<button>{}</button>", b'1')), "1 to 4 have no button here: {pro}");
+        let gamepad = std::fs::read_to_string(dir.join(FIRST_AS_GAMEPAD)).unwrap();
+        assert!(gamepad.contains(&entry(11, u64::from(b'1'))), "as the GamePad the d-pad is 1 to 4: {gamepad}");
+        assert_eq!(gamepad, std::fs::read_to_string(dir.join("controller0.xml")).unwrap());
+
+        let two = std::fs::read_to_string(dir.join("controller1.xml")).unwrap();
+        let alone = profile(Kind::Pro, &Player::on(xinput(1)), Some(&Reader::XInput(0)), false);
+        assert_eq!(two, alone, "player 2's Xbox pad is written as it always was");
+        assert!(!two.contains("<axis>"), "{two}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_keyboard_player_one_is_never_stood_in_for_nor_warned_about() {
+        let players = vec![Player::on(Pad::keyboard()), Player::on(xinput(2))];
+        let usable = usable_with(&[]);
+        assert_eq!(stand_in(&players, &[xinput(1), xinput(2)], &usable), players);
+        assert_eq!(missing(&players, &[], &usable), None, "with no pad plugged in at all");
+        let reader = reader_for(&players[0], &[], &no_ids);
+        assert!(matches!(reader, Some(Reader::Keyboard(_))), "{reader:?}");
     }
 
     #[test]
