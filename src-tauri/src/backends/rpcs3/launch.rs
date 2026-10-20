@@ -206,15 +206,26 @@ fn with_cursor_for(existing: &str, keyboard: bool) -> String {
     }
 }
 
-/// Presses RPCS3's mouse lock (`MOUSE_LOCK`) in the window in front, which
-/// the caller has made sure is the game's. SendInput types into whatever
-/// window is in front ("SendInput function", Microsoft Learn, read 20
-/// October 2026).
-pub fn lock_mouse() {
+/// Presses RPCS3's mouse lock (`MOUSE_LOCK`) in the game's window, and says
+/// whether it did. SendInput types into whatever window is in front ("SendInput
+/// function", Microsoft Learn, read 20 October 2026), so it is pressed only
+/// with the game's window in front at that very moment, never into another
+/// program the player has just gone to. Nor while the player holds Shift,
+/// Ctrl, Alt or a Windows key: RPCS3 would read Ctrl+Shift+F9, which is no
+/// shortcut, and the lock would stay off. Asked again at the next look.
+pub fn lock_mouse(game: isize) -> bool {
     use windows::Win32::UI::Input::KeyboardAndMouse::{
-        SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, VIRTUAL_KEY,
-        VK_CONTROL, VK_F9,
+        GetAsyncKeyState, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS,
+        KEYEVENTF_KEYUP, VIRTUAL_KEY, VK_CONTROL, VK_F9, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT,
     };
+    use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+    let held = |vk: VIRTUAL_KEY| unsafe { GetAsyncKeyState(i32::from(vk.0)) } as u16 & 0x8000 != 0;
+    if [VK_SHIFT, VK_CONTROL, VK_MENU, VK_LWIN, VK_RWIN].into_iter().any(held) {
+        return false;
+    }
+    if unsafe { GetForegroundWindow() }.0 as isize != game {
+        return false;
+    }
     let key = |vk: VIRTUAL_KEY, up: bool| INPUT {
         r#type: INPUT_KEYBOARD,
         Anonymous: INPUT_0 {
@@ -226,7 +237,7 @@ pub fn lock_mouse() {
         },
     };
     let presses = [key(VK_CONTROL, false), key(VK_F9, false), key(VK_F9, true), key(VK_CONTROL, true)];
-    unsafe { SendInput(&presses, std::mem::size_of::<INPUT>() as i32) };
+    unsafe { SendInput(&presses, std::mem::size_of::<INPUT>() as i32) == presses.len() as u32 }
 }
 
 fn prepare_gui_settings(app: &AppHandle, keyboard: bool) -> Result<(), String> {

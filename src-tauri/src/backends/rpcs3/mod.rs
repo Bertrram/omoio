@@ -471,8 +471,8 @@ impl super::EmulatorBackend for Rpcs3 {
 
     /// RPCS3's mouse lock, without which aiming stops at the window's edge
     /// (launch.rs, `KEYBOARD_SETTINGS`).
-    fn hold_mouse(&self) {
-        launch::lock_mouse();
+    fn hold_mouse(&self, game: isize) -> bool {
+        launch::lock_mouse(game)
     }
 
     /// Omoio's menus keep the game deaf by taking the keyboard from its

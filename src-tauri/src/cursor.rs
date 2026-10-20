@@ -70,22 +70,19 @@ pub fn watch(app: AppHandle, pid: u32) {
             let game = window
                 .filter(|&game| overlay::front() == game)
                 .filter(|_| !crate::portal_menu::showing(&app))
-                .and_then(inside);
+                .and_then(|game| inside(game).map(|rect| (game, rect)));
             // The pad Omoio serves Cemu for the keyboard and mouse is heard
             // exactly while the mouse is kept here.
             crate::dsu::hear(game.is_some());
             match game {
-                Some(rect) => {
+                Some((game_window, rect)) => {
                     // Again at every look: the window moves and changes size
                     // when Omoio's window does, and Windows itself may have
                     // let the cursor go.
                     holding = unsafe { ClipCursor(Some(&rect)) }.is_ok();
                     let since = *in_front_since.get_or_insert_with(Instant::now);
                     if !held_by_emulator && since.elapsed() >= SETTLED {
-                        if let Some(backend) = backend {
-                            backend.hold_mouse();
-                        }
-                        held_by_emulator = true;
+                        held_by_emulator = backend.is_none_or(|backend| backend.hold_mouse(game_window));
                     }
                 }
                 None => {
