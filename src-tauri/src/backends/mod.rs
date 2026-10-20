@@ -264,6 +264,12 @@ pub trait EmulatorBackend: Sync {
     /// the window has been shown.
     fn hold_mouse(&self) {}
 
+    /// Lines about what Omoio did in the emulator while the game started as
+    /// `pid` ran, added to the log kept of it once it has ended.
+    fn session_notes(&self, _pid: u32) -> Vec<String> {
+        Vec::new()
+    }
+
     /// Stops the running game hearing the pad while one of Omoio's menus is
     /// over it, or lets it hear again. An emulator that needs nothing done,
     /// or can't be told, leaves this alone.

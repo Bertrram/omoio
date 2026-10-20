@@ -420,8 +420,7 @@ pub fn characters(
     console: Console,
     pid: u32,
 ) -> Result<Vec<Character>, String> {
-    let key = serde_json::to_string(&console).unwrap_or_default().replace('"', "");
-    let own = format!("characters-{key}.json");
+    let own = figures::characters_file(console);
     let version = backend.detect_version(app).unwrap_or_default();
     let file = data_dir(app)?.join(&own);
     let kept = std::fs::read_to_string(&file)

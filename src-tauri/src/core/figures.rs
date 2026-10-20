@@ -73,6 +73,13 @@ pub fn is_skylanders(title: &str) -> bool {
     title.to_lowercase().contains("skylanders")
 }
 
+/// The file in Omoio's data folder that keeps the characters a console's
+/// emulator can make figures of (portal_menu.rs, `characters`).
+pub fn characters_file(console: Console) -> String {
+    let key = serde_json::to_string(&console).unwrap_or_default().replace('"', "");
+    format!("characters-{key}.json")
+}
+
 /// Which game a title is, from its name. `None` for one Omoio can't tell,
 /// which then shows every figure.
 pub fn game_from_title(title: &str) -> Option<Game> {

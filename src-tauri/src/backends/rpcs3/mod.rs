@@ -13,6 +13,7 @@ pub mod packages;
 pub mod patches;
 #[cfg(windows)]
 pub mod portal;
+pub mod portal_ipc;
 pub mod saves;
 pub mod updates;
 
@@ -410,6 +411,25 @@ impl super::EmulatorBackend for Rpcs3 {
         }
     }
 
+    /// RPCS3's portal server on for a Skylanders game and off for any other,
+    /// written before RPCS3 starts, which is when it reads it. A file that
+    /// couldn't be written leaves the portal to RPCS3's windows, so the game
+    /// starts all the same.
+    fn prepare(&self, app: &AppHandle, game: &crate::core::library::Game) -> Result<(), String> {
+        let skylanders = crate::core::figures::is_skylanders(&game.title);
+        if exe_path(app)?.exists() {
+            let _ = portal_ipc::get_ready(&install_dir(app)?.join("config"), skylanders);
+        }
+        #[cfg(windows)]
+        if skylanders {
+            if let Ok(data) = app.path().data_dir() {
+                let kept = crate::core::figures::characters_file(crate::core::console::Console::Ps3);
+                portal::know_kept_names(&data.join("Omoio").join(kept));
+            }
+        }
+        Ok(())
+    }
+
     fn portal_figures(&self, pid: u32) -> Result<Vec<String>, String> {
         portal::figures(pid)
     }
@@ -442,6 +462,11 @@ impl super::EmulatorBackend for Rpcs3 {
 
     fn tidy_window(&self, pid: u32, game: isize) {
         portal::tidy(pid, game);
+    }
+
+    #[cfg(windows)]
+    fn session_notes(&self, pid: u32) -> Vec<String> {
+        portal::way_used(pid).map(str::to_string).into_iter().collect()
     }
 
     /// RPCS3's mouse lock, without which aiming stops at the window's edge

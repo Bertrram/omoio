@@ -252,7 +252,10 @@ pub fn watch(app: AppHandle, pid: u32) {
                     // Cemu says why it won't start a game only in a message,
                     // which Omoio read and closed (backends::cemu::start_errors).
                     let refused = crate::backends::cemu::start_errors::take(pid);
-                    keep_session_log(&app, &playing, seconds, stopped_by_us, refused.as_ref());
+                    let notes = crate::backends::for_console(playing.console)
+                        .map(|backend| backend.session_notes(pid))
+                        .unwrap_or_default();
+                    keep_session_log(&app, &playing, seconds, stopped_by_us, refused.as_ref(), &notes);
                     if let Some(refused) = refused {
                         let _ = app.emit("game-refused", refused.shown);
                     }
@@ -611,13 +614,14 @@ fn keep_session_log(
     seconds: u64,
     stopped_by_us: bool,
     refused: Option<&crate::backends::cemu::start_errors::Refusal>,
+    notes: &[String],
 ) {
     use crate::core::playlog::{self, Ending, Session as LoggedSession};
 
     let backend = crate::backends::for_console(playing.console);
     // Cemu starts no log for a game it refused, and the one there is the
     // game before's, so what it said in its message is kept in its place.
-    let log = match refused {
+    let mut log = match refused {
         Some(refused) => refused.said.clone(),
         None => backend
             .as_ref()
@@ -625,6 +629,9 @@ fn keep_session_log(
             .and_then(|path| std::fs::read_to_string(path).ok())
             .unwrap_or_default(),
     };
+    for note in notes {
+        log.push_str(&format!("\n{note}\n"));
+    }
     if let Some(version) = backend.as_ref().and_then(|backend| backend.version_from_log(&log)) {
         learn_version(app, &playing.title_id, version);
     }
