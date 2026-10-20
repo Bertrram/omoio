@@ -403,6 +403,9 @@ impl super::EmulatorBackend for Rpcs3 {
             portal: true,
             // Omoio switches RPCS3's background input off before each game.
             quiet_behind: true,
+            // RPCS3's keyboard handler puts the mouse moving on a stick
+            // (controllers.rs).
+            mouse_aims: true,
         }
     }
 

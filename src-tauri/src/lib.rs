@@ -4,6 +4,7 @@ mod backends;
 mod big_picture;
 mod commands;
 mod controllers;
+mod cursor;
 pub mod core;
 mod hardware;
 pub mod import;

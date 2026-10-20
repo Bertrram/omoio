@@ -887,6 +887,9 @@ impl super::EmulatorBackend for Cemu {
             packs: true,
             saves: true,
             quiet_behind: true,
+            // Cemu 2.6 reads keys only: its keyboard has no axes and it has no
+            // mouse at all (`KeyboardController::has_axis`, src/input/api).
+            mouse_aims: false,
             ..Features::default()
         }
     }

@@ -648,6 +648,9 @@ fn launch(app: AppHandle, title_id: &str) -> Result<(), String> {
     );
     session.set_fullscreen(Settings::load(&settings_path(&app)?).start_fullscreen);
     crate::session::watch(app.clone(), pid);
+    if backend.features().mouse_aims && crate::controllers::keyboard_plays(&app, &game.title_id) {
+        crate::cursor::watch(app.clone(), pid);
+    }
     // Said over the game, in the bar the interface puts up when the game's
     // window comes (session::watch sends "game-started" then), so not before
     // that window is there, however long the emulator takes to boot.

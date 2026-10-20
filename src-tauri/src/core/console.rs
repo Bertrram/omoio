@@ -53,6 +53,10 @@ pub struct Features {
     /// The game stops reading the pad while one of Omoio's menus is over it,
     /// so presses in Big Picture or the portal menu never reach the game.
     pub quiet_behind: bool,
+    /// The game is aimed with the mouse moving, for someone playing on the
+    /// keyboard and mouse, so the cursor is kept inside the game while it is
+    /// in front (cursor.rs).
+    pub mouse_aims: bool,
 }
 
 #[cfg(test)]

@@ -94,7 +94,7 @@ impl Session {
 
     /// The game's window and its emulator, while the window is on the
     /// screen.
-    fn shown(&self) -> Option<(isize, u32)> {
+    pub(crate) fn shown(&self) -> Option<(isize, u32)> {
         let inner = self.inner.lock().unwrap();
         let running = inner.as_ref().filter(|r| !r.hidden)?;
         Some((running.window?, running.pid))

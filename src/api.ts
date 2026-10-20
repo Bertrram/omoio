@@ -90,6 +90,8 @@ export interface Game {
     /// The game stops reading the pad while Omoio is in front of it, so
     /// Big Picture's presses never reach a game waiting behind it.
     quiet_behind: boolean;
+    /// Someone on the keyboard and mouse aims with the mouse in this game.
+    mouse_aims: boolean;
   };
   /// Whether the portal menu works in this game. Omoio's own rule, so the
   /// interface never guesses it from the title.

@@ -162,6 +162,15 @@ fn warning(
     ask(&players, connected)
 }
 
+/// Whether someone plays this game on the keyboard and mouse, with the
+/// players `before_launch` set up.
+pub fn keyboard_plays(app: &AppHandle, title_id: &str) -> bool {
+    current(app, title_id, &crate::pads::connected())
+        .players
+        .iter()
+        .any(|player| player.pad.is_keyboard())
+}
+
 /// Called before a game starts, so plugging in and pressing Play is enough.
 /// A pad plugged in that no player has takes the place of one whose pad is
 /// not there, buttons someone chose never change, and the layout goes to the
