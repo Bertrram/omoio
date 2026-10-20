@@ -19,6 +19,7 @@ pub mod wua;
 use crate::core::console::{Console, Features};
 use crate::core::import_warning::Imported;
 use crate::core::library::Game;
+use crate::core::settings::Settings;
 use crate::core::types::Progress;
 use futures_util::StreamExt;
 use sha2::{Digest, Sha256};
@@ -302,6 +303,40 @@ fn title_id_in_log(log: &str) -> Option<String> {
 }
 
 const NOT_PLAYED_YET: &str = "Play this game once, and its settings can be changed here.";
+
+/// The game settings sheet's key for what the mouse turns. The choice is
+/// Omoio's, not Cemu's, and is kept in Omoio's settings; it sits in this
+/// sheet because it is made for one game.
+const MOUSE_AIM: &str = "Controls\nMouse turns";
+
+fn mouse_aim_option() -> crate::core::game_settings::Setting {
+    crate::core::game_settings::Setting {
+        key: MOUSE_AIM.to_string(),
+        group: "Controls".to_string(),
+        name: "Mouse turns".to_string(),
+        label: "Mouse turns".to_string(),
+        hint: "What moving the mouse turns when you play on the keyboard and mouse. Left on default, it is \
+               the left stick in Skylanders and the stick your layout gives it in other games. Tilt works \
+               in games played on the GamePad."
+            .to_string(),
+        kind: "choice".to_string(),
+        choices: &crate::keyboard_pad::AIM_CHOICES,
+        default: String::new(),
+        min: 0,
+        max: 0,
+        common: true,
+    }
+}
+
+fn settings_file(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(app.path().data_dir().map_err(|e| e.to_string())?.join("Omoio").join("settings.json"))
+}
+
+/// What was chosen for the mouse to turn in this game, if anything was.
+fn mouse_aim(app: &AppHandle, game: &Game) -> Option<String> {
+    let file = settings_file(app).ok()?;
+    Settings::load(&file).mouse_aims.remove(&game.title_id)
+}
 
 /// The title id Cemu files a game's settings under. An unpacked title is
 /// imported under it already. A disc image is encrypted, so its id is known
@@ -916,9 +951,10 @@ impl super::EmulatorBackend for Cemu {
             packs: true,
             saves: true,
             quiet_behind: true,
-            // Cemu 2.6 reads keys only: its keyboard has no axes and it has no
-            // mouse at all (`KeyboardController::has_axis`, src/input/api).
-            mouse_aims: false,
+            // Cemu reads no mouse, but the pad Omoio serves it for a keyboard
+            // player turns a stick with the mouse (controllers.rs,
+            // `serve_keyboard`).
+            mouse_aims: true,
             ..Features::default()
         }
     }
@@ -969,6 +1005,8 @@ impl super::EmulatorBackend for Cemu {
         let _ = write_first_settings(&portable);
         let _ = tune_settings(&portable.join("settings.xml"), is_skylanders(&game.title));
         packs::apply(app);
+        // Cemu asks for a served pad only as it starts.
+        controllers::serve_keyboard(app, game);
         Ok(())
     }
 
@@ -1012,12 +1050,18 @@ impl super::EmulatorBackend for Cemu {
 
     fn game_settings(&self, app: &AppHandle, game: &Game) -> Result<crate::core::game_settings::GameSettings, String> {
         let title_id = title_id_for(app, game).ok_or(NOT_PLAYED_YET)?;
+        let mut options = game_profile::options();
+        options.push(mouse_aim_option());
+        let mut chosen = game_profile::read(&install_dir(app)?, &title_id);
+        if let Some(aim) = mouse_aim(app, game) {
+            chosen.insert(MOUSE_AIM.to_string(), aim);
+        }
         Ok(crate::core::game_settings::GameSettings {
             emulator: "Cemu".to_string(),
-            options: game_profile::options(),
-            chosen: game_profile::read(&install_dir(app)?, &title_id),
+            options,
+            chosen,
             reasons: std::collections::BTreeMap::new(),
-            common_groups: ["Graphics", "CPU", "General"].map(String::from).to_vec(),
+            common_groups: ["Graphics", "CPU", "General", "Controls"].map(String::from).to_vec(),
         })
     }
 
@@ -1028,7 +1072,20 @@ impl super::EmulatorBackend for Cemu {
         chosen: &crate::core::game_settings::Chosen,
     ) -> Result<(), String> {
         let title_id = title_id_for(app, game).ok_or(NOT_PLAYED_YET)?;
-        game_profile::write(&install_dir(app)?, &title_id, &game.title, chosen)
+        let mut chosen = chosen.clone();
+        let aim = chosen
+            .remove(MOUSE_AIM)
+            .filter(|aim| crate::keyboard_pad::AIM_CHOICES.contains(&aim.as_str()));
+        let file = settings_file(app)?;
+        let mut settings = Settings::load(&file);
+        if settings.mouse_aims.get(&game.title_id) != aim.as_ref() {
+            match aim {
+                Some(aim) => settings.mouse_aims.insert(game.title_id.clone(), aim),
+                None => settings.mouse_aims.remove(&game.title_id),
+            };
+            settings.save(&file).map_err(|_| "Couldn't save this game's settings.".to_string())?;
+        }
+        game_profile::write(&install_dir(app)?, &title_id, &game.title, &chosen)
     }
 
     /// A disc image's title id is known only once Cemu has run it, and a
@@ -1150,6 +1207,7 @@ impl super::EmulatorBackend for Cemu {
             .spawn()
             .map_err(|e| e.to_string())?;
         let pid = child.id();
+        crate::dsu::follow(pid);
         start_errors::watch(child, game.path.to_string_lossy().into_owned());
         Ok(pid)
     }

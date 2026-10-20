@@ -69,8 +69,12 @@ pub fn watch(app: AppHandle, pid: u32) {
             }
             let game = window
                 .filter(|&game| overlay::front() == game)
-                .filter(|_| !crate::portal_menu::showing(&app));
-            match game.and_then(inside) {
+                .filter(|_| !crate::portal_menu::showing(&app))
+                .and_then(inside);
+            // The pad Omoio serves Cemu for the keyboard and mouse is heard
+            // exactly while the mouse is kept here.
+            crate::dsu::hear(game.is_some());
+            match game {
                 Some(rect) => {
                     // Again at every look: the window moves and changes size
                     // when Omoio's window does, and Windows itself may have

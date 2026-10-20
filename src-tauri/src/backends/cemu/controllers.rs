@@ -30,9 +30,13 @@
 //! Bluetooth, it has the same GUID only if Windows gives it the same version
 //! there (sdl.rs), and otherwise plays again from the next game.
 //!
-//! The keyboard is Cemu's own keyboard controller, one key for each button
-//! (`Keymap`). Cemu reads no mouse for a controller, so the mouse's buttons
-//! are left out and the mouse moving is the arrow keys (`arrow_for`).
+//! The keyboard and mouse are a pad Omoio serves to Cemu while their game
+//! runs (dsu.rs, keyboard_pad.rs), which Cemu reads as one of its DSU pads,
+//! so the mouse's buttons press and its moving turns a stick
+//! (`Reader::Dsu`). When Omoio can't serve it, the keyboard is Cemu's own
+//! keyboard controller, one key for each button (`Keymap`): Cemu reads no
+//! mouse for a controller, so then the mouse's buttons are left out and the
+//! mouse moving is the arrow keys (`arrow_for`).
 //!
 //! Player 1 is the one every game answers, so they are never left without a
 //! pad while an XInput one is plugged in (`stand_in`), and Play says so before
@@ -49,6 +53,7 @@
 use super::{release, sdl};
 use crate::core::keys;
 use crate::core::pad_layout::{self, Pad, Player, PLAYERS};
+use crate::keyboard_pad;
 use std::path::{Path, PathBuf};
 use tauri::AppHandle;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
@@ -301,11 +306,11 @@ fn layout_vk(scan: u16) -> u32 {
 /// controllers through its keyboard, SDL, XInput, DirectInput, DSU,
 /// GameCube adapter, Wii Remote and Windows.Gaming.Input apis, and none of
 /// them reads a mouse (`InputAPI::Type`, input/api/InputAPI.h lines 7 to 21,
-/// v2.6, read 20 October 2026). So until Omoio moves a stick for the mouse
-/// itself, the mouse moving is the arrow keys in Cemu, and the right stick,
-/// which the mouse moves by default, is on the arrows. The mouse's buttons
-/// and wheel have no stand-in, and are left out; the default layout has J, K
-/// and L beside them on the face buttons.
+/// v2.6, read 20 October 2026). So when Omoio can't serve the mouse as a
+/// pad (`Reader::Dsu`), the mouse moving is the arrow keys in Cemu, and the
+/// right stick, which the mouse moves by default, is on the arrows. The
+/// mouse's buttons and wheel have no stand-in, and are left out; the default
+/// layout has J, K and L beside them on the face buttons.
 fn arrow_for(input: &str) -> Option<VIRTUAL_KEY> {
     Some(match input {
         "MouseMoveLeft" => VK_LEFT,
@@ -330,6 +335,26 @@ const KEYBOARD_SETTINGS: &str = "\t\t<axis>\n\t\t\t<deadzone>0.25</deadzone>\n\t
      \t\t<rotation>\n\t\t\t<deadzone>0.25</deadzone>\n\t\t\t<range>1</range>\n\t\t</rotation>\n\
      \t\t<trigger>\n\t\t\t<deadzone>0.25</deadzone>\n\t\t\t<range>1</range>\n\t\t</trigger>\n";
 
+/// What Cemu writes for a DSU pad between its names and its mappings, in
+/// the order `InputManager::save` writes it, with the server's address after
+/// (`DSUController::save`, input/api/DSU/DSUController.cpp lines 21 to 29,
+/// v2.6, read 20 October 2026), `{port}` for the port:
+///
+/// - Motion on. Cemu then reads the GamePad's tilt from the pad
+///   (`EmulatedController::has_motion`), which stays still unless the mouse
+///   tilts it, and no longer turns it while the right mouse button drags in
+///   its window (`VPADController::update_motion`, VPADController.cpp lines
+///   237 to 310), which by default is a face button here.
+/// - No dead zone for either stick. Keys push a stick all the way, and the
+///   mouse is given its own least push (`keyboard_pad::LEAST`), which a dead
+///   zone would only take away from (`apply_axis_setting`, Controller.cpp
+///   lines 74 to 120). The triggers travel as buttons and keep the default.
+const DSU_SETTINGS: &str = "\t\t<motion>true</motion>\n\
+     \t\t<axis>\n\t\t\t<deadzone>0</deadzone>\n\t\t\t<range>1</range>\n\t\t</axis>\n\
+     \t\t<rotation>\n\t\t\t<deadzone>0</deadzone>\n\t\t\t<range>1</range>\n\t\t</rotation>\n\
+     \t\t<trigger>\n\t\t\t<deadzone>0.25</deadzone>\n\t\t\t<range>1</range>\n\t\t</trigger>\n\
+     \t\t<ip>127.0.0.1</ip>\n\t\t<port>{port}</port>\n";
+
 /// How Cemu reads a player's pad.
 #[derive(Debug, Clone, PartialEq)]
 enum Reader {
@@ -339,6 +364,8 @@ enum Reader {
     Sdl(sdl::Found),
     /// Cemu's keyboard controller (`KeyboardController`, v2.6).
     Keyboard(Keymap),
+    /// The keyboard and mouse as the pad Omoio serves on this port.
+    Dsu(u16),
 }
 
 impl Reader {
@@ -352,6 +379,13 @@ impl Reader {
             Reader::XInput(_) => xinput_number(player.input(place)),
             Reader::Sdl(found) => sdl_number(player.input(place), found.by_label),
             Reader::Keyboard(keymap) => player.keys(place).find_map(|input| keymap.number(input)),
+            // Each place is one button or stick direction of the pad, and
+            // the pad presses it for every input the player has there.
+            Reader::Dsu(_) => player
+                .keys(place)
+                .next()
+                .and_then(|_| keyboard_pad::output(place))
+                .map(keyboard_pad::Output::cemu_number),
         }
     }
 
@@ -363,14 +397,23 @@ impl Reader {
             Reader::XInput(slot) => ("XInput", slot.to_string(), format!("Controller {}", slot + 1)),
             Reader::Sdl(found) => ("SDLController", found.uuid.clone(), escape(&player.pad.name)),
             Reader::Keyboard(_) => ("Keyboard", "keyboard".to_string(), "Keyboard".to_string()),
+            // The uuid is the pad's slot, and the name Cemu gives a DSU pad
+            // (`ControllerFactory::CreateController`, input/ControllerFactory.cpp
+            // lines 79 to 84, and DSUController.cpp lines 5 to 6, v2.6).
+            Reader::Dsu(_) => (
+                "DSUController",
+                crate::dsu::SLOT.to_string(),
+                format!("Controller {}", crate::dsu::SLOT + 1),
+            ),
         }
     }
 
     /// What goes between the names and the mappings.
-    fn settings(&self) -> &'static str {
+    fn settings(&self) -> String {
         match self {
-            Reader::Keyboard(_) => KEYBOARD_SETTINGS,
-            Reader::XInput(_) | Reader::Sdl(_) => "",
+            Reader::Keyboard(_) => KEYBOARD_SETTINGS.to_string(),
+            Reader::Dsu(port) => DSU_SETTINGS.replace("{port}", &port.to_string()),
+            Reader::XInput(_) | Reader::Sdl(_) => String::new(),
         }
     }
 }
@@ -391,9 +434,15 @@ type UsbIds<'a> = &'a dyn Fn(&str) -> Option<(u16, u16, usize)>;
 /// before Cemu answered it (reported 8 October 2026). The HID devices are
 /// read afresh each time, so such a pad is looked for there, by the name and
 /// number it has in the layout.
+///
+/// The keyboard is the pad Omoio serves while it serves one, and Cemu's own
+/// keyboard controller otherwise.
 fn reader_for(player: &Player, hid: &[sdl::HidPad], ids: UsbIds) -> Option<Reader> {
     if player.pad.is_keyboard() {
-        return Some(Reader::Keyboard(Keymap::new(&layout_vk)));
+        return Some(match crate::dsu::port() {
+            Some(port) => Reader::Dsu(port),
+            None => Reader::Keyboard(Keymap::new(&layout_vk)),
+        });
     }
     if let Some(slot) = xinput_slot(&player.pad) {
         return Some(Reader::XInput(slot));
@@ -613,6 +662,25 @@ pub fn write(app: &AppHandle, _title_id: &str, players: &[Player]) -> Result<(),
     let readers: Vec<Option<Reader>> = players.iter().map(|player| reader_for(player, &hid, &ids)).collect();
     write_all(&profile_dir(app)?, &players, &readers)
         .map_err(|_| "Couldn't save the controller settings for Cemu.".to_string())
+}
+
+/// Serves the keyboard and mouse as a pad for `game`, which is about to
+/// start, when a player has them in the layout it plays with, its own or
+/// the one for every game, as `controllers::before_launch` picks it. That
+/// runs after this (commands.rs, `launch_game`) and writes the player's file,
+/// which names the pad while it is served (`reader_for`). Any pad served
+/// for the game before stops. When this one can't be served, the player
+/// plays on Cemu's keyboard controller.
+pub fn serve_keyboard(app: &AppHandle, game: &crate::core::library::Game) {
+    crate::dsu::stop();
+    let connected = crate::pads::connected();
+    let mut players = crate::controllers::current(app, &game.title_id, &connected).players;
+    pad_layout::seat_from(&mut players, &connected, &crate::pads::seatable(&connected));
+    let Some(player) = players.iter().find(|player| player.pad.is_keyboard()) else {
+        return;
+    };
+    let aim = keyboard_pad::Aim::for_game(super::mouse_aim(app, game).as_deref(), &game.title);
+    let _ = crate::dsu::start(player, aim);
 }
 
 #[cfg(test)]
@@ -1229,6 +1297,61 @@ mod tests {
         assert_eq!(missing(&players, &[], &usable), None, "with no pad plugged in at all");
         let reader = reader_for(&players[0], &[], &no_ids);
         assert!(matches!(reader, Some(Reader::Keyboard(_))), "{reader:?}");
+    }
+
+    #[test]
+    fn a_keyboard_player_is_cemus_keyboard_while_omoio_serves_no_pad() {
+        assert_eq!(crate::dsu::port(), None);
+        let reader = reader_for(&Player::on(Pad::keyboard()), &[], &no_ids);
+        assert!(matches!(reader, Some(Reader::Keyboard(_))), "{reader:?}");
+    }
+
+    #[test]
+    fn a_keyboard_player_one_is_omoios_pad_as_the_gamepad_while_it_is_served() {
+        // Every place on the pad's button or stick direction for it: Cross
+        // for B at the bottom, Circle for A on the right, Square for Y and
+        // Triangle for X, the shoulders and triggers, Options and Share, the
+        // d-pad, and the sticks with up positive.
+        let entries: String = [
+            (1, 13), (2, 14), (3, 12), (4, 15), (5, 10), (6, 11), (7, 8), (8, 9), (9, 3), (10, 0), (11, 4), (12, 6),
+            (13, 7), (14, 5), (15, 1), (16, 2), (17, 39), (18, 45), (19, 44), (20, 38), (21, 41), (22, 47), (23, 46),
+            (24, 40),
+        ]
+        .iter()
+        .map(|(mapping, button)| {
+            format!("\t\t\t<entry>\n\t\t\t\t<mapping>{mapping}</mapping>\n\t\t\t\t<button>{button}</button>\n\t\t\t</entry>\n")
+        })
+        .collect();
+        let expected = format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<emulated_controller>\n\t<type>Wii U GamePad</type>\n\t<controller>\n\
+             \t\t<api>DSUController</api>\n\t\t<uuid>0</uuid>\n\t\t<display_name>Controller 1</display_name>\n\
+             \t\t<motion>true</motion>\n\
+             \t\t<axis>\n\t\t\t<deadzone>0</deadzone>\n\t\t\t<range>1</range>\n\t\t</axis>\n\
+             \t\t<rotation>\n\t\t\t<deadzone>0</deadzone>\n\t\t\t<range>1</range>\n\t\t</rotation>\n\
+             \t\t<trigger>\n\t\t\t<deadzone>0.25</deadzone>\n\t\t\t<range>1</range>\n\t\t</trigger>\n\
+             \t\t<ip>127.0.0.1</ip>\n\t\t<port>26762</port>\n\
+             \t\t<mappings>\n{entries}\t\t</mappings>\n\t</controller>\n</emulated_controller>\n"
+        );
+        let text = profile(Kind::for_player(0), &Player::on(Pad::keyboard()), Some(&Reader::Dsu(26762)), false);
+        assert_eq!(text, expected);
+    }
+
+    #[test]
+    fn trap_team_on_omoios_pad_takes_the_d_pad_from_the_left_stick_and_a_pad_beside_it_stays() {
+        let dir = scratch("dsu");
+        let buttons = BTreeMap::from([("Guide".to_string(), "KeyG".to_string()), ("LB".to_string(), String::new())]);
+        let players = vec![Player::with_buttons(Pad::keyboard(), buttons), Player::on(xinput(1))];
+        let readers = vec![Some(Reader::Dsu(26762)), Some(Reader::XInput(0))];
+        write_all(&dir, &players, &readers).unwrap();
+        let pro = std::fs::read_to_string(dir.join(FIRST_AS_PRO)).unwrap();
+        assert!(pro.contains("<type>Wii U Pro Controller</type>") && pro.contains("<api>DSUController</api>"), "{pro}");
+        assert!(pro.contains(&entry(12, 39)), "d-pad up, after Home, is the left stick up: {pro}");
+        assert!(pro.contains(&entry(18, 39)), "and the stick still steers: {pro}");
+        assert!(!pro.contains("<mapping>5</mapping>"), "L, with no key on it, has no entry: {pro}");
+        assert_eq!(pro.matches("<entry>").count(), 23, "{pro}");
+        let two = std::fs::read_to_string(dir.join("controller1.xml")).unwrap();
+        assert_eq!(two, profile(Kind::Pro, &Player::on(xinput(1)), Some(&Reader::XInput(0)), false));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
