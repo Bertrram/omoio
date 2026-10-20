@@ -386,7 +386,9 @@ pub fn quiet_game(app: &AppHandle) {
             // The menu takes the front back at once, which makes Cemu let go
             // of every key (lines 401 to 405). Only for a keyboard player, so
             // nothing changes for a pad.
-            if crate::controllers::keyboard_plays(&app, &playing.title_id) {
+            // Never from another program the player went to meanwhile.
+            let ours = overlay::front() == 0 || overlay::front_belongs_to(&[std::process::id(), pid]);
+            if ours && crate::controllers::keyboard_plays(&app, &playing.title_id) {
                 if let Some(window) = app.get_webview_window("portal") {
                     let _ = window.set_focus();
                 }
