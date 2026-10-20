@@ -237,7 +237,9 @@ const HEARD_WITHIN: Duration = Duration::from_millis(250);
 /// `None` when it isn't, and the player plays on Cemu's own keyboard
 /// controller instead.
 pub fn port() -> Option<u16> {
-    RUNNING.lock().unwrap().is_some().then_some(PORT)
+    // The thread ends by itself when the game it played to does (`follow`).
+    let running = RUNNING.lock().unwrap();
+    running.as_ref().is_some_and(|running| !running.thread.is_finished()).then_some(PORT)
 }
 
 /// Starts serving `player`'s pad with the mouse turning what `aim` says,

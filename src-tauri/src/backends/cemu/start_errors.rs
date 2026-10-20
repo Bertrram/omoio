@@ -78,15 +78,24 @@ fn heard() -> std::sync::MutexGuard<'static, Vec<Heard>> {
 
 /// Why the Cemu that was `pid` didn't start its game, asked once it has
 /// gone: a message that refused the game, or the last one it put up right
-/// before it ended by itself. Forgets what that Cemu said either way.
+/// before it ended by itself. Any other message it put up stays for
+/// `notes`.
 pub fn take(pid: u32) -> Option<Refusal> {
+    let mut all = heard();
+    let at = all.iter().rposition(|said| said.pid == pid && counts(said.ends_game, said.at.elapsed()))?;
+    Some(all.remove(at).refusal)
+}
+
+/// Every other message the Cemu that was `pid` put up and Omoio closed, such
+/// as a graphic pack that couldn't be applied, for the log kept of the game,
+/// so what was closed unseen is still there to read. Forgets them.
+pub fn notes(pid: u32) -> Vec<String> {
     let mut all = heard();
     let (mine, others): (Vec<Heard>, Vec<Heard>) = all.drain(..).partition(|said| said.pid == pid);
     *all = others;
     mine.into_iter()
-        .rev()
-        .find(|said| counts(said.ends_game, said.at.elapsed()))
-        .map(|said| said.refusal)
+        .map(|said| format!("Omoio closed a message from Cemu: {}", said.refusal.said.replace('\n', " ")))
+        .collect()
 }
 
 /// Whether a message is why Cemu ended: one that refused the game always,
@@ -462,7 +471,9 @@ mod tests {
         };
         heard().extend([note(900_001, true, "first"), note(900_002, false, "other"), note(900_001, false, "later")]);
         assert_eq!(take(900_001).map(|refusal| refusal.shown).as_deref(), Some("later"));
+        assert_eq!(notes(900_001).len(), 1, "the other message stays for the log");
         assert!(take(900_001).is_none());
+        assert!(notes(900_001).is_empty());
         assert_eq!(take(900_002).map(|refusal| refusal.shown).as_deref(), Some("other"));
     }
 }

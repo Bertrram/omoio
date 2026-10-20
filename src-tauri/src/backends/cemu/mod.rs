@@ -316,8 +316,9 @@ fn mouse_aim_option() -> crate::core::game_settings::Setting {
         name: "Mouse turns".to_string(),
         label: "Mouse turns".to_string(),
         hint: "What moving the mouse turns when you play on the keyboard and mouse. Left on default, it is \
-               the left stick in Skylanders and the stick your layout gives it in other games. Tilt works \
-               in games played on the GamePad."
+               the left stick in Skylanders, whose right stick has nothing to do, and the stick your layout \
+               gives it in other games. If the mouse doesn't aim something, such as a cannon, try the other \
+               stick. Tilt works in games played on the GamePad."
             .to_string(),
         kind: "choice".to_string(),
         choices: &crate::keyboard_pad::AIM_CHOICES,
@@ -1012,6 +1013,10 @@ impl super::EmulatorBackend for Cemu {
 
     fn tidy_window(&self, pid: u32, _game: isize) {
         portal::tidy(pid);
+    }
+
+    fn session_notes(&self, pid: u32) -> Vec<String> {
+        start_errors::notes(pid)
     }
 
     fn hush(&self, pid: u32, hushed: bool) -> Result<(), String> {
