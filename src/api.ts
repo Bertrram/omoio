@@ -196,6 +196,12 @@ export function onPadNotFound(handler: (message: string) => void): Promise<Unlis
   return listen<string>("pad-not-found", (event) => handler(event.payload));
 }
 
+/// When the emulator wouldn't start the game and said why, right before
+/// "game-stopped". The message is worded for the person playing.
+export function onGameRefused(handler: (message: string) => void): Promise<UnlistenFn> {
+  return listen<string>("game-refused", (event) => handler(event.payload));
+}
+
 export interface Machine {
   rpcs3: string | null;
   cpu: string | null;
@@ -211,7 +217,7 @@ export interface PlaySession {
   title: string;
   started: string;
   seconds: number;
-  ending: "stopped" | "closed" | "crashed";
+  ending: "stopped" | "closed" | "crashed" | "refused";
   machine: Machine;
   problems: string[];
   log_file: string;

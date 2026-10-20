@@ -9,6 +9,7 @@ import {
   listGames,
   onBigPicture,
   onGameFullscreen,
+  onGameRefused,
   onGameStarted,
   onGameStopped,
   onPadNotFound,
@@ -181,9 +182,15 @@ void openSetupIfNeeded().then(() => updateEmulatorsInBackground());
 // Dragging a game onto the window imports it, the same as the Import button.
 void watchForDroppedGames();
 
-onGameStarted((playing) => store.setPlaying(playing));
+onGameStarted((playing) => {
+  store.setNotice(null);
+  store.setPlaying(playing);
+});
 onGameFullscreen((on) => store.setGameFullscreen(on));
 onPadNotFound(showPlayingNote);
+// Said over the library, which is what shows once the emulator has gone,
+// until the next game starts.
+onGameRefused((message) => store.setNotice(message));
 onGameStopped(() => {
   store.setGameFullscreen(false);
   store.setPlaying(null);

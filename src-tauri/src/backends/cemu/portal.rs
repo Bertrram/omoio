@@ -15,7 +15,7 @@
 use crate::core::figures::{self, Character};
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::sync::{Mutex, MutexGuard, PoisonError, TryLockError};
 use std::time::{Duration, Instant};
 use windows::core::BOOL;
 use windows::Win32::Foundation::{CloseHandle, HANDLE, HWND, LPARAM, WPARAM};
@@ -45,6 +45,10 @@ const INPUT_SETTINGS: &str = "Input settings";
 /// (`EmulatedUSBDeviceFrame.cpp`, `CreateSkylanderDialog`).
 const CREATOR: &str = "Skylander Figure Creator";
 const SAVE_FIGURE: &str = "Create Skylander file";
+
+/// The windows Omoio opens in Cemu for the portal, none of them a message
+/// (`start_errors`).
+pub(super) const OWN_WINDOWS: [&str; 4] = [WINDOW, OPEN_FIGURE, CREATOR, SAVE_FIGURE];
 
 /// Asking a list box how many items it has, one item's text and its length,
 /// and the number kept with it. Windows carries these across processes.
@@ -92,6 +96,13 @@ static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
 
 fn turn() -> MutexGuard<'static, ()> {
     ONE_AT_A_TIME.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// Whether an errand in Cemu's portal window is under way. Each
+/// reads the messages Cemu puts up for it (`dismiss_message`), so they are
+/// left to it meanwhile (`start_errors`).
+pub(super) fn busy() -> bool {
+    making() || matches!(ONE_AT_A_TIME.try_lock(), Err(TryLockError::WouldBlock))
 }
 
 /// How many errands with Cemu's figure maker are under way or waiting their

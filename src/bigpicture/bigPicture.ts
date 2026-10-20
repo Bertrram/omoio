@@ -7,6 +7,7 @@ import {
   launchGame,
   launchWarning,
   listSessions,
+  onGameRefused,
   onGameStopped,
   onPadNotFound,
   padsConnected,
@@ -1269,14 +1270,25 @@ export function renderBigPicture(): HTMLElement {
     if (drawnFrom() !== drawnFor) render(false);
   });
 
+  // Why the emulator wouldn't start the game, which comes right before the
+  // game stops, said in place of the guess below.
+  let refused: string | null = null;
+  void onGameRefused((message) => {
+    refused = message;
+  });
+
   void onGameStopped(() => {
     const cancelled = stopping;
+    const why = refused;
+    refused = null;
     quitting = false;
     stopping = false;
     if (starting) {
       starting = null;
       drawStarting();
-      if (!cancelled) say("The game closed before it started. Its log is under Logs on the desktop.");
+      if (!cancelled) say(why ?? "The game closed before it started. Its log is under Logs on the desktop.");
+    } else if (why && store.get().bigPicture) {
+      say(why);
     }
     void readSessions().then(() => {
       if (showing) render(false);

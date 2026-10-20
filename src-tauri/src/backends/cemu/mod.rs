@@ -13,6 +13,7 @@ pub mod packs;
 pub mod portal;
 pub mod release;
 pub mod sdl;
+pub mod start_errors;
 pub mod wua;
 
 use crate::core::console::{Console, Features};
@@ -1148,7 +1149,9 @@ impl super::EmulatorBackend for Cemu {
             .arg(&game.path)
             .spawn()
             .map_err(|e| e.to_string())?;
-        Ok(child.id())
+        let pid = child.id();
+        start_errors::watch(child, game.path.to_string_lossy().into_owned());
+        Ok(pid)
     }
 
     fn detect_version(&self, app: &AppHandle) -> Option<String> {

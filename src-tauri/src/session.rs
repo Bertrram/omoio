@@ -249,7 +249,13 @@ pub fn watch(app: AppHandle, pid: u32) {
                     .unwrap_or(0);
                 let playing = session.end();
                 if let Some(playing) = playing {
-                    keep_session_log(&app, &playing, seconds, stopped_by_us);
+                    // Cemu says why it won't start a game only in a message,
+                    // which Omoio read and closed (backends::cemu::start_errors).
+                    let refused = crate::backends::cemu::start_errors::take(pid);
+                    keep_session_log(&app, &playing, seconds, stopped_by_us, refused.as_ref());
+                    if let Some(refused) = refused {
+                        let _ = app.emit("game-refused", refused.shown);
+                    }
                     let _ = app.emit("game-stopped", playing);
                 }
                 return;
@@ -599,20 +605,33 @@ fn learn_version(app: &AppHandle, title_id: &str, version: String) {
 /// and records how it ended. Emulators overwrite their own log on the next
 /// launch, so this is the only chance to keep it, and to learn from it what
 /// the game's own files couldn't say.
-fn keep_session_log(app: &AppHandle, playing: &Playing, seconds: u64, stopped_by_us: bool) {
+fn keep_session_log(
+    app: &AppHandle,
+    playing: &Playing,
+    seconds: u64,
+    stopped_by_us: bool,
+    refused: Option<&crate::backends::cemu::start_errors::Refusal>,
+) {
     use crate::core::playlog::{self, Ending, Session as LoggedSession};
 
     let backend = crate::backends::for_console(playing.console);
-    let log = backend
-        .as_ref()
-        .and_then(|backend| backend.log_file(app))
-        .and_then(|path| std::fs::read_to_string(path).ok())
-        .unwrap_or_default();
+    // Cemu starts no log for a game it refused, and the one there is the
+    // game before's, so what it said in its message is kept in its place.
+    let log = match refused {
+        Some(refused) => refused.said.clone(),
+        None => backend
+            .as_ref()
+            .and_then(|backend| backend.log_file(app))
+            .and_then(|path| std::fs::read_to_string(path).ok())
+            .unwrap_or_default(),
+    };
     if let Some(version) = backend.as_ref().and_then(|backend| backend.version_from_log(&log)) {
         learn_version(app, &playing.title_id, version);
     }
 
-    let ending = if stopped_by_us {
+    let ending = if refused.is_some() {
+        Ending::Refused
+    } else if stopped_by_us {
         Ending::Stopped
     } else if playlog::has_fatal(&log) {
         Ending::Crashed
@@ -642,7 +661,10 @@ fn keep_session_log(app: &AppHandle, playing: &Playing, seconds: u64, stopped_by
         seconds,
         ending,
         machine: playlog::read_machine(&log),
-        problems: playlog::read_problems(&log, 40),
+        problems: match refused {
+            Some(refused) => vec![refused.shown.clone()],
+            None => playlog::read_problems(&log, 40),
+        },
         log_file: log_file.to_string_lossy().into_owned(),
     };
 
