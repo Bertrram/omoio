@@ -38,7 +38,13 @@
 //! pad while an XInput one is plugged in (`stand_in`), and Play says so before
 //! a game starts with nobody to answer it (`missing_first_player`).
 //!
-//! Cemu keeps one layout for every game. A game's own layout is RPCS3's alone.
+//! Cemu keeps one set of files for every game, so a game's own layout goes
+//! into the same files: before every game Omoio writes the layout that game
+//! plays with, its own when it has one (controllers.rs, `before_launch`),
+//! and the next game gets its own again. Up to 0.3.2 only the layout for
+//! every game was written, so a Wii U game's own layout did nothing (Discord,
+//! v1ad, ticket #5, 10 October 2026: Cross and Circle swapped on a PS5 pad
+//! for one game changed nothing in it).
 
 use super::{release, sdl};
 use crate::core::keys;
@@ -591,10 +597,13 @@ fn profile_dir(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(super::install_dir(app)?.join("portable").join("controllerProfiles"))
 }
 
-/// Writes the layout for every game where Cemu reads it. Nothing is written
-/// before Cemu is installed, and a game's own layout is left to RPCS3.
-pub fn write(app: &AppHandle, title_id: &str, players: &[Player]) -> Result<(), String> {
-    if !title_id.is_empty() || !super::install_dir(app)?.join("Cemu.exe").is_file() {
+/// Writes a layout where Cemu reads it: the one for every game, or a game's
+/// own, which take the same files (the header). Nothing is written before
+/// Cemu is installed. Saving any game's own layout on the Controller screen
+/// writes it here too, which lasts only until the next game starts and
+/// writes its own.
+pub fn write(app: &AppHandle, _title_id: &str, players: &[Player]) -> Result<(), String> {
+    if !super::install_dir(app)?.join("Cemu.exe").is_file() {
         return Ok(());
     }
     let hid = hid_for(players, super::detect_version(app).as_deref(), sdl::hid_pads);
