@@ -154,9 +154,14 @@ pub fn known(input: &str) -> bool {
 /// L for anyone who would rather keep the mouse still. The shoulders sit
 /// around W, under the left hand. The d-pad is on 1 to 4, in the order up,
 /// right, down, left, clockwise as on the pad. Back is on Backspace rather
-/// than Tab, as Dolphin turns its speed limit off while Tab is held
-/// (HotkeyManager.cpp line 433, `HK_TOGGLE_THROTTLE` on TAB, and
-/// HotkeyScheduler.cpp line 492, at 2609a). The Guide button has no key:
+/// than Tab: Dolphin's own hotkeys turn its speed limit off while Tab is
+/// held (HotkeyManager.cpp line 433, `HK_TOGGLE_THROTTLE` on TAB, and
+/// HotkeyScheduler.cpp line 492, at 2609a), which Omoio's empty Hotkeys.ini
+/// prevents only where the player hasn't set hotkeys up in Dolphin
+/// (backends/dolphin/settings.rs, `quiet_hotkeys`), and RPCS3 hears Tab as
+/// another key, Backtab, while Shift, the left stick's press, is held
+/// (Qt's qwindowskeymapper.cpp lines 1219 to 1220, Qt 6.12.0). The Guide
+/// button has no key:
 /// it opens the console's own menu, which nobody needs mid-game, and a key
 /// for it would be one more to press by mistake.
 pub fn default_input(place: &str) -> &'static str {
