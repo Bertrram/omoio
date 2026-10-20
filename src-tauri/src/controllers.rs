@@ -86,15 +86,25 @@ pub fn current(app: &AppHandle, title_id: &str, connected: &[Pad]) -> Current {
     Current { players, own, saved, lone }
 }
 
-/// Gives player `number`, counted from 1, this pad and layout. A game's first
+/// Gives player `number`, counted from 1, this pad and layout, and the mouse
+/// this speed. With no speed, the player keeps theirs, so a screen that only
+/// changes buttons, such as Big Picture's, leaves it alone. A game's first
 /// change starts from the layout for every game, which is what it was
 /// playing with until then.
-pub fn save_player(app: &AppHandle, title_id: &str, number: usize, player: Player) -> Result<(), String> {
+pub fn save_player(
+    app: &AppHandle,
+    title_id: &str,
+    number: usize,
+    player: Player,
+    mouse: Option<u32>,
+) -> Result<(), String> {
     let at = number
         .checked_sub(1)
         .filter(|at| *at < PLAYERS)
         .ok_or("Couldn't save the controller settings.")?;
     let mut players = current(app, title_id, &crate::pads::connected()).players;
+    let kept = players.get(at).map_or(crate::core::keys::DEFAULT_MOUSE, |p| p.mouse);
+    let player = player.with_mouse(mouse.unwrap_or(kept));
     pad_layout::give(&mut players, at, player);
     let mut layouts = load(app);
     layouts.set(title_id, players.clone());

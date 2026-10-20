@@ -380,8 +380,8 @@ fn stand_in(players: &[Player], plugged: &[Pad], usable: &dyn Fn(&Player) -> boo
         .clone()
         .find(|pad| !players.iter().any(|p| p.pad.device == pad.device));
     if let Some(pad) = free.or_else(|| xinput.next()) {
-        let buttons = first.buttons.clone();
-        pad_layout::give(&mut players, 0, Player { pad: pad.clone(), buttons });
+        let (buttons, mouse) = (first.buttons.clone(), first.mouse);
+        pad_layout::give(&mut players, 0, Player { pad: pad.clone(), buttons, mouse });
     }
     players
 }

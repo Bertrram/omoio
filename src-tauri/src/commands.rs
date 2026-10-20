@@ -1388,8 +1388,26 @@ pub struct PlayerView {
     pub pad: crate::core::pad_layout::Pad,
     /// Whether that pad is plugged in right now.
     pub connected: bool,
-    /// Every place on a pad and the input standing for it.
+    /// Every place on a pad and the input standing for it. On the keyboard,
+    /// the keys and mouse inputs, separated by spaces.
     pub buttons: std::collections::BTreeMap<String, String>,
+    /// How fast the mouse turns a stick, in percent.
+    pub mouse: u32,
+}
+
+/// What a keyboard-and-mouse player can be given, from core/keys.rs.
+#[derive(serde::Serialize)]
+pub struct KeyboardView {
+    /// The pad a player is given to play on the keyboard and mouse.
+    pub pad: crate::core::pad_layout::Pad,
+    /// Every key, by its `KeyboardEvent.code` name.
+    pub keys: Vec<&'static str>,
+    pub mouse_buttons: Vec<&'static str>,
+    pub mouse_moves: Vec<&'static str>,
+    /// Keys that can't be given, with why.
+    pub refused: Vec<(&'static str, &'static str)>,
+    /// The slowest and fastest the mouse can go, in percent.
+    pub mouse_range: (u32, u32),
 }
 
 /// What one console calls each place on a pad.
@@ -1417,6 +1435,7 @@ pub struct ControllerView {
     /// Every place a layout covers.
     pub inputs: Vec<&'static str>,
     pub consoles: Vec<ConsoleButtons>,
+    pub keyboard: KeyboardView,
 }
 
 /// `title_id` empty is the layout for every game.
@@ -1438,9 +1457,11 @@ pub fn controller_view(app: AppHandle, title_id: String) -> ControllerView {
             .players
             .iter()
             .map(|player| PlayerView {
-                connected: connected.iter().any(|pad| pad.device == player.pad.device),
+                // The keyboard is always there.
+                connected: player.pad.is_keyboard() || connected.iter().any(|pad| pad.device == player.pad.device),
                 pad: player.pad.clone(),
                 buttons: player.all_buttons(),
+                mouse: player.mouse,
             })
             .collect(),
         pads,
@@ -1456,6 +1477,17 @@ pub fn controller_view(app: AppHandle, title_id: String) -> ControllerView {
                 buttons: backend.button_names().iter().copied().collect(),
             })
             .collect(),
+        keyboard: {
+            use crate::core::keys;
+            KeyboardView {
+                pad: crate::core::pad_layout::Pad::keyboard(),
+                keys: keys::KEYS.iter().map(|(name, _)| *name).collect(),
+                mouse_buttons: keys::MOUSE_BUTTONS.to_vec(),
+                mouse_moves: keys::MOUSE_MOVES.to_vec(),
+                refused: keys::REFUSED.to_vec(),
+                mouse_range: keys::MOUSE_RANGE,
+            }
+        },
     }
 }
 
@@ -1472,12 +1504,14 @@ pub fn save_controller(
     number: usize,
     pad: crate::core::pad_layout::Pad,
     buttons: std::collections::BTreeMap<String, String>,
+    mouse: Option<u32>,
 ) -> Result<(), String> {
     crate::controllers::save_player(
         &app,
         &title_id,
         number,
         crate::core::pad_layout::Player::with_buttons(pad, buttons),
+        mouse,
     )
 }
 
