@@ -6,13 +6,15 @@ import {
   setUpController,
   type ControllerView,
   type Pad,
+  type PlayerSetup,
 } from "../api";
 import { capFace, partOf } from "../components/padArt";
-import { nameOf } from "../components/padNames";
+import { keyNames, keyboardLayout, nameOf, type KeyLayout } from "../components/padNames";
 import {
   DIRECTION,
   FACE,
   GROUPS,
+  KEY_GROUPS,
   MIDDLE,
   SHOULDERS,
   assignInput,
@@ -40,6 +42,90 @@ const NO_PAD: Pad = { device: "", name: "No controller", handler: "None", family
 
 function isNoPad(pad: Pad): boolean {
   return pad.handler === NO_PAD.handler;
+}
+
+/// The keyboard and mouse have a handler of their own in the layout
+/// (core/pad_layout.rs, `KEYBOARD`).
+function isKeyboard(pad: Pad): boolean {
+  return pad.handler === "Keyboard";
+}
+
+/// Something to say once the screen is drawn again, such as why a change was
+/// not saved, as a change draws the whole screen anew.
+let told: string | null = null;
+
+/// The mouse moving each way, for the right stick's directions, which can
+/// have it back after a key was put there.
+const MOUSE_MOVE: Record<string, string> = {
+  "RS Y+": "MouseMoveUp",
+  "RS Y-": "MouseMoveDown",
+  "RS X-": "MouseMoveLeft",
+  "RS X+": "MouseMoveRight",
+};
+
+/// The mouse's buttons by `MouseEvent.button`, named as core/keys.rs names
+/// them.
+const MOUSE_BUTTON = ["MouseLeft", "MouseMiddle", "MouseRight", "MouseBack", "MouseForward"];
+
+/// A second press soon after the click that started a wait is that click
+/// made double, not an answer. Windows' own double-click time is 500 ms by
+/// default.
+const DOUBLE_CLICK_MS = 500;
+
+/// A place as the first console with it calls it, for a line about it:
+/// "Cross on PS3". The directions and the sticks' presses by their own
+/// names, such as "Left stick up".
+function placeName(view: ControllerView, place: string): string {
+  if (DIRECTION[place]) return nameOf("keyboard", place);
+  const named = view.consoles.find((each) => each.buttons[place]);
+  return named ? `${named.buttons[place]} on ${named.name}` : place;
+}
+
+/// Gives a keyboard player's `place` this one input. Another place that had
+/// it loses it, so no key ever does two things by accident, and one left
+/// with nothing takes what `place` had, as a pad's buttons swap. The mouse
+/// moving only ever turns a stick, so it is not handed on. Returns a place
+/// left with nothing even so.
+function giveKey(buttons: Record<string, string>, place: string, input: string): string | null {
+  const was = (buttons[place] ?? "")
+    .split(" ")
+    .filter((each) => each && !Object.values(MOUSE_MOVE).includes(each))
+    .join(" ");
+  let emptied: string | null = null;
+  for (const other of Object.keys(buttons)) {
+    if (other === place) continue;
+    const inputs = buttons[other].split(" ").filter((each) => each);
+    if (!inputs.includes(input)) continue;
+    buttons[other] = inputs.filter((each) => each !== input).join(" ") || was;
+    if (!buttons[other]) emptied = other;
+  }
+  buttons[place] = input;
+  return emptied;
+}
+
+/// Keeps the rest of a mouse press that answered a wait from doing anything
+/// else: its release, the click after it, and the menu a right click opens,
+/// which Windows sends a moment after the release.
+function swallowRestOfPress(): void {
+  const kinds = ["mouseup", "click", "auxclick", "contextmenu"];
+  const done = () => {
+    for (const kind of kinds) window.removeEventListener(kind, eat, true);
+  };
+  function eat(event: Event): void {
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.type === "mouseup") window.setTimeout(done, 250);
+  }
+  for (const kind of kinds) window.addEventListener(kind, eat, true);
+  window.setTimeout(done, LISTEN_MS);
+}
+
+/// A wheel turned one notch sends several events. Once the first has
+/// answered a wait, the rest don't scroll the screen.
+function swallowRestOfWheel(): void {
+  const eat = (event: Event) => event.preventDefault();
+  window.addEventListener("wheel", eat, { capture: true, passive: false });
+  window.setTimeout(() => window.removeEventListener("wheel", eat, true), 300);
 }
 
 function subtitleOf(view: ControllerView): string {
@@ -90,6 +176,275 @@ function playerTab(view: ControllerView, index: number): HTMLButtonElement {
   return tab;
 }
 
+/// Puts the keyboard's focus back where it was before a change drew the
+/// screen again.
+function restoreFocus(content: HTMLElement): void {
+  if (!refocus) return;
+  const again = refocus;
+  refocus = null;
+  requestAnimationFrame(() => content.querySelector<HTMLElement>(`[data-key="${again}"]`)?.focus());
+}
+
+/// A keyboard-and-mouse player: every place in a list with the keys and
+/// mouse inputs on it, each changed by picking it and then pressing a key
+/// or a mouse button, and how fast the mouse turns a stick. `said` is a line
+/// left from before the screen was drawn again.
+function keyboardBoard(
+  view: ControllerView,
+  scope: string,
+  player: PlayerSetup,
+  layout: KeyLayout,
+  head: HTMLElement,
+  content: HTMLElement,
+  said: string | null
+): { parts: HTMLElement[]; how: HTMLElement } {
+  const number = shownPlayer + 1;
+  const buttons: Record<string, string> = { ...player.buttons };
+
+  // Says what a wait for a key wants, and why a key was refused, to screen
+  // readers as well.
+  const live = document.createElement("div");
+  live.className = "note plain key-live";
+  live.setAttribute("aria-live", "polite");
+  live.textContent = said ?? "";
+
+  const save = async (next: Record<string, string>, mouse = player.mouse) => {
+    try {
+      await saveController(scope, number, player.pad, next, mouse);
+    } catch (err) {
+      told = typeof err === "string" ? err : "Couldn't save the controller settings.";
+    }
+    store.redraw();
+  };
+
+  // Only once a key differs from the layout the keyboard starts with, so it
+  // is there exactly when it would do something. No keys saved is that
+  // layout (core/pad_layout.rs, `Player::with_buttons`).
+  if (view.inputs.some((place) => (buttons[place] ?? "") !== (view.keyboard.defaults[place] ?? ""))) {
+    const undo = document.createElement("button");
+    undo.className = "small-btn";
+    undo.dataset.key = "reset-keys";
+    undo.textContent = "Reset keys";
+    undo.onclick = () => {
+      refocus = `player:${shownPlayer}`;
+      void save({});
+    };
+    head.append(undo);
+  }
+
+  const [slowest, fastest] = view.keyboard.mouse_range;
+  const speed = document.createElement("label");
+  speed.className = "key-speed";
+  const range = document.createElement("input");
+  range.type = "range";
+  range.min = String(slowest);
+  range.max = String(fastest);
+  range.step = "10";
+  range.value = String(player.mouse);
+  range.dataset.key = "mouse-speed";
+  const percent = document.createElement("span");
+  percent.className = "key-speed-value";
+  percent.textContent = `${player.mouse}%`;
+  range.oninput = () => (percent.textContent = `${range.value}%`);
+  range.onchange = () => {
+    refocus = "mouse-speed";
+    void save(buttons, Number(range.value));
+  };
+  speed.append("Mouse speed", range, percent);
+
+  const rows = new Map<string, { el: HTMLButtonElement; inputs: HTMLElement }>();
+  let listening: { place: string; since: number; timer: number } | null = null;
+
+  const paint = () => {
+    for (const [place, row] of rows) {
+      const waiting = listening?.place === place;
+      row.el.classList.toggle("listening", waiting);
+      row.inputs.replaceChildren();
+      if (waiting) {
+        const asking = document.createElement("span");
+        asking.className = "pad-asking";
+        asking.textContent = "Press a key or click";
+        row.inputs.append(asking);
+        continue;
+      }
+      const names = keyNames(buttons[place] ?? "", layout);
+      if (names.length === 0) {
+        const nothing = document.createElement("span");
+        nothing.className = "key-or";
+        nothing.textContent = "Nothing";
+        row.inputs.append(nothing);
+      }
+      names.forEach((name, at) => {
+        if (at > 0) {
+          const or = document.createElement("span");
+          or.className = "key-or";
+          or.textContent = "or";
+          row.inputs.append(or);
+        }
+        const cap = document.createElement("span");
+        cap.className = "cap";
+        cap.textContent = name;
+        row.inputs.append(cap);
+      });
+    }
+  };
+
+  // While a place waits, the next key pressed anywhere, or the next mouse
+  // button or wheel turn on this screen, is its answer. The press or click
+  // that picked the place is over by then, as a button is picked once it is
+  // let go, and a key held down repeating is not a new press.
+  const stop = () => {
+    if (!listening) return;
+    window.clearTimeout(listening.timer);
+    listening = null;
+    window.removeEventListener("keydown", onKey, true);
+    window.removeEventListener("mousedown", onMouse, true);
+    window.removeEventListener("wheel", onWheel, true);
+    paint();
+  };
+  const giveUpLater = () =>
+    window.setTimeout(() => {
+      stop();
+      live.textContent = "";
+    }, LISTEN_MS);
+
+  const take = (input: string) => {
+    const place = listening!.place;
+    stop();
+    live.textContent = "";
+    if (buttons[place] === input) return;
+    refocus = `key:${place}`;
+    const next = { ...buttons };
+    const emptied = giveKey(next, place, input);
+    if (emptied) told = `${placeName(view, emptied)} has nothing on it now. Pick it to give it a key.`;
+    void save(next);
+  };
+
+  function onKey(event: KeyboardEvent): void {
+    if (!listening) return;
+    if (!content.isConnected) return stop();
+    // Tab, Space and Backspace would otherwise move the focus, press the
+    // button or scroll while the key is meant for the game.
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.repeat) return;
+    if (event.code === "Escape") {
+      stop();
+      live.textContent = "";
+      return;
+    }
+    const refused = view.keyboard.refused.find(([code]) => code === event.code);
+    if (refused || !view.keyboard.keys.includes(event.code)) {
+      live.textContent = refused ? refused[1] : "That key belongs to Windows or the emulators, so it can't be a button.";
+      window.clearTimeout(listening.timer);
+      listening.timer = giveUpLater();
+      return;
+    }
+    take(event.code);
+  }
+
+  function onMouse(event: MouseEvent): void {
+    if (!listening) return;
+    if (!content.isConnected) return stop();
+    // A click elsewhere, such as on the sidebar, does what it was meant to
+    // and stops the wait.
+    if (!(event.target instanceof Node) || !content.contains(event.target)) {
+      stop();
+      live.textContent = "";
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    swallowRestOfPress();
+    if (event.detail > 1 && Date.now() - listening.since < DOUBLE_CLICK_MS) return;
+    const input = MOUSE_BUTTON[event.button];
+    if (input) take(input);
+  }
+
+  function onWheel(event: WheelEvent): void {
+    if (!listening) return;
+    if (!content.isConnected) return stop();
+    if (!(event.target instanceof Node) || !content.contains(event.target) || event.deltaY === 0) return;
+    event.preventDefault();
+    swallowRestOfWheel();
+    take(event.deltaY < 0 ? "WheelUp" : "WheelDown");
+  }
+
+  const listen = (place: string) => {
+    stop();
+    listening = { place, since: Date.now(), timer: giveUpLater() };
+    window.addEventListener("keydown", onKey, true);
+    window.addEventListener("mousedown", onMouse, true);
+    window.addEventListener("wheel", onWheel, { capture: true, passive: false });
+    live.textContent = "Press a key or click. Escape stops.";
+    paint();
+  };
+
+  const row = (place: string, words: HTMLElement): HTMLElement => {
+    const line = document.createElement("div");
+    line.className = "key-row";
+    const el = document.createElement("button");
+    el.className = "key-place";
+    el.dataset.key = `key:${place}`;
+    const inputs = document.createElement("span");
+    inputs.className = "key-inputs";
+    el.append(words, inputs);
+    el.onclick = () => listen(place);
+    rows.set(place, { el, inputs });
+    line.append(el);
+    const move = MOUSE_MOVE[place];
+    if (move && !(buttons[place] ?? "").split(" ").includes(move)) {
+      const mouse = document.createElement("button");
+      mouse.className = "link-btn key-mouse";
+      mouse.dataset.key = `mouse:${place}`;
+      mouse.textContent = "Use the mouse";
+      mouse.onclick = () => {
+        const next = { ...buttons };
+        giveKey(next, place, move);
+        refocus = `key:${place}`;
+        void save(next);
+      };
+      line.append(mouse);
+    }
+    return line;
+  };
+
+  const groups = document.createElement("div");
+  groups.className = "key-groups";
+  for (const group of KEY_GROUPS) {
+    const box = document.createElement("div");
+    box.className = "key-group";
+    const heading = document.createElement("div");
+    heading.className = "sec-h";
+    heading.textContent = group.title;
+    box.append(heading);
+    for (const place of group.places) {
+      // Within a direction group the direction alone says enough, and a
+      // stick's press says what it is on each console, as on a pad's list.
+      const pressed = place === "LS" || place === "RS";
+      let words: HTMLElement;
+      if (DIRECTION[place] && !pressed) {
+        words = document.createElement("span");
+        words.className = "pad-words";
+        words.textContent = DIRECTION[place];
+      } else {
+        words = consoleWords(view.consoles, place);
+        if (pressed) words.prepend(`${DIRECTION[place]} `);
+      }
+      box.append(row(place, words));
+    }
+    groups.append(box);
+  }
+  paint();
+
+  const how = document.createElement("div");
+  how.className = "note plain";
+  how.textContent =
+    "The mouse aims on PS3 and Wii. On Wii U the mouse can't aim or click yet, so the arrow keys turn the right stick and each button answers only its key, such as J, K or L. Insert opens the portal menu, and changes take effect the next time a game starts.";
+
+  return { parts: [speed, live, groups], how };
+}
+
 export async function renderController(): Promise<View> {
   const scope = store.get().controllerScope ?? "";
   const view = await controllerView(scope);
@@ -99,6 +454,8 @@ export async function renderController(): Promise<View> {
 
   const note = document.createElement("div");
   note.className = "note plain";
+  const said = told;
+  told = null;
 
   const head = document.createElement("div");
   head.className = "pad-top";
@@ -167,20 +524,27 @@ export async function renderController(): Promise<View> {
   picker.className = "select";
   picker.setAttribute("aria-label", `Pad for player ${shownPlayer + 1}`);
   for (const option of view.pads) {
-    if (isNoPad(option)) continue;
+    if (isNoPad(option) || isKeyboard(option)) continue;
     const isIn = view.connected.some((c) => c.device === option.device);
     picker.add(new Option(isIn ? `${option.name} (plugged in)` : option.name, option.device));
   }
+  picker.add(new Option(view.keyboard.pad.name, view.keyboard.pad.device));
   picker.add(new Option(NO_PAD.name, NO_PAD.device));
   picker.value = none ? NO_PAD.device : pad.device;
   picker.onchange = async () => {
-    const chosen = picker.value === NO_PAD.device ? NO_PAD : view.pads.find((p) => p.device === picker.value);
+    const chosen =
+      picker.value === NO_PAD.device
+        ? NO_PAD
+        : picker.value === view.keyboard.pad.device
+          ? view.keyboard.pad
+          : view.pads.find((p) => p.device === picker.value);
     if (!chosen) return;
+    // Between the keyboard and a pad, the buttons go with the device
+    // (core/pad_layout.rs, `give`).
     try {
       await saveController(scope, shownPlayer + 1, chosen, player.buttons);
-      note.textContent = "";
     } catch (err) {
-      note.textContent = typeof err === "string" ? err : "Couldn't save the controller settings.";
+      told = typeof err === "string" ? err : "Couldn't save the controller settings.";
     }
     store.redraw();
   };
@@ -194,6 +558,16 @@ export async function renderController(): Promise<View> {
   how.className = "note plain";
   how.textContent =
     "One layout works in every emulator. A pad plugged in that no player has takes the place of the first player whose pad is missing when you press Play. A player set to No controller keeps none. A virtual joystick such as vJoy only plays once you pick it. Changes take effect the next time a game starts.";
+
+  if (isKeyboard(pad)) {
+    const layout = await keyboardLayout();
+    const { parts, how } = keyboardBoard(view, scope, player, layout, boardHead, content, said);
+    board.append(boardHead, ...parts);
+    content.append(board, how);
+    restoreFocus(content);
+    return { title: "Controller", subtitle: subtitleOf(view), content };
+  }
+  note.textContent = said ?? "";
 
   // A player with no controller has no buttons to show or test, and the
   // layout they had is kept for when they get a pad again.
@@ -386,12 +760,7 @@ export async function renderController(): Promise<View> {
   content.appendChild(board);
 
   content.appendChild(how);
-
-  if (refocus) {
-    const again = refocus;
-    refocus = null;
-    requestAnimationFrame(() => content.querySelector<HTMLElement>(`[data-key="${again}"]`)?.focus());
-  }
+  restoreFocus(content);
 
   // While this screen is up, the pad is read several times a second: what is
   // held lights on the drawing and on its label, and a label waiting for a
