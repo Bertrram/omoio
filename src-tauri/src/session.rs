@@ -367,6 +367,21 @@ pub fn quiet_game(app: &AppHandle) {
         }
         if portal {
             backend.ready_portal(pid);
+            // Cemu reads keys in whichever of its windows is active
+            // (`CemuApp::FilterEvent`, CemuApp.cpp lines 389 to 409, v2.6),
+            // and its portal window takes the front as it opens
+            // (MainWindow.cpp lines 1500 to 1517), before the input settings
+            // window that keeps the game deaf is up. So a keyboard player's
+            // arrow keys meant for the menu could reach the game until `hush`
+            // was done (read in the source on 20 October 2026, not yet seen).
+            // The menu takes the front back at once, which makes Cemu let go
+            // of every key (lines 401 to 405). Only for a keyboard player, so
+            // nothing changes for a pad.
+            if crate::controllers::keyboard_plays(&app, &playing.title_id) {
+                if let Some(window) = app.get_webview_window("portal") {
+                    let _ = window.set_focus();
+                }
+            }
         }
         if backend.hush(pid, over).is_ok() && over {
             if let Some(window) = app.get_webview_window(if portal { "portal" } else { "main" }) {
