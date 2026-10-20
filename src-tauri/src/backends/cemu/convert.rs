@@ -87,6 +87,8 @@ pub fn make_wua(
     let before = std::fs::read_to_string(settings).map_err(|_| "Couldn't read Cemu's settings.".to_string())?;
     let ours = format!("<GamePaths>\n        <Entry>{}</Entry>\n    </GamePaths>", escaped(&folder.to_string_lossy()));
     let mut text = with_game_paths(&before, &ours);
+    // The Title Manager's labels are found by their English names.
+    text = super::set_setting(&text, &[], "language", super::ENGLISH);
     text = super::set_setting(&text, &["window_position"], "x", super::OFF_SCREEN);
     text = super::set_setting(&text, &["window_position"], "y", super::OFF_SCREEN);
     std::fs::write(settings, text).map_err(|_| "Couldn't change Cemu's settings.".to_string())?;

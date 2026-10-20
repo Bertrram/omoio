@@ -712,9 +712,13 @@ fn read_meta(xml: &str) -> Result<(String, String, Option<String>), String> {
 /// that leaves it out is read as OpenGL (`CemuConfig.cpp`), while a Cemu that
 /// went through its own first start uses Vulkan. Cemu's own update check is
 /// off because Omoio keeps it up to date, and a prompt from Cemu would land
-/// on top of the game. Everything else is Cemu's default.
+/// on top of the game. Its language is English (`ENGLISH`), since a Cemu
+/// starting with no settings.xml takes Windows' language whatever the file
+/// written later says (`CemuApp::OnInit`, CemuApp.cpp lines 264 to 275,
+/// v2.6). Everything else is Cemu's default.
 const FIRST_SETTINGS: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
 <content>\n\
+\x20   <language>175</language>\n\
 \x20   <check_update>false</check_update>\n\
 \x20   <Graphic>\n\
 \x20       <api>1</api>\n\
@@ -791,10 +795,33 @@ fn set_setting(text: &str, parents: &[&str], name: &str, value: &str) -> String 
 /// Windows uses for a minimised window.
 const OFF_SCREEN: &str = "-30000";
 
+/// Cemu's language setting for English: `wxLANGUAGE_ENGLISH`, 175 in the
+/// wxWidgets Cemu v2.6 is built with, 3.2.5 (vcpkg.json's builtin-baseline
+/// a4275b7, whose ports/wxwidgets is 3.2.5; include/wx/language.h at
+/// v3.2.5, counted and checked against misc/languages/genlang.py; read 20
+/// October 2026). wxWidgets 3.3 numbers it 177, so a Cemu built on it needs
+/// this read again.
+///
+/// Omoio finds Cemu's windows, menu items and buttons by their English names
+/// (portal.rs, convert.rs), and Cemu shows its interface in Windows' own
+/// language when its setting is the default, 0 (`CemuApp::OnInit`, lines
+/// 264 to 275). Its release ships 18 translations (bin/resources/<lang>/
+/// cemu.mo), so on a Spanish or German Windows the portal menu found
+/// nothing it knew (Discord, perecisas, 16 October 2026). English has no
+/// catalogue, and `CemuApp::LocalizeUI` (lines 417 to 436) loads none for a
+/// language without one, so the interface stays in the English it is
+/// written in. 175 is also what Cemu's own settings window saves for
+/// English (GeneralSettings2.cpp lines 960 to 973), so the setting survives
+/// a save from there; `wxLANGUAGE_ENGLISH_US` would read as English too but
+/// matches no entry in that list and is saved back as 0.
+const ENGLISH: &str = "175";
+
 /// What Omoio sets in Cemu's settings.xml before each game. Cemu v2.6 reads
 /// all of these at start (`CemuConfig.cpp`), and a user's own sound device is
 /// never replaced.
 ///
+/// - Cemu's interface is in English (`ENGLISH`), which Omoio finds its
+///   windows and buttons by.
 /// - The Skylanders portal is plugged in for a Skylanders game only. Cemu
 ///   leaves it out, and a game finds only a portal that is there.
 /// - Cemu starts windowed. Omoio places the picture itself, and Cemu keeps
@@ -814,7 +841,8 @@ const OFF_SCREEN: &str = "-30000";
 fn tune_settings(settings: &Path, skylanders: bool) -> std::io::Result<()> {
     let before = std::fs::read_to_string(settings)?;
     let portal = if skylanders { "true" } else { "false" };
-    let mut text = set_setting(&before, &["EmulatedUsbDevices"], "EmulateSkylanderPortal", portal);
+    let mut text = set_setting(&before, &[], "language", ENGLISH);
+    text = set_setting(&text, &["EmulatedUsbDevices"], "EmulateSkylanderPortal", portal);
     text = set_setting(&text, &[], "fullscreen", "false");
     text = set_setting(&text, &[], "window_maximized", "false");
     text = set_setting(&text, &["window_position"], "x", OFF_SCREEN);
@@ -1558,6 +1586,15 @@ Deluxe");
     }
 
     #[test]
+    fn cemu_is_set_to_english_over_windows_language() {
+        assert!(FIRST_SETTINGS.contains(&format!("<language>{ENGLISH}</language>")));
+        let system = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<content>\n    <language>0</language>\n</content>\n";
+        let text = set_setting(system, &[], "language", ENGLISH);
+        assert_eq!(text.matches("<language>").count(), 1, "{text}");
+        assert!(text.contains("<language>175</language>"), "{text}");
+    }
+
+    #[test]
     fn settings_are_switched_in_place_or_added() {
         let dir = scratch("portal");
         let file = dir.join("settings.xml");
@@ -1573,6 +1610,7 @@ Deluxe");
         assert!(text.contains("<window_position><x>-30000</x>"), "{text}");
         assert!(text.contains("<TVVolume>100</TVVolume>"), "{text}");
         assert!(text.contains("<y>-30000</y>"), "{text}");
+        assert_eq!(text.matches("<language>175</language>").count(), 1, "{text}");
 
         tune_settings(&file, false).unwrap();
         let text = std::fs::read_to_string(&file).unwrap();
