@@ -115,10 +115,23 @@ fn copies(exe: &Path) -> (sysinfo::System, Vec<sysinfo::Pid>) {
         true,
         ProcessRefreshKind::nothing().with_exe(UpdateKind::OnlyIfNotSet),
     );
+    // Compared with every link followed: Windows reports a running program
+    // by the path it found it at, and a folder on the way may be a link, as
+    // Omoio's own data folder is on one PC (seen 20 October 2026: Omoio took
+    // a running game's RPCS3 for none, started `rpcs3 --version` beside it to
+    // learn its version, and RPCS3 0.0.43-20351 met it with "Another instance
+    // of RPCS3 is running", which held the portal menu up).
+    let wanted = std::fs::canonicalize(exe).ok();
+    let same = |own: &Path| {
+        own.as_os_str().eq_ignore_ascii_case(exe.as_os_str())
+            || (own.file_name() == exe.file_name()
+                && wanted.is_some()
+                && std::fs::canonicalize(own).ok() == wanted)
+    };
     let ours = system
         .processes()
         .iter()
-        .filter(|(_, process)| process.exe().is_some_and(|own| own.as_os_str().eq_ignore_ascii_case(exe.as_os_str())))
+        .filter(|(_, process)| process.exe().is_some_and(same))
         .map(|(&pid, _)| pid)
         .collect();
     (system, ours)
