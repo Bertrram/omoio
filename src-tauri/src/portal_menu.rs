@@ -80,12 +80,13 @@ const MENU_KEY: VIRTUAL_KEY = VK_INSERT;
 /// reached either. Tab is on every keyboard and is no key a player can be
 /// given (core/keys.rs). It counts only with the game's window or the menu
 /// in front, so it still moves between buttons in Omoio's own window, and
-/// never with Alt, Shift or Ctrl held, so Alt+Tab still switches programs.
-/// None of the emulators gives it a job in Omoio's setup: Dolphin's Tab
-/// hotkey is left out of the Hotkeys.ini Omoio writes
-/// (backends/dolphin/settings.rs, `quiet_hotkeys`), and RPCS3 and Cemu have
-/// none (rpcs3qt/shortcut_settings.cpp lines 73 to 94, build 0.0.43-20344;
-/// MainWindow::OnKeyUp, Cemu v2.6).
+/// never with Alt or Ctrl held, so Alt+Tab still switches programs. Shift is
+/// let through: a keyboard player holds it for the left stick's press
+/// (core/keys.rs). None of the emulators gives Tab a job in Omoio's setup,
+/// with Shift or without: Dolphin's Tab hotkey is left out of the
+/// Hotkeys.ini Omoio writes (backends/dolphin/settings.rs, `quiet_hotkeys`),
+/// and RPCS3 and Cemu have none (rpcs3qt/shortcut_settings.cpp lines 73 to
+/// 94, build 0.0.43-20344; MainWindow::OnKeyUp, Cemu v2.6).
 const SECOND_MENU_KEY: VIRTUAL_KEY = VK_TAB;
 
 /// Whether the menu key went down since the last look, from whether it was
@@ -728,7 +729,7 @@ pub fn watch(app: AppHandle, pid: u32) {
             let by_pad = now && !was;
             let by_key = (key && !with_shift_or_ctrl() && omoio_or_game_in_front(session.window()))
                 || (second
-                    && !with_shift_or_ctrl()
+                    && !key_held(VK_CONTROL)
                     && !key_held(VK_MENU)
                     && game_or_menu_in_front(&app, session.window()));
             if by_pad || by_key {
