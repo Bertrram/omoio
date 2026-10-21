@@ -310,7 +310,7 @@ fn layout_vk(scan: u16) -> u32 {
 /// pad (`Reader::Dsu`), the mouse moving is the arrow keys in Cemu, and the
 /// right stick, which the mouse moves by default, is on the arrows. The
 /// mouse's buttons and wheel have no stand-in, and are left out; the default
-/// layout has J, K and L beside them on the face buttons.
+/// layout has keys beside them on the face buttons (J, K and E).
 fn arrow_for(input: &str) -> Option<VIRTUAL_KEY> {
     Some(match input {
         "MouseMoveLeft" => VK_LEFT,
@@ -1221,7 +1221,7 @@ mod tests {
     #[test]
     fn a_keyboard_player_one_is_cemus_keyboard_as_the_gamepad() {
         let entries: String = [
-            (1, b'L'), (2, b' '), (3, b'K'), (4, b'J'), (5, b'Q'), (6, b'E'), (7, b'R'), (8, b'F'), (9, 0x0D),
+            (1, b'E'), (2, b' '), (3, b'K'), (4, b'J'), (5, b'Q'), (6, b'R'), (7, b'F'), (8, b'G'), (9, 0x0D),
             (10, 0x08), (11, b'1'), (12, b'3'), (13, b'4'), (14, b'2'), (15, 160), (16, b'C'), (17, b'W'), (18, b'S'),
             (19, b'A'), (20, b'D'), (21, 0x26), (22, 0x28), (23, 0x25), (24, 0x27),
         ]
@@ -1238,7 +1238,7 @@ mod tests {
              \t\t<trigger>\n\t\t\t<deadzone>0.25</deadzone>\n\t\t\t<range>1</range>\n\t\t</trigger>\n\
              \t\t<mappings>\n{entries}\t\t</mappings>\n\t</controller>\n</emulated_controller>\n"
         );
-        // The face buttons take J, K and L, beside the mouse buttons Cemu
+        // The face buttons take J, K and E, beside the mouse buttons Cemu
         // can't read; the right stick is on the arrows; Guide has no key.
         let text = profile(Kind::for_player(0), &Player::on(Pad::keyboard()), Some(&keyboard_on(us)), false);
         assert_eq!(text, expected);

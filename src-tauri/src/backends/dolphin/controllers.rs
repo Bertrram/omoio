@@ -1289,7 +1289,7 @@ mod tests {
             "[Wiimote1]\r\n\
              Device = DInput/0/Keyboard Mouse\r\n\
              Buttons/A = `SPACE`\r\n\
-             Buttons/B = `Click 2` | `L`\r\n\
+             Buttons/B = `E` | `Click 2`\r\n\
              Buttons/1 = `Q`\r\n\
              Buttons/2 = `LSHIFT`\r\n\
              Buttons/- = `BACK`\r\n\
@@ -1302,12 +1302,12 @@ mod tests {
              IR/Down = `Cursor Y+`\r\n\
              IR/Left = `Cursor X-`\r\n\
              IR/Right = `Cursor X+`\r\n\
-             Shake/X = `E`\r\n\
-             Shake/Y = `E`\r\n\
-             Shake/Z = `E`\r\n\
-             Swing/Forward = `F`\r\n\
+             Shake/X = `R`\r\n\
+             Shake/Y = `R`\r\n\
+             Shake/Z = `R`\r\n\
+             Swing/Forward = `G`\r\n\
              Nunchuk/Buttons/C = `Click 1` | `K`\r\n\
-             Nunchuk/Buttons/Z = `Click 0` | `J` | `R`\r\n\
+             Nunchuk/Buttons/Z = `Click 0` | `J` | `F`\r\n\
              Nunchuk/Stick/Up = `W`\r\n\
              Nunchuk/Stick/Down = `S`\r\n\
              Nunchuk/Stick/Left = `A`\r\n\
@@ -1330,7 +1330,7 @@ mod tests {
         assert!(has("C-Stick/Right = smooth(min(`RelativeMouse X+` * 0.125, 1), 0.01, 0.05)"), "{lines:?}");
         assert!(has("Buttons/X = `Click 0` | `J`"), "{lines:?}");
         assert!(has("Main Stick/Left = `A`"), "{lines:?}");
-        assert!(has("Triggers/R-Analog = `F`"), "{lines:?}");
+        assert!(has("Triggers/R-Analog = `G`"), "{lines:?}");
         assert!(!lines.iter().any(|line| line.starts_with("Rumble")), "{lines:?}");
         let slower = Player::on(Pad::keyboard()).with_mouse(50);
         let lines = super::lines(Console::GameCube, &slower, Some(KEYBOARD_MOUSE), true);

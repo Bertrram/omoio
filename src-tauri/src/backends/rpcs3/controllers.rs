@@ -1061,10 +1061,10 @@ mod tests {
         assert_eq!(
             text,
             "Player 1 Input:\n  Handler: Keyboard\n  Device: \"Keyboard\"\n  Buddy Device: \"\"\n  Config:\n    \
-             Cross: \"Space\"\n    Circle: \"Mouse Middle,L\"\n    Square: \"Mouse Left,J\"\n    \
+             Cross: \"Space\"\n    Circle: \"E,Mouse Middle\"\n    Square: \"Mouse Left,J\"\n    \
              Triangle: \"Mouse Right,K\"\n    \
              Up: \"1\"\n    Down: \"3\"\n    Left: \"4\"\n    Right: \"2\"\n    \
-             L1: \"Q\"\n    L2: \"R\"\n    L3: \"Shift Left\"\n    R1: \"E\"\n    R2: \"F\"\n    R3: \"C\"\n    \
+             L1: \"Q\"\n    L2: \"F\"\n    L3: \"Shift Left\"\n    R1: \"R\"\n    R2: \"G\"\n    R3: \"C\"\n    \
              Start: \"Return\"\n    Select: \"Backspace\"\n    PS Button: \"\"\n    \
              Left Stick Left: \"A\"\n    Left Stick Right: \"D\"\n    \
              Left Stick Up: \"W\"\n    Left Stick Down: \"S\"\n    \

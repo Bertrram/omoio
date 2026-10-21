@@ -150,9 +150,15 @@ pub fn known(input: &str) -> bool {
 ///
 /// The left stick is W, A, S and D, which PC games use for walking, and the
 /// right stick is the mouse moving, for aiming and turning the camera. The
-/// face buttons are under the right hand on the mouse, and again on J, K and
-/// L for anyone who would rather keep the mouse still. The shoulders sit
-/// around W, under the left hand. The d-pad is on 1 to 4, in the order up,
+/// two attack buttons a game leans on most, West and North, are the mouse's
+/// left and right buttons, and again J and K for anyone who would rather
+/// keep the mouse still. East is E, the key PC games use to use or confirm,
+/// since it is the Wii U's A, which its menus confirm with; middle click is
+/// there too. Enter stays Start: on a PS3 East is Circle, which backs out of
+/// menus there, so Enter on it would cancel where a player means to go on
+/// (Bertram, 21 October 2026, after J, K and L felt wrong in play). The
+/// shoulders sit beside W, Q and R, and the triggers under them, F and G.
+/// The d-pad is on 1 to 4, in the order up,
 /// right, down, left, clockwise as on the pad. Back is on Backspace rather
 /// than Tab: Dolphin's own hotkeys turn its speed limit off while Tab is
 /// held (HotkeyManager.cpp line 433, `HK_TOGGLE_THROTTLE` on TAB, and
@@ -169,11 +175,11 @@ pub fn default_input(place: &str) -> &'static str {
         "South" => "Space",
         "West" => "MouseLeft KeyJ",
         "North" => "MouseRight KeyK",
-        "East" => "MouseMiddle KeyL",
+        "East" => "KeyE MouseMiddle",
         "LB" => "KeyQ",
-        "RB" => "KeyE",
-        "LT" => "KeyR",
-        "RT" => "KeyF",
+        "RB" => "KeyR",
+        "LT" => "KeyF",
+        "RT" => "KeyG",
         "LS" => "ShiftLeft",
         "RS" => "KeyC",
         "Start" => "Enter",
