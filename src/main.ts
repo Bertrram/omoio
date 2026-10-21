@@ -6,6 +6,7 @@ import {
   fetchCovers,
   getFirmwareVersion,
   getRpcs3Version,
+  libraryNotice,
   listGames,
   onBigPicture,
   onGameFullscreen,
@@ -155,6 +156,10 @@ getFirmwareVersion().then((version) => store.setFirmwareVersion(version));
 // window opens go to showing it.
 listGames()
   .then((games) => store.setGames(games))
+  .then(libraryNotice)
+  .then((notice) => {
+    if (notice) store.setNotice(notice);
+  })
   .finally(startUpdateChecks);
 playingGame().then((playing) => store.setPlaying(playing));
 bigPicture().then((state) => store.setBigPicture(state));

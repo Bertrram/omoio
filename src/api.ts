@@ -105,6 +105,11 @@ export function listGames(): Promise<Game[]> {
   return invoke("list_games");
 }
 
+/// Set once when reading the library had to keep a copy of it, otherwise null.
+export function libraryNotice(): Promise<string | null> {
+  return invoke("library_notice");
+}
+
 export function importGame(path: string): Promise<Game> {
   return invoke("import_game", { path });
 }

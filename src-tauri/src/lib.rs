@@ -86,6 +86,7 @@ pub fn run() {
             commands::get_firmware_version,
             commands::install_firmware,
             commands::list_games,
+            commands::library_notice,
             commands::import_game,
             commands::import_check,
             commands::game_warning,

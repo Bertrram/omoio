@@ -2,7 +2,7 @@ use crate::archive;
 use crate::backends::{rpcs3, EmulatorBackend};
 use crate::core::console::Console;
 use crate::core::import_warning::{self, Imported, List, Warning};
-use crate::core::library::Library;
+use crate::core::library::{Kept, Library};
 use crate::core::playlog::{self, Session as PlaySession};
 use crate::core::settings::Settings;
 use crate::core::types::{GameEntry, HardwareInfo, Progress};
@@ -462,6 +462,17 @@ pub fn catalogue(
 pub fn list_games(app: AppHandle) -> Result<Vec<GameEntry>, String> {
     let library = Library::load(&library_path(&app)?);
     Ok(library.games().iter().cloned().map(|g| entry(&app, g)).collect())
+}
+
+/// Said once over the library when loading it had to keep a copy of the file
+/// or take one back, so a list that came back short is never a mystery.
+#[tauri::command]
+pub fn library_notice() -> Option<&'static str> {
+    Library::take_notice().map(|kept| match kept {
+        Kept::Restored => "Your game list was missing, so Omoio brought it back from the copy it kept.",
+        Kept::Partly => "Omoio couldn't read part of your game list, so it kept a copy and loaded what it could.",
+        Kept::Whole => "Omoio couldn't read your game list, so it kept a copy and started a new one.",
+    })
 }
 
 /// Every console's compatibility list, from the copies Omoio keeps. A list
