@@ -13,13 +13,14 @@
 //! knows the case, in Cemu's otherwise, and never with a path, which goes in
 //! the session's log only.
 
-use super::portal::{self, children, class, close, is_message, main_window, out_of_sight, until, windows_of};
+use super::portal::{self, children, class, close, is_message, main_window, out_of_sight, title, until, windows_of};
 use crate::backends::qt::{self, Automation};
 use std::process::Child;
 use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
-use windows::Win32::Foundation::HWND;
+use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::UI::Accessibility::UIA_TextControlTypeId;
+use windows::Win32::UI::WindowsAndMessaging::{PostMessageW, IDYES, WM_USER};
 
 /// How long after Cemu starts its messages are looked for. Cemu refuses a
 /// game as it starts (`FileLoad`, posted from `MainWindow`'s constructor,
@@ -54,6 +55,33 @@ const NO_KEY: &str = "Cemu couldn't read this disc image because its key isn't a
                       Add this disc's key under Emulators, Cemu, then start the game again.";
 const UNREAD: &str = "Cemu couldn't start the game.";
 
+/// Cemu's one question while a game starts, asked when the game has a
+/// shader cache only from before Cemu 1.25.0 and none newer
+/// (`LatteShaderCache_handleDeprecatedCacheFiles`, `LatteShaderCache.cpp`
+/// lines 906 to 928, called at line 366, Cemu v2.6). Cemu waits for the
+/// answer before the game goes on, and its window is off the screen, so
+/// nobody could give one and the start hung. Omoio gives Cemu's own
+/// recommended answer, Yes, labelled "Delete outdated cache file
+/// [recommended]": the old file is one Cemu "will no longer" use (Cemu's
+/// words in the question). Known by its caption in English, the language
+/// Omoio starts Cemu in (`ENGLISH` in mod.rs), or in any other language by
+/// the version its words name: every translation Cemu 2.6 ships that has
+/// the question keeps "1.25.0" (resources/<language>/cemu.mo, read 21
+/// October 2026), and no other message of Cemu's names it.
+const CACHE_QUESTION: &str = "Outdated shader cache";
+const CACHE_VERSION: &str = "1.25.0";
+const CACHE_ANSWER: &str = "Delete outdated cache file";
+
+/// Clicks a task dialog's button by its id ("TDM_CLICK_BUTTON message",
+/// Microsoft Learn, read 21 October 2026; `WM_USER + 102` in CommCtrl.h).
+/// wxWidgets gives a question's Yes button the id IDYES even under a label
+/// of Cemu's own (`AddTaskDialogButton`, `msgdlg.cpp` lines 761 to 783,
+/// wxWidgets 3.2.5). Only a number travels, so it works across processes
+/// and with the dialog off the screen; the buttons' own control ids are 0,
+/// so pressing one as `portal::press` does finds nothing (both seen with a
+/// task dialog built as wxWidgets builds this one, 21 October 2026).
+const TDM_CLICK_BUTTON: u32 = WM_USER + 102;
+
 /// Why Cemu didn't start a game.
 pub struct Refusal {
     /// What the person playing is told, without any path.
@@ -67,6 +95,8 @@ struct Heard {
     pid: u32,
     at: Instant,
     ends_game: bool,
+    /// The answer Omoio gave, for a question; never why a game didn't start.
+    answer: Option<&'static str>,
     refusal: Refusal,
 }
 
@@ -82,19 +112,28 @@ fn heard() -> std::sync::MutexGuard<'static, Vec<Heard>> {
 /// `notes`.
 pub fn take(pid: u32) -> Option<Refusal> {
     let mut all = heard();
-    let at = all.iter().rposition(|said| said.pid == pid && counts(said.ends_game, said.at.elapsed()))?;
+    let at = all
+        .iter()
+        .rposition(|said| said.pid == pid && said.answer.is_none() && counts(said.ends_game, said.at.elapsed()))?;
     Some(all.remove(at).refusal)
 }
 
 /// Every other message the Cemu that was `pid` put up and Omoio closed, such
-/// as a graphic pack that couldn't be applied, for the log kept of the game,
-/// so what was closed unseen is still there to read. Forgets them.
+/// as a graphic pack that couldn't be applied, and every question Omoio
+/// answered, for the log kept of the game, so what was closed unseen is
+/// still there to read. Forgets them.
 pub fn notes(pid: u32) -> Vec<String> {
     let mut all = heard();
     let (mine, others): (Vec<Heard>, Vec<Heard>) = all.drain(..).partition(|said| said.pid == pid);
     *all = others;
     mine.into_iter()
-        .map(|said| format!("Omoio closed a message from Cemu: {}", said.refusal.said.replace('\n', " ")))
+        .map(|said| {
+            let words = said.refusal.said.replace('\n', " ");
+            match said.answer {
+                Some(answer) => format!("Omoio answered a question from Cemu with \"{answer}\": {words}"),
+                None => format!("Omoio closed a message from Cemu: {words}"),
+            }
+        })
         .collect()
 }
 
@@ -114,12 +153,12 @@ fn counts(ends_game: bool, since: Duration) -> bool {
 /// a text whose id is ContentText (seen 20 October 2026). A message with
 /// only OK really has one Cancel button labelled OK, so closing the window
 /// answers it as OK (lines 735 to 748, and `ShowModal`, lines 563 to 571).
-/// A question has two buttons and can't be closed that way, so it is left
-/// as it is: Cemu's one question while a game starts, whether to delete an
-/// outdated shader cache (`LatteShaderCache.cpp` lines 905 to 928, v2.6), is
-/// not an error. The portal menu's errands read Cemu's messages for
-/// themselves (`portal::dismiss_message`), so while one is under way nothing
-/// is touched here.
+/// A question has two buttons and can't be closed that way. Cemu's one
+/// question while a game starts, whether to delete an outdated shader cache,
+/// is not an error and is answered as Cemu recommends (`CACHE_QUESTION`);
+/// any other question is left as it is. The portal menu's errands read
+/// Cemu's messages for themselves (`portal::dismiss_message`), so while one
+/// is under way nothing is touched here.
 pub fn watch(mut cemu: Child, game: String) {
     std::thread::spawn(move || {
         let pid = cemu.id();
@@ -140,15 +179,41 @@ pub fn watch(mut cemu: Child, game: String) {
             };
             // A message newly shown may not have its buttons or its words yet,
             // so it is looked at again until it does.
-            match buttons(message) {
+            let question = match buttons(message) {
                 0 => continue,
-                1 => {}
+                1 => false,
+                2 => true,
                 _ => {
                     seen.push(message.0 as isize);
                     continue;
                 }
-            }
+            };
             let said = read(automation.as_ref(), message);
+            if question {
+                let caption = title(message);
+                if !is_cache_question(&caption, &said, &game) {
+                    // Its words may not be there yet; it is looked at again
+                    // until they are.
+                    if !said.trim().is_empty() {
+                        seen.push(message.0 as isize);
+                    }
+                    continue;
+                }
+                seen.push(message.0 as isize);
+                out_of_sight(message);
+                let _ = unsafe { PostMessageW(Some(message), TDM_CLICK_BUTTON, WPARAM(IDYES.0 as usize), LPARAM(0)) };
+                heard().push(Heard {
+                    pid,
+                    at: Instant::now(),
+                    ends_game: false,
+                    answer: Some(CACHE_ANSWER),
+                    refusal: Refusal {
+                        shown: String::new(),
+                        said: if said.trim().is_empty() { caption } else { said },
+                    },
+                });
+                continue;
+            }
             if said.trim().is_empty() {
                 continue;
             }
@@ -161,6 +226,7 @@ pub fn watch(mut cemu: Child, game: String) {
                 pid,
                 at: Instant::now(),
                 ends_game,
+                answer: None,
                 refusal: Refusal { shown: understood.shown, said },
             });
             if ends_game {
@@ -206,6 +272,14 @@ fn is_box(window: HWND) -> bool {
 /// October 2026), so they are counted without reading their words.
 fn buttons(message: HWND) -> usize {
     children(message).into_iter().filter(|&child| class(child) == "Button").count()
+}
+
+/// Whether a question with this caption and these words is Cemu's question
+/// about an outdated shader cache. Paths are left out of the words first: a
+/// folder named after a Cemu version must not make another question look
+/// like this one.
+fn is_cache_question(caption: &str, said: &str, game: &str) -> bool {
+    caption == CACHE_QUESTION || plain_words(said, game).contains(CACHE_VERSION)
 }
 
 /// All a message says. A plain message box keeps its text in a Static.
@@ -462,11 +536,50 @@ mod tests {
     }
 
     #[test]
+    fn the_shader_cache_question_is_known_in_any_language_and_no_other_is() {
+        // Cemu 2.6's English, and its German from resources/de/cemu.mo, as
+        // the task dialog shows them (wxWidgets puts the whole message in
+        // its content, as it has no blank line after the first).
+        let english = "Cemu detected that the shader cache for this game is outdated.\n\
+                       Only shader caches generated with Cemu 1.25.0 or above are supported.\n\n\
+                       We recommend deleting the outdated cache file as it will no longer be used by Cemu.";
+        assert!(is_cache_question("Outdated shader cache", english, GAME));
+        assert!(is_cache_question("Outdated shader cache", "", GAME), "before its words are there");
+        let german = "Cemu erkannte dass der Shader-Zwischenspeicher für dieses Spiel veraltet ist.\n\
+                      Nur Shader-Zwischenspeicher die mit Cemu 1.25.0 oder höher generiert wurden sind unterstützt.";
+        assert!(is_cache_question("Shader-Zwischenspeicher veraltet", german, GAME));
+        // Cemu's question when its mlc folder can't be used (`CemuApp.cpp`
+        // lines 229 to 233, v2.6).
+        let mlc = "Cemu failed to write to the custom mlc directory.\n\nThe path is:\nD:/Cemu 1.25.0/mlc01\n\n\
+                   Cemu cannot start without a valid mlc path. Do you want to reset the path? \
+                   You can later change it again in the General Settings.";
+        assert!(!is_cache_question("Error", mlc, GAME), "1.25.0 only in a path");
+        assert!(!is_cache_question("Error", "", GAME));
+    }
+
+    #[test]
+    fn an_answered_question_goes_in_the_log_and_is_never_why_cemu_ended() {
+        heard().push(Heard {
+            pid: 900_003,
+            at: Instant::now(),
+            ends_game: false,
+            answer: Some(CACHE_ANSWER),
+            refusal: Refusal { shown: String::new(), said: "Cemu detected that\nthe cache".to_string() },
+        });
+        assert!(take(900_003).is_none(), "even when Cemu ends straight after");
+        assert_eq!(
+            notes(900_003),
+            ["Omoio answered a question from Cemu with \"Delete outdated cache file\": Cemu detected that the cache"]
+        );
+    }
+
+    #[test]
     fn what_was_heard_is_taken_once_and_only_for_its_cemu() {
         let note = |pid: u32, ends_game: bool, shown: &str| Heard {
             pid,
             at: Instant::now(),
             ends_game,
+            answer: None,
             refusal: Refusal { shown: shown.to_string(), said: String::new() },
         };
         heard().extend([note(900_001, true, "first"), note(900_002, false, "other"), note(900_001, false, "later")]);
