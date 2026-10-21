@@ -255,9 +255,10 @@ h1, h2 { font-family: var(--display); font-weight: 570; letter-spacing: -0.02em;
   grid-area: 1 / 1;
   opacity: 0;
   visibility: hidden;
-  transition: opacity 320ms ease, visibility 0s 320ms;
+  transition: opacity 160ms ease, visibility 0s 160ms;
 }
-.tour-slide.on { opacity: 1; visibility: visible; transition: opacity 320ms ease; }
+/* The new screen waits for the old one to fade, so their words never overlap. */
+.tour-slide.on { opacity: 1; visibility: visible; transition: opacity 260ms ease 160ms; }
 .tour-text { padding-top: 12px; padding-bottom: 72px; }
 
 .tour-controls {
