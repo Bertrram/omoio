@@ -24,12 +24,18 @@
 //! never passes on (tauri-runtime-wry 2.11.4 has no handler for them). So
 //! the reader takes it over while it runs and gives it up after, and Omoio
 //! loses nothing.
+//!
+//! The same thread keeps a window a few pixels big for the cursor to rest on
+//! while the player aims (`rest_at`, used by dsu.rs), since a window's
+//! messages go to the thread that made it.
 
 use crate::keyboard_pad::Snapshot;
 use std::collections::HashSet;
+use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 use std::sync::Mutex;
 use windows::core::w;
-use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
+use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, POINT, WPARAM};
+use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::Input::KeyboardAndMouse::{MapVirtualKeyW, MAPVK_VK_TO_VSC_EX};
 use windows::Win32::UI::Input::{
@@ -38,12 +44,15 @@ use windows::Win32::UI::Input::{
     RIM_TYPEKEYBOARD, RIM_TYPEMOUSE,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DestroyWindow, DispatchMessageW, GetMessageW, GetSystemMetrics, PostThreadMessageW,
-    HWND_MESSAGE, MSG, RI_KEY_BREAK, RI_KEY_E0, RI_KEY_E1, RI_MOUSE_BUTTON_1_DOWN, RI_MOUSE_BUTTON_1_UP,
-    RI_MOUSE_BUTTON_2_DOWN, RI_MOUSE_BUTTON_2_UP, RI_MOUSE_BUTTON_3_DOWN, RI_MOUSE_BUTTON_3_UP,
-    RI_MOUSE_BUTTON_4_DOWN, RI_MOUSE_BUTTON_4_UP, RI_MOUSE_BUTTON_5_DOWN, RI_MOUSE_BUTTON_5_UP, RI_MOUSE_WHEEL,
-    SM_CXSCREEN, SM_CXVIRTUALSCREEN, SM_CYSCREEN, SM_CYVIRTUALSCREEN, WINDOW_EX_STYLE, WINDOW_STYLE, WM_INPUT,
-    WM_QUIT,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW, GetSystemMetrics,
+    PostThreadMessageW, RegisterClassW, SetCursor, SetLayeredWindowAttributes, SetWindowPos, WindowFromPoint,
+    HWND_MESSAGE, HWND_TOPMOST, LWA_ALPHA, MA_NOACTIVATE, MSG, RI_KEY_BREAK, RI_KEY_E0, RI_KEY_E1,
+    RI_MOUSE_BUTTON_1_DOWN, RI_MOUSE_BUTTON_1_UP, RI_MOUSE_BUTTON_2_DOWN, RI_MOUSE_BUTTON_2_UP, RI_MOUSE_BUTTON_3_DOWN,
+    RI_MOUSE_BUTTON_3_UP, RI_MOUSE_BUTTON_4_DOWN, RI_MOUSE_BUTTON_4_UP, RI_MOUSE_BUTTON_5_DOWN, RI_MOUSE_BUTTON_5_UP,
+    RI_MOUSE_WHEEL, SM_CXSCREEN, SM_CXVIRTUALSCREEN, SM_CYSCREEN, SM_CYVIRTUALSCREEN, SWP_ASYNCWINDOWPOS,
+    SWP_HIDEWINDOW, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, WINDOW_EX_STYLE,
+    WINDOW_STYLE, WM_INPUT, WM_MOUSEACTIVATE, WM_QUIT, WM_SETCURSOR, WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE,
+    WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 
 /// The generic desktop page's mouse and keyboard ("Using Raw Input",
@@ -87,6 +96,12 @@ pub fn take() -> Snapshot {
     }
 }
 
+/// The mouse buttons held now, bit 0 the left one as the mouse reports it,
+/// 0 while nothing is read.
+pub fn buttons() -> u8 {
+    STATE.lock().unwrap().as_ref().map_or(0, |state| state.buttons)
+}
+
 /// The reader's thread, to be stopped.
 pub struct Reader {
     thread_id: u32,
@@ -114,6 +129,9 @@ pub fn start() -> Result<Reader, String> {
                 return;
             }
         };
+        let rest = make_rest();
+        REST.store(rest.map_or(0, |rest| rest.0 as isize), Ordering::Relaxed);
+        RESTING_SHOWN.store(false, Ordering::Relaxed);
         let _ = ready.send(Ok(unsafe { GetCurrentThreadId() }));
         let mut msg = MSG::default();
         while unsafe { GetMessageW(&mut msg, None, 0, 0) }.as_bool() {
@@ -131,6 +149,10 @@ pub fn start() -> Result<Reader, String> {
             hwndTarget: HWND::default(),
         });
         let _ = unsafe { RegisterRawInputDevices(&gone, size_of::<RAWINPUTDEVICE>() as u32) };
+        REST.store(0, Ordering::Relaxed);
+        if let Some(rest) = rest {
+            let _ = unsafe { DestroyWindow(rest) };
+        }
         let _ = unsafe { DestroyWindow(window) };
     });
     match started.recv() {
@@ -174,6 +196,113 @@ fn listen() -> Result<HWND, String> {
         return Err(format!("Couldn't read the keyboard and mouse: {err}"));
     }
     Ok(window)
+}
+
+/// The window the cursor rests on, 0 while there is none.
+static REST: AtomicIsize = AtomicIsize::new(0);
+/// Whether it was last asked to show.
+static RESTING_SHOWN: AtomicBool = AtomicBool::new(false);
+
+/// Hides the cursor over the window and keeps a click on it from making it
+/// the window in front. Windows asks the window under the cursor which
+/// cursor to show ("WM_SETCURSOR message"), and given none "the cursor is
+/// removed from the screen" ("SetCursor function"). A window can turn the
+/// front down when clicked (`MA_NOACTIVATE`, "WM_MOUSEACTIVATE message"),
+/// as `WS_EX_NOACTIVATE` already asks: such a window "does not become the
+/// foreground window when the user clicks it" ("Extended Window Styles";
+/// all Microsoft Learn, read 21 October 2026). Anything else is left to
+/// Windows.
+unsafe extern "system" fn rest_messages(window: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    match message {
+        WM_SETCURSOR => {
+            unsafe { SetCursor(None) };
+            LRESULT(1)
+        }
+        WM_MOUSEACTIVATE => LRESULT(MA_NOACTIVATE as isize),
+        _ => unsafe { DefWindowProcW(window, message, wparam, lparam) },
+    }
+}
+
+/// The window the cursor rests on, made hidden. Above every window that
+/// isn't itself always on top, so above the game; a tool window, so neither
+/// the taskbar nor Alt+Tab lists it; and drawn at an opacity of 1 in 255,
+/// so it can't be seen while it still takes the clicks on it: only where a
+/// layered window's "alpha value is zero" do clicks go through ("Layered
+/// Windows", Window Features, Microsoft Learn, read 21 October 2026).
+fn make_rest() -> Option<HWND> {
+    let instance = unsafe { GetModuleHandleW(None) }.ok()?.into();
+    let class = WNDCLASSW {
+        lpfnWndProc: Some(rest_messages),
+        hInstance: instance,
+        lpszClassName: w!("OmoioMouseRest"),
+        ..Default::default()
+    };
+    // Asked again for each game. Windows keeps the class from the first
+    // time and turns the second down, which changes nothing.
+    unsafe { RegisterClassW(&class) };
+    let window = unsafe {
+        CreateWindowExW(
+            WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_LAYERED,
+            w!("OmoioMouseRest"),
+            None,
+            WS_POPUP,
+            0,
+            0,
+            1,
+            1,
+            None,
+            None,
+            Some(instance),
+            None,
+        )
+    }
+    .ok()?;
+    if unsafe { SetLayeredWindowAttributes(window, COLORREF(0), 1, LWA_ALPHA) }.is_err() {
+        let _ = unsafe { DestroyWindow(window) };
+        return None;
+    }
+    Some(window)
+}
+
+/// Shows the resting window around the pixel at `at` and says whether it is
+/// the window there now, or hides it for `None`. Three pixels square, so a
+/// cursor rounded a pixel off still rests on it. Called from another thread,
+/// so Windows is asked not to wait for this one (`SWP_ASYNCWINDOWPOS`,
+/// "SetWindowPos function"): a window shown that way may be there only by
+/// the next call. False while the reader isn't running.
+pub fn rest_at(at: Option<POINT>) -> bool {
+    let window = REST.load(Ordering::Relaxed);
+    if window == 0 {
+        return false;
+    }
+    let window = HWND(window as *mut _);
+    match at {
+        Some(at) => {
+            RESTING_SHOWN.store(true, Ordering::Relaxed);
+            // Again at every call: the game moves with Omoio's window, and
+            // another window always on top may have come over this one.
+            let _ = unsafe {
+                SetWindowPos(
+                    window,
+                    Some(HWND_TOPMOST),
+                    at.x - 1,
+                    at.y - 1,
+                    3,
+                    3,
+                    SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_ASYNCWINDOWPOS,
+                )
+            };
+            let there = unsafe { WindowFromPoint(at) };
+            there == window
+        }
+        None => {
+            if RESTING_SHOWN.swap(false, Ordering::Relaxed) {
+                let flags = SWP_HIDEWINDOW | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE;
+                let _ = unsafe { SetWindowPos(window, None, 0, 0, 0, 0, flags | SWP_ASYNCWINDOWPOS) };
+            }
+            false
+        }
+    }
 }
 
 fn read(handle: HRAWINPUT) {

@@ -34,11 +34,12 @@
 //!   data packet at rest goes before every port answer.
 
 use crate::keyboard_pad::{self, Aim};
+use crate::raw_input;
 use std::net::{SocketAddr, UdpSocket};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use windows::Win32::Foundation::{CloseHandle, HANDLE, WAIT_OBJECT_0};
+use windows::Win32::Foundation::{CloseHandle, HANDLE, POINT, RECT, WAIT_OBJECT_0};
 use windows::Win32::System::Threading::{OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE};
 
 const SERVER: &[u8; 4] = b"DSUS";
@@ -256,6 +257,7 @@ pub fn start(player: &crate::core::pad_layout::Player, aim: Aim) -> Result<(), S
     let reader = crate::raw_input::start()?;
     GAME.store(0, Ordering::Relaxed);
     IN_FRONT.store(false, Ordering::Relaxed);
+    RESTING.store(false, Ordering::Relaxed);
     let stop = Arc::new(AtomicBool::new(false));
     let pad = keyboard_pad::Pad::new(player, aim);
     let stopping = stop.clone();
@@ -283,6 +285,65 @@ pub fn follow(pid: u32) {
 pub fn hear(in_front: bool) {
     IN_FRONT.store(in_front, Ordering::Relaxed);
     HEARD_AT.store(EPOCH.elapsed().as_millis() as u64, Ordering::Relaxed);
+}
+
+/// Whether the cursor rests on Omoio's resting window (`rest`).
+static RESTING: AtomicBool = AtomicBool::new(false);
+
+/// Where the cursor is kept while the game is in front: one pixel in the
+/// middle of the game, on a window of Omoio's, rather than anywhere in the
+/// game's window, or `None` to keep it in the window as before.
+///
+/// Cemu takes a left click in its game window as a finger on the GamePad's
+/// screen where the cursor is (`MainWindow::OnMouseLeft`, MainWindow.cpp
+/// lines 1372 to 1384, bound to the picture's window at lines 1574 and
+/// 1575; `InputManager::get_left_down_mouse_info`, InputManager.cpp lines
+/// 838 to 883; all Cemu v2.6, read 21 October 2026). The left button attacks
+/// in the keyboard layout, so in a game that uses the GamePad's screen,
+/// such as SWAP Force, every attack also tapped it. Nothing the pad sends
+/// stops that: Cemu tries the pad's own touch first, but a pad touches the
+/// screen whenever its touch pad says it is touched (`has_position`,
+/// DSUController.cpp lines 65 to 69, and `VPADController::update_touch`,
+/// lines 185 to 235), and a click outside the game's picture still counts,
+/// pulled in to its nearest edge (the same lines). And Cemu has no setting
+/// for it. So the click must not reach Cemu at all.
+///
+/// The player's mouse is read through Raw Input, which hears it wherever
+/// the cursor is (raw_input.rs), so the game doesn't need the cursor. It
+/// rests on a window of Omoio's a few pixels big (`raw_input::rest_at`),
+/// which takes the clicks without taking the front from the game and shows
+/// no cursor, so the cursor is hidden over the game as well. Only once
+/// Windows says that window is the one at that pixel, and only once no
+/// button is held: Cemu never captures the mouse (no `CaptureMouse` in its
+/// src/gui at v2.6), so a button's going up goes "to the window beneath
+/// the cursor" ("WM_LBUTTONUP message", Microsoft Learn, read 21 October
+/// 2026), and one that went down in Cemu's window and up on Omoio's would
+/// keep a finger on the screen. The middle, since a pixel at the screen's edge could bring up
+/// a taskbar that hides itself.
+pub fn rest(game: Option<RECT>) -> Option<RECT> {
+    let Some(game) = game else {
+        raw_input::rest_at(None);
+        RESTING.store(false, Ordering::Relaxed);
+        return None;
+    };
+    let at = middle(&game);
+    let ours = raw_input::rest_at(Some(at));
+    let resting = may_rest(RESTING.load(Ordering::Relaxed), raw_input::buttons(), ours);
+    RESTING.store(resting, Ordering::Relaxed);
+    resting.then(|| RECT { left: at.x, top: at.y, right: at.x + 1, bottom: at.y + 1 })
+}
+
+/// The left and right buttons, the ones Cemu reads, whichever way round
+/// Windows has them (raw input reports the buttons as they are on the
+/// mouse).
+const CEMUS_BUTTONS: u8 = 0b11;
+
+fn may_rest(resting: bool, buttons: u8, ours: bool) -> bool {
+    ours && (resting || buttons & CEMUS_BUTTONS == 0)
+}
+
+fn middle(rect: &RECT) -> POINT {
+    POINT { x: rect.left + (rect.right - rect.left) / 2, y: rect.top + (rect.bottom - rect.top) / 2 }
 }
 
 fn heard() -> bool {
@@ -488,6 +549,25 @@ mod tests {
         assert!(took > Duration::from_millis(150) && took < Duration::from_millis(400), "50 packets in {took:?}");
         stop();
         assert_eq!(port(), None);
+    }
+
+    #[test]
+    fn the_cursor_rests_only_on_omoios_window_and_never_mid_click() {
+        assert!(may_rest(false, 0, true));
+        assert!(!may_rest(false, 0, false), "Windows doesn't show Omoio's window there yet");
+        assert!(!may_rest(false, 0b01, true), "the left button went down in Cemu's window");
+        assert!(!may_rest(false, 0b10, true), "and the right one");
+        assert!(may_rest(false, 0b100, true), "Cemu doesn't read the middle button");
+        assert!(may_rest(true, 0b01, true), "already resting, a click lands on Omoio's window");
+        assert!(!may_rest(true, 0, false));
+    }
+
+    #[test]
+    fn the_cursor_rests_in_the_middle_of_the_game() {
+        let game = RECT { left: 212, top: 40, right: 1912, bottom: 1000 };
+        assert_eq!(middle(&game), POINT { x: 1062, y: 520 });
+        let tiny = RECT { left: 5, top: 5, right: 6, bottom: 6 };
+        assert_eq!(middle(&tiny), POINT { x: 5, y: 5 }, "still inside");
     }
 
     #[test]

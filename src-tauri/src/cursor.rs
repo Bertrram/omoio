@@ -17,6 +17,12 @@
 //! front without asking Omoio, as with Alt+Tab or the Windows key, so this
 //! looks often and lets go as soon as the game is no longer in front.
 //!
+//! A player on the pad Omoio serves Cemu (dsu.rs) aims through Raw Input,
+//! which doesn't need the cursor at all, so for them the cursor is kept on
+//! one pixel in the middle of the game instead, on a window of Omoio's,
+//! where it is hidden and a click reaches neither Cemu nor the front
+//! (`dsu::rest`).
+//!
 //! Some emulators also need to hold the mouse themselves for aiming to go
 //! on past the window's edge (`EmulatorBackend::hold_mouse`). That is asked
 //! once each time the game's window has been shown and has stayed in front
@@ -58,6 +64,7 @@ pub fn watch(app: AppHandle, pid: u32) {
             std::thread::sleep(LOOK_EVERY);
             let session = app.state::<Session>();
             if session.pid() != Some(pid) {
+                crate::dsu::rest(None);
                 if holding {
                     let_go();
                 }
@@ -74,12 +81,16 @@ pub fn watch(app: AppHandle, pid: u32) {
             // The pad Omoio serves Cemu for the keyboard and mouse is heard
             // exactly while the mouse is kept here.
             crate::dsu::hear(game.is_some());
+            // On that pad the cursor rests on one pixel of Omoio's instead,
+            // where a click can't reach Cemu; for every other player there
+            // is no resting place and nothing changes.
+            let rest = crate::dsu::rest(game.map(|(_, rect)| rect));
             match game {
                 Some((game_window, rect)) => {
                     // Again at every look: the window moves and changes size
                     // when Omoio's window does, and Windows itself may have
                     // let the cursor go.
-                    holding = unsafe { ClipCursor(Some(&rect)) }.is_ok();
+                    holding = unsafe { ClipCursor(Some(&rest.unwrap_or(rect))) }.is_ok();
                     let since = *in_front_since.get_or_insert_with(Instant::now);
                     if !held_by_emulator && since.elapsed() >= SETTLED {
                         held_by_emulator = backend.is_none_or(|backend| backend.hold_mouse(game_window));
