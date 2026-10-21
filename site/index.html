@@ -8,19 +8,18 @@
   <link rel="canonical" href="https://omoio.app/">
   <meta name="robots" content="index, follow, max-image-preview:large, max-video-preview:-1">
   <meta name="google-site-verification" content="vd4eQMuJyU7vQHpTL636yFZLnwXrCZ_J63c_Kb-SmrY">
-  <meta name="theme-color" content="#0b0e14">
+  <meta name="theme-color" content="#fbfcff" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0b0f1c" media="(prefers-color-scheme: dark)">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="Omoio">
   <meta property="og:locale" content="en_US">
   <meta property="og:url" content="https://omoio.app/">
   <meta property="og:title" content="Omoio, a PS3, Wii U, Wii and GameCube game library for Windows">
   <meta property="og:description" content="Your PS3, Wii U, Wii and GameCube games in one library. Press Play and Omoio sets up the emulator for you.">
-  <!-- og.png still shows the old line, "Your PS3 and Wii U games in one library".
-       Remake it with the new line, then change og:image:alt with it. -->
   <meta property="og:image" content="https://omoio.app/og.png">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
-  <meta property="og:image:alt" content="The Omoio icon and name, with the line: Your PS3 and Wii U games in one library.">
+  <meta property="og:image:alt" content="The Omoio icon and name beside its library, with the line: Your PS3, Wii U, Wii and GameCube games in one library.">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Omoio, a PS3, Wii U, Wii and GameCube game library for Windows">
   <meta name="twitter:description" content="Your PS3, Wii U, Wii and GameCube games in one library. Press Play and Omoio sets up the emulator for you.">
@@ -191,99 +190,170 @@
 </head>
 <body>
   <header class="top">
-    <a class="top-link" href="https://ko-fi.com/omoio">Support Omoio</a>
-    <a class="top-link" href="https://discord.gg/ghnAm5CbdP">Discord</a>
-    <a class="top-link" href="https://github.com/Bertrram/omoio">GitHub</a>
+    <a class="brand" href="/" aria-label="Omoio, home">
+      <svg viewBox="0 0 256 256" fill="currentColor" fill-rule="evenodd" aria-hidden="true">
+        <path d="M69,40 H54 A22,22 0 0 0 32,62 V194 A22,22 0 0 0 54,216 H69 Z"/>
+        <path d="M76.0,58.0 A26.0,26.0 0 0 1 102.0,32.0 L203.0,32.0 A25.0,25.0 0 0 1 228.0,57.0 L228.0,72.0 A10.0,10.0 0 0 1 218.0,82.0 L218.0,82.0 A10.0,10.0 0 0 0 208.0,92.0 L208.0,108.0 A10.0,10.0 0 0 0 218.0,118.0 L218.0,118.0 A10.0,10.0 0 0 1 228.0,128.0 L228.0,128.0 A10.0,10.0 0 0 1 218.0,138.0 L218.0,138.0 A10.0,10.0 0 0 0 208.0,148.0 L208.0,164.0 A10.0,10.0 0 0 0 218.0,174.0 L218.0,174.0 A10.0,10.0 0 0 1 228.0,184.0 L228.0,199.0 A25.0,25.0 0 0 1 203.0,224.0 L102.0,224.0 A26.0,26.0 0 0 1 76.0,198.0 L76.0,58.0 Z M112.0,105.9 A16.0,16.0 0 0 1 136.9,92.6 L170.0,114.7 A16.0,16.0 0 0 1 170.0,141.3 L136.9,163.4 A16.0,16.0 0 0 1 112.0,150.1 L112.0,105.9 Z"/>
+      </svg>
+      <span>Omoio</span>
+    </a>
+    <nav class="top-nav" aria-label="Main">
+      <a class="top-link" href="#guide">Setup guide</a>
+      <a class="top-link" href="#questions">Questions</a>
+      <a class="top-link" href="https://discord.gg/ghnAm5CbdP">Discord</a>
+      <a class="top-link" href="https://github.com/Bertrram/omoio">GitHub<svg class="out" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.5 3.5h-3v9h9v-3"/><path d="M9.5 3.5h3v3"/><path d="m12.5 3.5-5 5"/></svg></a>
+      <a class="top-link" href="https://ko-fi.com/omoio">Support</a>
+    </nav>
+    <a class="pill small" href="https://github.com/Bertrram/omoio/releases/latest" data-download>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11"/><path d="m7 10 5 5 5-5"/><path d="M5 20h14"/></svg>
+      Download
+    </a>
   </header>
 
   <main>
     <section class="hero">
-      <img class="app-icon" src="favicon.svg" width="88" height="88" alt="">
-      <h1>Omoio</h1>
-      <p class="lede"><span>Your PS3, Wii U, Wii and GameCube games in one library.</span> <span>Press Play and Omoio sets up the emulator for you.</span></p>
-
-      <a id="download" class="download" href="https://github.com/Bertrram/omoio/releases/latest">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M12 4v11"/><path d="m7 10 5 5 5-5"/><path d="M5 20h14"/>
-        </svg>
-        Download for Windows
-      </a>
-      <p id="download-meta" class="meta">64-bit Windows</p>
-      <p class="note">The installer isn't signed yet, so Windows may warn you. Click More info, then Run anyway.</p>
-      <p id="elsewhere" class="note elsewhere" hidden>Omoio runs on Windows only, so download it on a Windows PC.</p>
+      <div class="wrap">
+        <h1>Your PS3, Wii U, Wii and GameCube games in one library</h1>
+        <p class="lede">Import the games you own and press Play. Omoio installs RPCS3, Cemu and Dolphin and sets them up for you.</p>
+        <a id="download" class="pill" href="https://github.com/Bertrram/omoio/releases/latest" data-download>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11"/><path d="m7 10 5 5 5-5"/><path d="M5 20h14"/></svg>
+          Download for Windows
+        </a>
+        <p id="download-meta" class="meta">64-bit Windows</p>
+        <p class="note">The installer isn't signed yet, so Windows may warn you. Click More info, then Run anyway.</p>
+        <p id="elsewhere" class="note" hidden>Omoio runs on Windows only, so download it on a Windows PC.</p>
+      </div>
     </section>
 
-    <section class="video">
-      <a id="video" class="video-frame" href="https://youtu.be/wWmthRdoImE" data-video="wWmthRdoImE" data-title="The Omoio video" aria-label="Play the Omoio video, 1 minute 10 seconds">
-        <img src="poster.jpg" width="1280" height="720" alt="Omoio's library with twelve PS3 and Wii U games">
-        <span class="play" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.5-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5Z"/></svg>
-        </span>
-        <span class="duration" aria-hidden="true">1:10</span>
-      </a>
-      <p class="caption">The video plays from YouTube when you press it. Covers in it come from <a href="https://rawg.io">RAWG</a>.</p>
+    <section class="wrap tour" aria-roledescription="carousel" aria-label="What Omoio does">
+      <div class="tour-slides">
+        <article class="tour-slide on" id="tour-library" aria-roledescription="slide" aria-label="1 of 5">
+          <div class="tour-text">
+            <h2>One library for four consoles</h2>
+            <p>Import a folder, a zip or 7z file or a disc image, or scan a whole drive. PS3, Wii U, Wii and GameCube games sit side by side.</p>
+            <p>Each game starts in its own emulator. Pick it and press Play.</p>
+          </div>
+          <div class="shot"><img src="shots/library.jpg" width="1600" height="900" alt="Omoio's library with 17 games, and the panel for Skylanders Giants open"></div>
+        </article>
+        <article class="tour-slide" id="tour-big-picture" aria-roledescription="slide" aria-label="2 of 5">
+          <div class="tour-text">
+            <h2>Big Picture for the TV</h2>
+            <p>The library made for a TV and a controller, with every game a few presses away.</p>
+            <p>View and Menu together take you from a running game to Big Picture and back, with the game still running.</p>
+          </div>
+          <div class="shot"><img src="shots/big-picture.jpg" width="1600" height="900" loading="lazy" alt="Big Picture's home screen with Skylanders Giants picked"></div>
+        </article>
+        <article class="tour-slide" id="tour-controller" aria-roledescription="slide" aria-label="3 of 5">
+          <div class="tour-text">
+            <h2>One layout for every emulator</h2>
+            <p>Set your buttons once, for up to four players, and they work in RPCS3, Cemu and Dolphin. In a Wii game your pad is a Wii Remote with a Nunchuk.</p>
+            <p>Xbox, PS5 and PS4 controllers and the Switch Pro Controller all work, without DS4Windows.</p>
+          </div>
+          <div class="shot"><img src="shots/controller.jpg" width="1600" height="900" loading="lazy" alt="The Controller screen, with what each button does on PS3, Wii U, Wii and GameCube"></div>
+        </article>
+        <article class="tour-slide" id="tour-emulators" aria-roledescription="slide" aria-label="4 of 5">
+          <div class="tour-text">
+            <h2>Emulators installed for you</h2>
+            <p>Omoio installs the official builds of RPCS3, Cemu and Dolphin. RPCS3 stays up to date, and Cemu and Dolphin move to the newest version Omoio has tested, so your controllers keep working.</p>
+            <p>For PS3 games it opens Sony's firmware page, and you pick the file you downloaded there.</p>
+          </div>
+          <div class="shot"><img src="shots/emulators.jpg" width="1600" height="900" loading="lazy" alt="The Emulators screen, with RPCS3, Dolphin and Cemu installed and six more coming"></div>
+        </article>
+        <article class="tour-slide" id="tour-saves" aria-roledescription="slide" aria-label="5 of 5">
+          <div class="tour-text">
+            <h2>Saves kept safe</h2>
+            <p>Back up the saves of PS3, Wii U, Wii and GameCube games, and put an older copy back when you need it.</p>
+            <p>PS3 games also get their official updates, with the saves backed up before each one.</p>
+          </div>
+          <div class="shot"><img src="shots/saves.jpg" width="1600" height="900" loading="lazy" alt="Three backed up copies of the saves for Skylanders Giants"></div>
+        </article>
+      </div>
+      <div class="tour-controls">
+        <div class="tour-dots" role="group" aria-label="Pick a screen">
+          <button class="tour-dot on" type="button" aria-controls="tour-library" aria-current="true" aria-label="One library"><span></span></button>
+          <button class="tour-dot" type="button" aria-controls="tour-big-picture" aria-label="Big Picture"><span></span></button>
+          <button class="tour-dot" type="button" aria-controls="tour-controller" aria-label="Controllers"><span></span></button>
+          <button class="tour-dot" type="button" aria-controls="tour-emulators" aria-label="Emulators"><span></span></button>
+          <button class="tour-dot" type="button" aria-controls="tour-saves" aria-label="Saves"><span></span></button>
+        </div>
+        <button class="tour-pause" type="button" aria-label="Pause">
+          <svg class="if-playing" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><rect x="4" y="3" width="2.6" height="10" rx="1"/><rect x="9.4" y="3" width="2.6" height="10" rx="1"/></svg>
+          <svg class="if-paused" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M5 3.9v8.2a.9.9 0 0 0 1.37.77l6.6-4.1a.9.9 0 0 0 0-1.54l-6.6-4.1A.9.9 0 0 0 5 3.9Z"/></svg>
+        </button>
+      </div>
     </section>
 
-    <section class="section" aria-labelledby="steps-title">
-      <h2 id="steps-title">From download to Play</h2>
-      <ol class="steps">
-        <li>
-          <h3>Install Omoio</h3>
-          <p>Run the installer. It doesn't need admin rights.</p>
-        </li>
-        <li>
-          <h3>Choose your emulators</h3>
-          <p>Omoio installs RPCS3 for PS3 games, Cemu for Wii U games and Dolphin for Wii and GameCube games. For PS3 it opens Sony's firmware page, and you pick the file you downloaded there.</p>
-        </li>
-        <li>
-          <h3>Import your games</h3>
-          <p>Add folders, zip or 7z files, or disc images of games you own, then press Play.</p>
-        </li>
-      </ol>
-      <div class="guide">
-        <h3 id="guide-title">Setup guide</h3>
-        <p class="guide-lede">Every step on screen, from the download to your first game, with chapters so you can skip to the one you need.</p>
+    <section class="wrap media flip" aria-labelledby="packs-title">
+      <div class="media-text">
+        <h2 id="packs-title">Fixes and mods from each community</h2>
+        <p>Patches and graphic packs from RPCS3's and Cemu's communities download from the same place, and the patches, cheat codes and graphics mods that come with Dolphin are there to switch on.</p>
+        <p>A fix Omoio turns on by itself says why. Everything else stays off until you turn it on.</p>
+      </div>
+      <div class="shot"><img src="shots/packs.jpg" width="1600" height="900" loading="lazy" alt="Community packs for Skylanders SWAP Force, with Cemu's Portal Stability Fix on"></div>
+    </section>
+
+    <section class="wrap media" aria-labelledby="skylanders-title">
+      <div class="media-text">
+        <h2 id="skylanders-title">Skylanders without the portal</h2>
+        <p>Press your controller's home button and a portal menu opens over the game. Pick any figure, trap, vehicle or crystal and it goes on the portal.</p>
+        <p>It's there in Spyro's Adventure, Giants, SWAP Force and Trap Team on PS3, in SWAP Force, Trap Team, SuperChargers and Imaginators on Wii U, and in Spyro's Adventure on Wii.</p>
+        <p>Trap Team shows which villains you've caught, SuperChargers keeps a garage of vehicles, and Imaginators keeps your crystals together.</p>
+        <p class="media-note">Omoio doesn't come with the figures' pictures. It reads them from your own copy of the game.</p>
+      </div>
+      <div class="shot"><img src="shots/portal-menu.jpg" width="1600" height="900" loading="lazy" alt="The portal menu over Skylanders SWAP Force, with Blast Zone and Boom Jet on the portal"></div>
+    </section>
+
+    <section class="wrap media flip" id="guide" aria-labelledby="guide-title">
+      <div class="media-text">
+        <h2 id="guide-title">From download to Play</h2>
+        <ol class="steps">
+          <li><strong>Install Omoio.</strong> The installer doesn't need admin rights.</li>
+          <li><strong>Choose your emulators.</strong> Omoio installs the ones for the consoles you pick.</li>
+          <li><strong>Import your games.</strong> Add folders, zip or 7z files, or disc images of games you own, then press Play.</li>
+        </ol>
+        <p>The setup guide shows every step on screen, with chapters so you can skip to the one you need.</p>
+      </div>
+      <div class="media-video">
         <a id="guide-video" class="video-frame" href="https://youtu.be/ioL5LjZmEXs" data-video="ioL5LjZmEXs" data-title="How to set up Omoio" aria-label="Play the setup guide, 3 minutes 58 seconds">
           <img src="guide.jpg" width="1280" height="720" loading="lazy" alt="The title card of the Omoio 0.3.0 setup guide, with the library and the four consoles">
-          <span class="play" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.5-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5Z"/></svg>
-          </span>
+          <span class="play" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.5-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5Z"/></svg></span>
           <span class="duration" aria-hidden="true">3:58</span>
         </a>
         <p class="caption">The guide plays from YouTube when you press it.</p>
       </div>
     </section>
 
-    <section class="section" aria-labelledby="features-title">
-      <h2 id="features-title">What you get</h2>
-      <div class="features">
-        <div>
-          <h3>One library</h3>
-          <p>Import a folder, a zip or 7z file, or scan a whole drive. PS3, Wii U, Wii and GameCube games sit side by side, and each starts in its own emulator.</p>
-        </div>
-        <div>
-          <h3>Emulators installed and updated</h3>
-          <p>Omoio installs the official builds of RPCS3, Cemu and Dolphin. RPCS3 is kept up to date, and Cemu and Dolphin are updated to the newest version Omoio has tested, so your controllers keep working. Patches and graphic packs from RPCS3's and Cemu's communities download from the same place, and the patches and cheat codes that come with Dolphin are there to switch on.</p>
-          <p>Wii and GameCube games also get the graphics mods Dolphin comes with, switched on per game. In Skylanders: Spyro's Adventure and Giants that's Bloom Removal, Bloom Blurred and Native Resolution Bloom.</p>
-        </div>
-        <div>
-          <h3>Controllers and Big Picture</h3>
-          <p>Set one layout for up to four players. In a Wii game your pad is a Wii Remote with a Nunchuk. Big Picture is the library for a TV and a controller, and View and Menu together take you between it and a running game.</p>
-        </div>
-        <div>
-          <h3>Saves and updates</h3>
-          <p>Back up the saves of PS3, Wii U, Wii and GameCube games, and put an older copy back. PS3 games also get their official updates, with the saves backed up before each one.</p>
-        </div>
-        <div class="wide">
-          <h3>Skylanders without the portal</h3>
-          <p>In Skylanders Spyro's Adventure, Giants, SWAP Force and Trap Team on PS3, in SWAP Force, Trap Team, SuperChargers and Imaginators on Wii U, and in Spyro's Adventure on Wii, press your controller's home button and a portal menu opens over the game. Pick any figure, trap, vehicle or crystal and it goes on the portal. In Trap Team it also shows which villains you've caught and which trap holds each. In SuperChargers a garage keeps the vehicles by land, sea and sky, and one press puts a SuperCharger on with its own vehicle. In Imaginators your crystals stay together, each new Imaginator gets a crystal of its own, and the Senseis are sorted by battle class.</p>
+    <section class="wrap film" aria-labelledby="film-title">
+      <div class="film-text">
+        <h2 id="film-title">Omoio in a minute</h2>
+        <p>A one minute look at the library, the emulators and the Skylanders portal menu, made before Dolphin was added.</p>
+      </div>
+      <a id="video" class="video-frame" href="https://youtu.be/wWmthRdoImE" data-video="wWmthRdoImE" data-title="The Omoio video" aria-label="Play the Omoio video, 1 minute 10 seconds">
+        <img src="poster.jpg" width="1280" height="720" loading="lazy" alt="Omoio's library with twelve PS3 and Wii U games">
+        <span class="play" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.5-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5Z"/></svg></span>
+        <span class="duration" aria-hidden="true">1:10</span>
+      </a>
+      <p class="caption">The video plays from YouTube when you press it.</p>
+    </section>
+
+    <section class="wrap">
+      <div class="ready">
+        <img class="ready-icon" src="favicon.svg" width="72" height="72" alt="">
+        <h2>Play the games you own</h2>
+        <p>Omoio is free, open source and made by one person. It's in early development, and feedback is welcome.</p>
+        <div class="ready-actions">
+          <a class="pill" href="https://github.com/Bertrram/omoio/releases/latest" data-download>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11"/><path d="m7 10 5 5 5-5"/><path d="M5 20h14"/></svg>
+            Download for Windows
+          </a>
+          <a class="pill quiet" href="https://ko-fi.com/omoio">Support on Ko-fi</a>
         </div>
       </div>
     </section>
 
-    <section class="section" aria-labelledby="questions-title">
+    <section class="wrap questions" id="questions" aria-labelledby="questions-title">
       <h2 id="questions-title">Questions</h2>
-      <div class="questions">
+      <div class="question-list">
         <details>
           <summary>Is Omoio an emulator?</summary>
           <p>No. Omoio is the library and launcher around the emulators. It installs RPCS3 for PS3 games, Cemu for Wii U games and Dolphin for Wii and GameCube games. It starts them for you, and they do the emulation. RPCS3 is kept up to date, and Cemu and Dolphin are updated to the newest version Omoio has tested.</p>
@@ -329,8 +399,31 @@
   </main>
 
   <footer class="foot">
-    <p>Omoio is in early development, and feedback is welcome at <a href="mailto:hello@omoio.app">hello@omoio.app</a>. The code and the issues are on <a href="https://github.com/Bertrram/omoio">GitHub</a>, under the MIT licence, you can chat with other players on <a href="https://discord.gg/ghnAm5CbdP">Discord</a>, and videos are on <a href="https://www.youtube.com/@OmoioApp">YouTube</a>, <a href="https://www.tiktok.com/@omoioapp">TikTok</a> and <a href="https://www.instagram.com/omoioapp">Instagram</a>. Omoio is free and stays free; if you want to help, you can <a href="https://ko-fi.com/omoio">support it on Ko-fi</a>.</p>
-    <p class="small">Omoio doesn't come with games. You bring dumps of games you own. RPCS3, Cemu and Dolphin are separate projects, and the credit for the emulation is theirs. PlayStation, Wii U, Wii, GameCube and Skylanders are trademarks of their owners, and Omoio has no connection with Sony, Nintendo or Activision. <a href="/privacy">Privacy</a></p>
+    <div class="foot-columns">
+      <div>
+        <h2>Omoio</h2>
+        <a href="https://github.com/Bertrram/omoio/releases/latest" data-download>Download</a>
+        <a href="#guide">Setup guide</a>
+        <a href="https://github.com/Bertrram/omoio/releases">Release notes</a>
+        <a href="/privacy">Privacy</a>
+      </div>
+      <div>
+        <h2>Community</h2>
+        <a href="https://discord.gg/ghnAm5CbdP">Discord</a>
+        <a href="https://www.youtube.com/@OmoioApp">YouTube</a>
+        <a href="https://www.tiktok.com/@omoioapp">TikTok</a>
+        <a href="https://www.instagram.com/omoioapp">Instagram</a>
+        <a href="https://ko-fi.com/omoio">Ko-fi</a>
+      </div>
+      <div>
+        <h2>Help</h2>
+        <a href="#questions">Questions</a>
+        <a href="https://github.com/Bertrram/omoio/issues">Report a problem</a>
+        <a href="https://github.com/Bertrram/omoio">Source code</a>
+        <a href="mailto:hello@omoio.app">hello@omoio.app</a>
+      </div>
+    </div>
+    <p class="small">Omoio doesn't come with games. You bring dumps of games you own. RPCS3, Cemu and Dolphin are separate projects, and the credit for the emulation is theirs. Covers in the pictures and videos come from <a href="https://rawg.io">RAWG</a>. PlayStation, Wii U, Wii, GameCube and Skylanders are trademarks of their owners, and Omoio has no connection with Sony, Nintendo or Activision.</p>
   </footer>
 
   <dialog id="thanks" class="thanks" aria-labelledby="thanks-title">
@@ -339,8 +432,8 @@
     <p>Your download is starting. When you open it, Windows may warn you because the installer isn't signed yet: click More info, then Run anyway.</p>
     <p>Omoio is free and made by one person. If it saves you some setup, a tip helps keep it going.</p>
     <div class="thanks-actions">
-      <a class="download" href="https://ko-fi.com/omoio">Tip on Ko-fi</a>
-      <button class="thanks-close" type="button">Close</button>
+      <a class="pill" href="https://ko-fi.com/omoio">Tip on Ko-fi</a>
+      <button class="pill quiet thanks-close" type="button">Close</button>
     </div>
   </dialog>
 </body>

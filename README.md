@@ -7,7 +7,7 @@
 
 [![The Omoio video on YouTube, 1 minute 10 seconds](design/screenshots/video.jpg)](https://youtu.be/wWmthRdoImE)
 
-![The library, with the panel for The Last of Us open](design/screenshots/library.png)
+![The library with 17 games, and the panel for Skylanders Giants open](design/screenshots/library.png)
 <sub>Covers in these pictures come from [RAWG](https://rawg.io).</sub>
 
 Omoio is a game library for Windows. You import the dumps of games you own
@@ -63,7 +63,7 @@ issue.
 
 ## Big Picture
 
-![Big Picture with Skylanders SWAP Force picked](design/screenshots/big-picture.png)
+![Big Picture with Skylanders Giants picked](design/screenshots/big-picture.png)
 
 Big Picture fills the screen and is made for a TV and a controller, with each
 game's settings, community packs and saves inside it. Press View and Menu together
@@ -197,9 +197,7 @@ PS Vita and DS. Each one is added once its download and its licence have been
 checked. PS4 isn't among them: its emulator runs only games that are already
 decrypted, and a PS4 game you bought is locked to Sony's keys.
 
-<!-- A new screenshot of the Emulators screen goes here, with RPCS3, Cemu and
-     Dolphin installed and six more coming: design/screenshots/emulators.png -->
-![The Emulators screen, with RPCS3 and Cemu installed and seven more coming](design/screenshots/emulators.png)
+![The Emulators screen, with RPCS3, Dolphin and Cemu installed and six more coming](design/screenshots/emulators.png)
 
 </details>
 
@@ -282,9 +280,7 @@ buttons, with B on the right trigger too. The Nunchuk's Z is the left button and
 the left trigger, C is the top button, and the right shoulder shakes the remote.
 A GameCube game uses Dolphin's own layout for a gamepad.
 
-<!-- A new screenshot of the Controller screen goes here, with the Wii's and the
-     GameCube's words on the labels: design/screenshots/controller.png -->
-![The Controller screen, with an Xbox pad and what each button does](design/screenshots/controller.png)
+![The Controller screen, with an Xbox pad and what each button does on PS3, Wii U, Wii and GameCube](design/screenshots/controller.png)
 
 </details>
 

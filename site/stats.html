@@ -5,16 +5,25 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Downloads · Omoio</title>
   <meta name="robots" content="noindex, nofollow">
-  <meta name="theme-color" content="#0b0e14">
+  <meta name="theme-color" content="#fbfcff" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0b0f1c" media="(prefers-color-scheme: dark)">
   <link rel="icon" href="/favicon.ico" sizes="48x48">
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/styles.css">
   <script src="/stats.js" defer></script>
 </head>
 <body>
-  <main>
-    <section class="hero stats">
-      <img class="app-icon" src="/favicon.svg" width="88" height="88" alt="">
+  <header class="top">
+    <a class="brand" href="/" aria-label="Omoio, home">
+      <svg viewBox="0 0 256 256" fill="currentColor" fill-rule="evenodd" aria-hidden="true">
+        <path d="M69,40 H54 A22,22 0 0 0 32,62 V194 A22,22 0 0 0 54,216 H69 Z"/>
+        <path d="M76.0,58.0 A26.0,26.0 0 0 1 102.0,32.0 L203.0,32.0 A25.0,25.0 0 0 1 228.0,57.0 L228.0,72.0 A10.0,10.0 0 0 1 218.0,82.0 L218.0,82.0 A10.0,10.0 0 0 0 208.0,92.0 L208.0,108.0 A10.0,10.0 0 0 0 218.0,118.0 L218.0,118.0 A10.0,10.0 0 0 1 228.0,128.0 L228.0,128.0 A10.0,10.0 0 0 1 218.0,138.0 L218.0,138.0 A10.0,10.0 0 0 0 208.0,148.0 L208.0,164.0 A10.0,10.0 0 0 0 218.0,174.0 L218.0,174.0 A10.0,10.0 0 0 1 228.0,184.0 L228.0,199.0 A25.0,25.0 0 0 1 203.0,224.0 L102.0,224.0 A26.0,26.0 0 0 1 76.0,198.0 L76.0,58.0 Z M112.0,105.9 A16.0,16.0 0 0 1 136.9,92.6 L170.0,114.7 A16.0,16.0 0 0 1 170.0,141.3 L136.9,163.4 A16.0,16.0 0 0 1 112.0,150.1 L112.0,105.9 Z"/>
+      </svg>
+      <span>Omoio</span>
+    </a>
+  </header>
+  <main class="solo stats">
+      <img class="app-icon" src="/favicon.svg" width="80" height="80" alt="">
       <h1 id="total">…</h1>
       <p class="lede">installer downloads, every version</p>
       <p id="updated" class="meta">Asking GitHub</p>
@@ -26,9 +35,8 @@
         <tbody></tbody>
       </table>
 
-      <button id="refresh" class="download" type="button">Refresh</button>
+      <button id="refresh" class="pill" type="button">Refresh</button>
       <p class="note">Every download of the installer counts: from omoio.app, from GitHub, and from copies of Omoio updating themselves. Your own downloads count too.</p>
-    </section>
   </main>
 </body>
 </html>

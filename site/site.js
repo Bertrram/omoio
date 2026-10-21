@@ -1,8 +1,8 @@
 // The API answers cross-origin requests and the download links don't, so the
-// newest installer is found here and the button points straight at it. Until
-// then, or if GitHub doesn't answer, the button opens the releases page.
+// newest installer is found here and every download button points straight
+// at it. Until then, or if GitHub doesn't answer, they open the releases page.
 async function findInstaller() {
-  const button = document.getElementById("download");
+  const buttons = document.querySelectorAll("[data-download]");
   const meta = document.getElementById("download-meta");
   const timeout = new AbortController();
   const timer = setTimeout(() => timeout.abort(), 6000);
@@ -14,7 +14,7 @@ async function findInstaller() {
     const installer = release.assets.find((asset) => asset.name.endsWith("_x64-setup.exe"));
     if (!installer) throw new Error("No installer in the latest release");
 
-    button.href = installer.browser_download_url;
+    for (const button of buttons) button.href = installer.browser_download_url;
     const version = release.tag_name.replace(/^v/, "");
     // Mebibytes, because that is what Windows shows once the file is saved.
     const size = (installer.size / 1048576).toFixed(1);
@@ -49,16 +49,63 @@ function playVideoInPlace(event) {
 
 // A thank-you while the installer downloads, with the SmartScreen steps and
 // the Ko-fi link. Only for the real file: the fallback opens GitHub instead.
-function thankForDownload() {
-  if (!document.getElementById("download").href.endsWith(".exe")) return;
+function thankForDownload(event) {
+  if (!event.currentTarget.href.endsWith(".exe")) return;
   const thanks = document.getElementById("thanks");
   if (typeof thanks.showModal === "function" && !thanks.open) thanks.showModal();
+}
+
+// The screens under the hero take turns. The current dot fills while its
+// screen is up and the next one comes when it is full, so the timing lives in
+// the CSS. Picking a dot or pressing pause stops the turns; with reduced
+// motion they never start.
+function startTour() {
+  const tour = document.querySelector(".tour");
+  if (!tour) return;
+  const slides = [...tour.querySelectorAll(".tour-slide")];
+  const dots = [...tour.querySelectorAll(".tour-dot")];
+  const pause = tour.querySelector(".tour-pause");
+  let current = 0;
+
+  function show(index) {
+    current = (index + slides.length) % slides.length;
+    slides.forEach((slide, n) => slide.classList.toggle("on", n === current));
+    dots.forEach((dot, n) => {
+      dot.classList.toggle("on", n === current);
+      if (n === current) dot.setAttribute("aria-current", "true");
+      else dot.removeAttribute("aria-current");
+    });
+  }
+
+  function setPaused(paused) {
+    tour.classList.toggle("paused", paused);
+    pause.setAttribute("aria-label", paused ? "Play" : "Pause");
+  }
+
+  dots.forEach((dot, n) => dot.addEventListener("click", () => {
+    setPaused(true);
+    show(n);
+  }));
+  pause.addEventListener("click", () => setPaused(!tour.classList.contains("paused")));
+  tour.addEventListener("animationend", (event) => {
+    if (event.animationName === "tour-fill" && !tour.classList.contains("paused")) show(current + 1);
+  });
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) setPaused(true);
+}
+
+// The header gets its own backing once the page scrolls under it.
+function watchScroll() {
+  const update = () => document.documentElement.classList.toggle("scrolled", window.scrollY > 4);
+  addEventListener("scroll", update, { passive: true });
+  update();
 }
 
 const thanks = document.getElementById("thanks");
 thanks.querySelector(".thanks-close").addEventListener("click", () => thanks.close());
 thanks.addEventListener("click", (event) => { if (event.target === thanks) thanks.close(); });
-document.getElementById("download").addEventListener("click", thankForDownload);
+for (const button of document.querySelectorAll("[data-download]")) {
+  button.addEventListener("click", thankForDownload);
+}
 
 if (!/Windows/.test(navigator.userAgent)) {
   document.getElementById("elsewhere").hidden = false;
@@ -67,4 +114,6 @@ if (!/Windows/.test(navigator.userAgent)) {
 for (const frame of document.querySelectorAll("a[data-video]")) {
   frame.addEventListener("click", playVideoInPlace);
 }
+watchScroll();
+startTour();
 findInstaller();
