@@ -255,7 +255,7 @@ export function settingsScreen(kit: Kit, cap: (input: string) => string, start: 
             kit.say(problem(err, "Couldn't save that button."));
           }
           kit.redraw(screen);
-        }, "The button that opens it while playing. Insert on the keyboard does too.")
+        }, "The button that opens it while playing. Insert or Tab on the keyboard does too.")
       );
     }
     rows.push(row("pad:games", "A game's own layout", "On the desktop", undefined, "Set on the Controller screen, under Layout for."));

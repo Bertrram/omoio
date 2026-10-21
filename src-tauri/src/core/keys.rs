@@ -18,8 +18,8 @@
 /// Every key a player can be given, by its `KeyboardEvent.code` name, with
 /// its scan code.
 ///
-/// Left out on purpose: Insert, which opens the portal menu
-/// (portal_menu.rs, `MENU_KEY`), and F11, which is Omoio's fullscreen
+/// Left out on purpose: Insert and Tab, which open the portal menu
+/// (portal_menu.rs, `MENU_KEY` and `SECOND_MENU_KEY`), and F11, which is Omoio's fullscreen
 /// (session.rs). The other function keys, Escape, Ctrl, Alt and the Windows
 /// keys are left out too, as the emulators and Windows itself give them jobs
 /// of their own while a game runs, read in each emulator's source on 20
@@ -31,7 +31,7 @@
 /// (RPCS3's rpcs3qt/shortcut_settings.cpp lines 73 to 94 at build
 /// 0.0.43-20344, Cemu's MainWindow::OnKeyUp at v2.6, Dolphin's
 /// HotkeyManager.cpp lines 409 to 476 at 2609a).
-pub const KEYS: [(&str, u16); 80] = [
+pub const KEYS: [(&str, u16); 79] = [
     ("KeyA", 0x1E),
     ("KeyB", 0x30),
     ("KeyC", 0x2E),
@@ -71,7 +71,6 @@ pub const KEYS: [(&str, u16); 80] = [
     ("Minus", 0x0C),
     ("Equal", 0x0D),
     ("Backspace", 0x0E),
-    ("Tab", 0x0F),
     ("BracketLeft", 0x1A),
     ("BracketRight", 0x1B),
     ("Enter", 0x1C),
@@ -130,8 +129,9 @@ pub const MOUSE_MOVES: [&str; 4] = ["MouseMoveLeft", "MouseMoveRight", "MouseMov
 
 /// Keys that can never be given to a player, with why, for the Controller
 /// screen to say.
-pub const REFUSED: [(&str, &str); 2] = [
+pub const REFUSED: [(&str, &str); 3] = [
     ("Insert", "Insert opens the portal menu, so it can't be a button in the game."),
+    ("Tab", "Tab opens the portal menu, so it can't be a button in the game."),
     ("F11", "F11 switches Omoio between a window and the full screen, so it can't be a button in the game."),
 ];
 

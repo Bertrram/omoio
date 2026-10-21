@@ -12,7 +12,7 @@ export function renderPlayingBar(playing: Playing): HTMLElement {
     <span class="playing-name"></span>
     <span class="playing-note" role="status"></span>
     <div class="playing-actions">
-      <button class="small-btn gone" id="open-portal">Portal (Insert)</button>
+      <button class="small-btn gone" id="open-portal">Portal (Insert or Tab)</button>
       <button class="small-btn" id="toggle-fullscreen">Fullscreen</button>
       <button class="small-btn danger" id="stop-game">Stop</button>
     </div>

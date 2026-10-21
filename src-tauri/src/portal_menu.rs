@@ -23,7 +23,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
-use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VIRTUAL_KEY, VK_CONTROL, VK_INSERT, VK_SHIFT};
+use windows::Win32::UI::Input::KeyboardAndMouse::{
+    GetAsyncKeyState, VIRTUAL_KEY, VK_CONTROL, VK_INSERT, VK_MENU, VK_SHIFT, VK_TAB,
+};
 
 const LABEL: &str = "portal";
 
@@ -72,6 +74,20 @@ static FAMILY: Mutex<String> = Mutex::new(String::new());
 /// setting name it.
 const MENU_KEY: VIRTUAL_KEY = VK_INSERT;
 
+/// Tab opens and closes the menu too, for a keyboard with no Insert key,
+/// such as a Surface's (Bertram, 21 October 2026): a keyboard player's
+/// mouse is kept inside the game (cursor.rs), so the Portal button can't be
+/// reached either. Tab is on every keyboard and is no key a player can be
+/// given (core/keys.rs). It counts only with the game's window or the menu
+/// in front, so it still moves between buttons in Omoio's own window, and
+/// never with Alt, Shift or Ctrl held, so Alt+Tab still switches programs.
+/// None of the emulators gives it a job in Omoio's setup: Dolphin's Tab
+/// hotkey is left out of the Hotkeys.ini Omoio writes
+/// (backends/dolphin/settings.rs, `quiet_hotkeys`), and RPCS3 and Cemu have
+/// none (rpcs3qt/shortcut_settings.cpp lines 73 to 94, build 0.0.43-20344;
+/// MainWindow::OnKeyUp, Cemu v2.6).
+const SECOND_MENU_KEY: VIRTUAL_KEY = VK_TAB;
+
 /// Whether the menu key went down since the last look, from whether it was
 /// down then (`was`), is down now (`down`), and Windows' note that it went
 /// down since the last ask (`tapped`). Looked at every 50 ms, a tap of about
@@ -84,9 +100,9 @@ fn key_went_down(was: bool, down: bool, tapped: bool) -> bool {
     !was && (down || tapped)
 }
 
-/// Reads the menu key, remembering in `was` whether it was down.
-fn menu_key_pressed(was: &mut bool) -> bool {
-    let state = unsafe { GetAsyncKeyState(i32::from(MENU_KEY.0)) } as u16;
+/// Reads `key`, remembering in `was` whether it was down.
+fn menu_key_pressed(key: VIRTUAL_KEY, was: &mut bool) -> bool {
+    let state = unsafe { GetAsyncKeyState(i32::from(key.0)) } as u16;
     let down = state & 0x8000 != 0;
     let pressed = key_went_down(*was, down, state & 0x0001 != 0);
     *was = down;
@@ -103,10 +119,26 @@ fn omoio_or_game_in_front(game: Option<isize>) -> bool {
     front != 0 && (Some(front) == game || overlay::process_of(front) == std::process::id())
 }
 
+fn key_held(key: VIRTUAL_KEY) -> bool {
+    let state = unsafe { GetAsyncKeyState(i32::from(key.0)) } as u16;
+    state & 0x8000 != 0
+}
+
 /// Whether Shift or Ctrl is held with the menu key.
 fn with_shift_or_ctrl() -> bool {
-    let held = |key: VIRTUAL_KEY| unsafe { GetAsyncKeyState(i32::from(key.0)) } as u16 & 0x8000 != 0;
-    held(VK_SHIFT) || held(VK_CONTROL)
+    key_held(VK_SHIFT) || key_held(VK_CONTROL)
+}
+
+/// Whether the game's window or the menu is in front, for `SECOND_MENU_KEY`.
+fn game_or_menu_in_front(app: &AppHandle, game: Option<isize>) -> bool {
+    use crate::backends::rpcs3::overlay;
+    let front = overlay::front();
+    let menu = app
+        .get_webview_window(LABEL)
+        .filter(|_| showing(app))
+        .and_then(|window| window.hwnd().ok())
+        .map(|hwnd| hwnd.0 as isize);
+    front != 0 && (Some(front) == game || Some(front) == menu)
 }
 
 fn data_dir(app: &AppHandle) -> Result<PathBuf, String> {
@@ -660,8 +692,9 @@ pub fn watch(app: AppHandle, pid: u32) {
         let mut ticks = 0u32;
         // Windows keeps its note of a press until asked, so one from before
         // the game started is cleared rather than taken for a press now.
-        let mut key_was = false;
-        menu_key_pressed(&mut key_was);
+        let (mut key_was, mut second_was) = (false, false);
+        menu_key_pressed(MENU_KEY, &mut key_was);
+        menu_key_pressed(SECOND_MENU_KEY, &mut second_was);
         loop {
             std::thread::sleep(Duration::from_millis(50));
             ticks = ticks.wrapping_add(1);
@@ -670,7 +703,8 @@ pub fn watch(app: AppHandle, pid: u32) {
             }
             // Read every time, in front or not, so a press meant for another
             // program is used up rather than kept for later.
-            let key = menu_key_pressed(&mut key_was);
+            let key = menu_key_pressed(MENU_KEY, &mut key_was);
+            let second = menu_key_pressed(SECOND_MENU_KEY, &mut second_was);
             let session = app.state::<Session>();
             if session.pid() != Some(pid) {
                 let handle = app.clone();
@@ -692,7 +726,11 @@ pub fn watch(app: AppHandle, pid: u32) {
                 .find(|pad| crate::pads::held(&pad.device).is_some_and(|held| held.iter().any(|h| *h == wanted)));
             let now = pressing.is_some();
             let by_pad = now && !was;
-            let by_key = key && !with_shift_or_ctrl() && omoio_or_game_in_front(session.window());
+            let by_key = (key && !with_shift_or_ctrl() && omoio_or_game_in_front(session.window()))
+                || (second
+                    && !with_shift_or_ctrl()
+                    && !key_held(VK_MENU)
+                    && game_or_menu_in_front(&app, session.window()));
             if by_pad || by_key {
                 if let Some(pad) = pressing.filter(|_| by_pad) {
                     *FAMILY.lock().unwrap() = pad.family;

@@ -59,9 +59,10 @@ import swapperIcon from "./icons/swappers.svg";
 const COLUMNS = 5;
 
 /// The keyboard key that opens and closes the menu, as Omoio reads it
-/// (MENU_KEY in src-tauri/src/portal_menu.rs). The page itself does nothing
+/// (SECOND_MENU_KEY in src-tauri/src/portal_menu.rs; Insert works too, but not
+/// every keyboard has one). The page itself does nothing
 /// with it: Omoio reads it from wherever it is pressed.
-const MENU_KEY = "Insert";
+const MENU_KEY = "Tab";
 
 /// A direction held down keeps moving after a pause, as on a console.
 const REPEAT_AFTER = 380;
@@ -2081,8 +2082,9 @@ function renderFoot(): HTMLElement {
   for (const [input, words] of hints) {
     const hint = node("span", "portal-hint");
     hint.append(node("kbd", "", nameOf(family, input)));
-    // The keyboard's Insert opens and closes the menu as the pad's button
-    // does (MENU_KEY in src-tauri/src/portal_menu.rs), for a player whose
+    // The keyboard's Tab, on every keyboard, opens and closes the menu as
+    // the pad's button does, and so does Insert (MENU_KEY and
+    // SECOND_MENU_KEY in src-tauri/src/portal_menu.rs), for a player whose
     // pad Omoio can't read, so it is named where the menu says how to close.
     if (input === "East" && closing) hint.append(node("span", "portal-or", "or"), node("kbd", "", MENU_KEY));
     hint.append(words);

@@ -57,7 +57,7 @@ const MOUSE: [(&str, &str); 11] = [
 /// Keys named the same whatever the layout.
 ///
 /// Qt's words, from its `keyname` table (qkeysequence.cpp, Qt 6.12.0): Space
-/// line 391, Tab 393, Backspace 395, Return 396 (Enter is the keypad's own),
+/// line 391, Backspace 395, Return 396 (Enter is the keypad's own),
 /// Del 399, Home 403, End 404, Left 405, Up 406, Right 407, Down 408, PgUp
 /// 409, PgDown 410, CapsLock 411.
 ///
@@ -66,11 +66,10 @@ const MOUSE: [(&str, &str); 11] = [
 /// reads as the same key (line 985): its other name, "Num+,", ends in the
 /// comma RPCS3 splits a button's keys at (`cfg_pad::get_combos`,
 /// pad_config.cpp lines 14 to 53), and comes back as "Num+", which is no key.
-const FIXED: [(&str, &str); 32] = [
+const FIXED: [(&str, &str); 31] = [
     ("Space", "Space"),
     ("Enter", "Return"),
     ("Backspace", "Backspace"),
-    ("Tab", "Tab"),
     ("CapsLock", "CapsLock"),
     ("Home", "Home"),
     ("End", "End"),

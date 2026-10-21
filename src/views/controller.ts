@@ -440,7 +440,7 @@ function keyboardBoard(
   const how = document.createElement("div");
   how.className = "note plain";
   how.textContent =
-    "The mouse aims on PS3, Wii and Wii U. On Wii U, what it turns can be changed in a game's emulator settings. Insert opens the portal menu, and changes take effect the next time a game starts.";
+    "The mouse aims on PS3, Wii and Wii U. On Wii U, what it turns can be changed in a game's emulator settings. Insert or Tab opens the portal menu, and changes take effect the next time a game starts.";
 
   return { parts: [speed, live, groups], how };
 }
