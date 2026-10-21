@@ -28,8 +28,10 @@
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
   <link rel="manifest" href="/site.webmanifest">
-  <link rel="stylesheet" href="styles.css">
-  <script src="site.js" defer></script>
+  <!-- Cloudflare tells browsers to keep files for hours, so a changed stylesheet
+       or script gets a new ?v= here or visitors see the old one. -->
+  <link rel="stylesheet" href="styles.css?v=2">
+  <script src="site.js?v=2" defer></script>
   <!-- What search engines and AI tools read about the app. The questions mirror the Questions section; change both together. -->
   <script type="application/ld+json">
   {
