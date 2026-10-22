@@ -877,22 +877,25 @@ const ENGLISH: &str = "175";
 ///   volume someone set in Cemu stays.
 /// - The portal server of the build of Cemu made for Omoio (portal.rs) is
 ///   on for a Skylanders game, listening on `port`, and off for any other,
-///   so no port is held for a game that has no portal. A file that never
-///   had it is left without it for a game with no portal. Cemu 2.6 reads
-///   only the settings it knows (`CemuConfig::Load`, CemuConfig.cpp lines 20
-///   to 351) and makes the file afresh from them whenever it saves
+///   so no port is held for a game that has no portal. Off is the build's
+///   default, so a file that never had the element is left without it for
+///   a game with no portal. The build reads `<SkylandersIPC>` as it starts
+///   and saves it with its other settings (its CemuConfig.cpp lines 352 to
+///   355 and 558 to 561, commit 4607241, read 22 October 2026). Cemu 2.6
+///   reads only the settings it knows (`CemuConfig::Load`, CemuConfig.cpp
+///   lines 20 to 351) and makes the file afresh from them whenever it saves
 ///   (`XMLConfig::Save`, XMLConfig.h lines 389 to 438, as from its settings
-///   window, GeneralSettings2.cpp line 1075; read 22 October 2026), so
-///   there the element does nothing and is gone after Cemu's next save,
-///   until it is written again before the next game.
+///   window, GeneralSettings2.cpp line 1075), so there the element does
+///   nothing and is gone after Cemu's next save, until it is written again
+///   before the next game.
 fn tune_settings(settings: &Path, skylanders: bool, port: u16) -> std::io::Result<()> {
     let before = std::fs::read_to_string(settings)?;
     let portal = if skylanders { "true" } else { "false" };
     let mut text = set_setting(&before, &[], "language", ENGLISH);
     text = set_setting(&text, &["EmulatedUsbDevices"], "EmulateSkylanderPortal", portal);
-    if skylanders || setting(&text, &["SkylanderIPC"], "enabled").is_some() {
-        text = set_setting(&text, &["SkylanderIPC"], "enabled", portal);
-        text = set_setting(&text, &["SkylanderIPC"], "port", &port.to_string());
+    if skylanders || setting(&text, &["SkylandersIPC"], "enabled").is_some() {
+        text = set_setting(&text, &["SkylandersIPC"], "enabled", portal);
+        text = set_setting(&text, &["SkylandersIPC"], "port", &port.to_string());
     }
     text = set_setting(&text, &[], "fullscreen", "false");
     text = set_setting(&text, &[], "window_maximized", "false");
@@ -1718,8 +1721,8 @@ Deluxe");
         let file = dir.join("settings.xml");
         let server = |text: &str| {
             (
-                setting(text, &["SkylanderIPC"], "enabled"),
-                setting(text, &["SkylanderIPC"], "port"),
+                setting(text, &["SkylandersIPC"], "enabled"),
+                setting(text, &["SkylandersIPC"], "port"),
             )
         };
 
@@ -1727,12 +1730,12 @@ Deluxe");
         write_first_settings(&dir).unwrap();
         tune_settings(&file, false, 28014).unwrap();
         let text = std::fs::read_to_string(&file).unwrap();
-        assert!(!text.contains("SkylanderIPC"), "{text}");
+        assert!(!text.contains("SkylandersIPC"), "{text}");
 
         tune_settings(&file, true, 28014).unwrap();
         let text = std::fs::read_to_string(&file).unwrap();
         assert!(
-            text.contains("<SkylanderIPC><enabled>true</enabled><port>28014</port>\n</SkylanderIPC>\n</content>"),
+            text.contains("<SkylandersIPC><enabled>true</enabled><port>28014</port>\n</SkylandersIPC>\n</content>"),
             "inside <content>, where Cemu's settings are: {text}"
         );
 
@@ -1740,25 +1743,25 @@ Deluxe");
         tune_settings(&file, true, 51234).unwrap();
         let text = std::fs::read_to_string(&file).unwrap();
         assert_eq!(server(&text), (Some("true".to_string()), Some("51234".to_string())));
-        assert_eq!(text.matches("<SkylanderIPC>").count(), 1, "replaced, not added twice: {text}");
+        assert_eq!(text.matches("<SkylandersIPC>").count(), 1, "replaced, not added twice: {text}");
         assert_eq!(text.matches("<port>").count(), 1, "{text}");
 
         tune_settings(&file, false, 28014).unwrap();
         let text = std::fs::read_to_string(&file).unwrap();
         assert_eq!(server(&text), (Some("false".to_string()), Some("28014".to_string())));
-        assert_eq!(text.matches("<SkylanderIPC>").count(), 1, "{text}");
+        assert_eq!(text.matches("<SkylandersIPC>").count(), 1, "{text}");
 
         // As Cemu saves it, with its own layout, and the element written
         // over again.
         let saved = CEMU_SETTINGS.replace(
             "</content>",
-            "    <SkylanderIPC>\n        <enabled>false</enabled>\n        <port>28014</port>\n    </SkylanderIPC>\n</content>",
+            "    <SkylandersIPC>\n        <enabled>false</enabled>\n        <port>28014</port>\n    </SkylandersIPC>\n</content>",
         );
         std::fs::write(&file, &saved).unwrap();
         tune_settings(&file, true, 28014).unwrap();
         let text = std::fs::read_to_string(&file).unwrap();
         assert_eq!(server(&text), (Some("true".to_string()), Some("28014".to_string())));
-        assert!(text.contains("<SkylanderIPC>\n        <enabled>true</enabled>\n        <port>28014</port>"), "{text}");
+        assert!(text.contains("<SkylandersIPC>\n        <enabled>true</enabled>\n        <port>28014</port>"), "{text}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

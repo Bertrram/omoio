@@ -186,10 +186,12 @@ static PORT: AtomicU16 = AtomicU16::new(DEFAULT_PORT);
 /// commands. Any other answer, or none, is a Cemu without it.
 const HELLO: &str = "ok cemu-portal 1";
 
-/// How long after Cemu starts its server is asked for. Cemu reads the
-/// server's settings as it starts, but in the first minute of a game it is
-/// still loading and building shaders (`START_WAIT`), so it is given that
-/// long.
+/// How long after Cemu starts its server is asked for. The server starts
+/// only with the game, once Cemu has put its portal in, and stops with it
+/// (`cemu_initForGame` and `ShutdownTitle`, the build's CafeSystem.cpp lines
+/// 382 to 384 and 993, commit 4607241, read 22 October 2026). In the first
+/// minute of a game Cemu is still loading and building shaders
+/// (`START_WAIT`), so it is given that long.
 const SERVER_WAIT: Duration = Duration::from_secs(60);
 /// Between tries at the server while the game starts.
 const SERVER_RETRY: Duration = Duration::from_millis(250);
@@ -325,8 +327,8 @@ fn on_portal(server: &Server) -> Result<Vec<String>, String> {
 /// Puts the figure in `file` on in `slot` through the server. The window's
 /// Load takes off what its row held first (`EmulatedUSBDeviceFrame.cpp`
 /// lines 283 to 300), and the server's `load` wants the slot empty, as
-/// RPCS3's does ("no free slot", `SkylanderPortalIPC.cpp` lines 88 to 90),
-/// so a full slot is emptied and the figure tried again.
+/// RPCS3's does ("no free slot", the build's `SkylanderPortalIPC.cpp` lines
+/// 136 to 138), so a full slot is emptied and the figure tried again.
 fn load_through(server: &Server, slot: usize, file: &Path) -> Result<(), String> {
     let path = file.to_str().ok_or(LOAD_FAILED)?;
     let loaded = match server.load(slot, path) {
@@ -354,7 +356,10 @@ fn clear_through(server: &Server, slot: usize) -> Result<(), String> {
 /// Has the server make a figure of `character` into `file`, as the figure
 /// maker would (`CreateSkylander`, `Skylander.cpp` lines 857 to 898), and
 /// puts it on in `slot`, which the maker's window does itself once it has
-/// made one (`EmulatedUSBDeviceFrame.cpp` lines 311 to 319).
+/// made one (`EmulatedUSBDeviceFrame.cpp` lines 311 to 319). The server
+/// won't make it over a file that is there (the build's
+/// `SkylanderPortalIPC.cpp` lines 166 to 170), and none is: the menu picks
+/// a name not taken (`portal_menu::new_figure`).
 fn create_through(server: &Server, slot: usize, character: &Character, file: &Path) -> Result<(), String> {
     let path = file.to_str().ok_or(MAKE_FAILED)?;
     match server.ask(&format!("create {} {} {path}", character.id, character.variant)) {
@@ -687,9 +692,13 @@ pub fn tidy(pid: u32) {
 /// `ASK_AGAIN` is taken as lost and sent again.
 ///
 /// A portal server that answered keeps the game deaf itself, with no
-/// window, and the window is used only if it doesn't do as asked. Letting
-/// the game hear also closes any input settings window, which there is when
-/// the game was made deaf before the server answered.
+/// window: the build's `VPADRead` and `_KPADRead` skip every read while it
+/// is hushed, as while the window is open (vpad.cpp line 267, padscore.cpp
+/// line 474, commit 4607241). The window is used only if the server doesn't
+/// do as asked. The two are apart, and `hush off` doesn't let the game hear
+/// while the window is open, so letting it hear also closes any input
+/// settings window, which there is when the game was made deaf before the
+/// server answered.
 pub fn hush(pid: u32, hushed: bool) -> Result<(), String> {
     let done = answered(pid).map(|server| hush_through(&server, hushed));
     if !hushed {
@@ -1347,12 +1356,13 @@ mod tests {
     }
 
     /// A server that answers as the one in the build of Cemu made for Omoio
-    /// is to, on a portal of sixteen slots, with figures made and read where
-    /// Cemu makes and reads a figure's id and variant (`CreateSkylander`,
-    /// `Skylander.cpp` lines 857 to 898; `LoadSkylanderPath`,
-    /// `EmulatedUSBDeviceFrame.cpp` lines 302 and 303). It takes
-    /// `connections` commands, one to a connection, and each line it read
-    /// comes back through `heard`.
+    /// does (`ProcessCommand`, its `SkylanderPortalIPC.cpp` lines 189 to
+    /// 252, commit 4607241), on a portal of sixteen slots, with figures made
+    /// and read where Cemu makes and reads a figure's id and variant
+    /// (`CreateSkylander`, `Skylander.cpp` lines 857 to 898;
+    /// `LoadSkylanderPath`, `EmulatedUSBDeviceFrame.cpp` lines 302 and 303).
+    /// It takes `connections` commands, one to a connection, and each line it
+    /// read comes back through `heard`.
     fn fork_like(connections: usize) -> (Server, mpsc::Receiver<String>) {
         let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
         let port = listener.local_addr().unwrap().port();
