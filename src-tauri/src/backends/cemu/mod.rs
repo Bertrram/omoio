@@ -13,11 +13,13 @@ pub mod packs;
 pub mod portal;
 pub mod release;
 pub mod sdl;
+pub mod start_errors;
 pub mod wua;
 
 use crate::core::console::{Console, Features};
 use crate::core::import_warning::Imported;
 use crate::core::library::Game;
+use crate::core::settings::Settings;
 use crate::core::types::Progress;
 use futures_util::StreamExt;
 use sha2::{Digest, Sha256};
@@ -40,6 +42,38 @@ pub fn install_dir(app: &AppHandle) -> Result<PathBuf, String> {
 
 fn exe_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(install_dir(app)?.join("Cemu.exe"))
+}
+
+fn start(app: &AppHandle, game: &Game) -> Result<u32, String> {
+    let exe = exe_path(app)?;
+    if !exe.is_file() {
+        return Err("Install Cemu from the Emulators screen first, then you can play.".to_string());
+    }
+    if !game.path.exists() {
+        return Err("This game isn't where it was. Reconnect the drive it's on.".to_string());
+    }
+    // Known by name as well as by id: a disc image's id is known only once
+    // Cemu has run it, and a game's first start is when it needs this.
+    let pro = crate::core::figures::game_from_title(&game.title) == Some(crate::core::figures::Game::TrapTeam)
+        || title_id_for(app, game).is_some_and(|id| controllers::PRO_FIRST.contains(&id.as_str()));
+    let _ = controllers::first_player(app, pro);
+    // The game's own folder or .wua, so Cemu reads its meta and starts it
+    // as a proper title rather than in the standalone mode it keeps for
+    // loose programs. Given a .wua, Cemu starts the title `game_in_wua`
+    // picks (checked with Trap Team, 6 October 2026). Not `-f`: Omoio places the picture itself, in its window
+    // or across the screen, the same as it does for RPCS3.
+    let child = command(&exe)
+        .arg("-g")
+        .arg(&game.path)
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    let pid = child.id();
+    crate::dsu::follow(pid);
+    start_errors::watch(child, game.path.to_string_lossy().into_owned());
+    if is_skylanders(&game.title) {
+        portal::prepare(pid);
+    }
+    Ok(pid)
 }
 
 pub fn detect_version(app: &AppHandle) -> Option<String> {
@@ -69,9 +103,9 @@ pub async fn newest_version() -> Result<String, String> {
     Ok(release::version().to_string())
 }
 
-/// Downloads the release Omoio was checked against from Cemu's own GitHub
-/// page, checks it is the file that was checked, and unpacks it into Omoio's
-/// folder. Returns the version installed.
+/// Downloads the release Omoio was checked against, its own build of Cemu
+/// (release.rs), checks it is the file that was published, and unpacks it
+/// into Omoio's folder. Returns the version installed.
 pub async fn install(app: AppHandle, cancel: Arc<AtomicBool>) -> Result<String, String> {
     let client = reqwest::Client::new();
 
@@ -301,6 +335,41 @@ fn title_id_in_log(log: &str) -> Option<String> {
 }
 
 const NOT_PLAYED_YET: &str = "Play this game once, and its settings can be changed here.";
+
+/// The game settings sheet's key for what the mouse turns. The choice is
+/// Omoio's, not Cemu's, and is kept in Omoio's settings; it sits in this
+/// sheet because it is made for one game.
+const MOUSE_AIM: &str = "Controls\nMouse turns";
+
+fn mouse_aim_option() -> crate::core::game_settings::Setting {
+    crate::core::game_settings::Setting {
+        key: MOUSE_AIM.to_string(),
+        group: "Controls".to_string(),
+        name: "Mouse turns".to_string(),
+        label: "Mouse turns".to_string(),
+        hint: "What moving the mouse turns when you play on the keyboard and mouse. Left on default, it is \
+               the left stick in Skylanders, whose right stick has nothing to do, and the stick your layout \
+               gives it in other games. If the mouse doesn't aim something, such as a cannon, try the other \
+               stick. Tilt works in games played on the GamePad."
+            .to_string(),
+        kind: "choice".to_string(),
+        choices: &crate::keyboard_pad::AIM_CHOICES,
+        default: String::new(),
+        min: 0,
+        max: 0,
+        common: true,
+    }
+}
+
+fn settings_file(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(app.path().data_dir().map_err(|e| e.to_string())?.join("Omoio").join("settings.json"))
+}
+
+/// What was chosen for the mouse to turn in this game, if anything was.
+fn mouse_aim(app: &AppHandle, game: &Game) -> Option<String> {
+    let file = settings_file(app).ok()?;
+    Settings::load(&file).mouse_aims.remove(&game.title_id)
+}
 
 /// The title id Cemu files a game's settings under. An unpacked title is
 /// imported under it already. A disc image is encrypted, so its id is known
@@ -712,9 +781,13 @@ fn read_meta(xml: &str) -> Result<(String, String, Option<String>), String> {
 /// that leaves it out is read as OpenGL (`CemuConfig.cpp`), while a Cemu that
 /// went through its own first start uses Vulkan. Cemu's own update check is
 /// off because Omoio keeps it up to date, and a prompt from Cemu would land
-/// on top of the game. Everything else is Cemu's default.
+/// on top of the game. Its language is English (`ENGLISH`), since a Cemu
+/// starting with no settings.xml takes Windows' language whatever the file
+/// written later says (`CemuApp::OnInit`, CemuApp.cpp lines 264 to 275,
+/// v2.6). Everything else is Cemu's default.
 const FIRST_SETTINGS: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
 <content>\n\
+\x20   <language>175</language>\n\
 \x20   <check_update>false</check_update>\n\
 \x20   <Graphic>\n\
 \x20       <api>1</api>\n\
@@ -791,10 +864,33 @@ fn set_setting(text: &str, parents: &[&str], name: &str, value: &str) -> String 
 /// Windows uses for a minimised window.
 const OFF_SCREEN: &str = "-30000";
 
+/// Cemu's language setting for English: `wxLANGUAGE_ENGLISH`, 175 in the
+/// wxWidgets Cemu v2.6 is built with, 3.2.5 (vcpkg.json's builtin-baseline
+/// a4275b7, whose ports/wxwidgets is 3.2.5; include/wx/language.h at
+/// v3.2.5, counted and checked against misc/languages/genlang.py; read 20
+/// October 2026). wxWidgets 3.3 numbers it 177, so a Cemu built on it needs
+/// this read again.
+///
+/// Omoio finds Cemu's windows, menu items and buttons by their English names
+/// (portal.rs, convert.rs), and Cemu shows its interface in Windows' own
+/// language when its setting is the default, 0 (`CemuApp::OnInit`, lines
+/// 264 to 275). Its release ships 18 translations (bin/resources/<lang>/
+/// cemu.mo), so on a Spanish or German Windows the portal menu found
+/// nothing it knew (Discord, perecisas, 16 October 2026). English has no
+/// catalogue, and `CemuApp::LocalizeUI` (lines 417 to 436) loads none for a
+/// language without one, so the interface stays in the English it is
+/// written in. 175 is also what Cemu's own settings window saves for
+/// English (GeneralSettings2.cpp lines 960 to 973), so the setting survives
+/// a save from there; `wxLANGUAGE_ENGLISH_US` would read as English too but
+/// matches no entry in that list and is saved back as 0.
+const ENGLISH: &str = "175";
+
 /// What Omoio sets in Cemu's settings.xml before each game. Cemu v2.6 reads
 /// all of these at start (`CemuConfig.cpp`), and a user's own sound device is
 /// never replaced.
 ///
+/// - Cemu's interface is in English (`ENGLISH`), which Omoio finds its
+///   windows and buttons by.
 /// - The Skylanders portal is plugged in for a Skylanders game only. Cemu
 ///   leaves it out, and a game finds only a portal that is there.
 /// - Cemu starts windowed. Omoio places the picture itself, and Cemu keeps
@@ -811,10 +907,28 @@ const OFF_SCREEN: &str = "-30000";
 ///   cloud PC's stream, is next to silent: Swap Force measured 0.010 of full
 ///   level at 20 and 0.353 at 100. Only that starting value is raised, so a
 ///   volume someone set in Cemu stays.
-fn tune_settings(settings: &Path, skylanders: bool) -> std::io::Result<()> {
+/// - The portal server of the build of Cemu made for Omoio (portal.rs) is
+///   on for a Skylanders game, listening on `port`, and off for any other,
+///   so no port is held for a game that has no portal. Off is the build's
+///   default, so a file that never had the element is left without it for
+///   a game with no portal. The build reads `<SkylandersIPC>` as it starts
+///   and saves it with its other settings (its CemuConfig.cpp lines 352 to
+///   355 and 558 to 561, commit 4607241, read 22 October 2026). Cemu 2.6
+///   reads only the settings it knows (`CemuConfig::Load`, CemuConfig.cpp
+///   lines 20 to 351) and makes the file afresh from them whenever it saves
+///   (`XMLConfig::Save`, XMLConfig.h lines 389 to 438, as from its settings
+///   window, GeneralSettings2.cpp line 1075), so there the element does
+///   nothing and is gone after Cemu's next save, until it is written again
+///   before the next game.
+fn tune_settings(settings: &Path, skylanders: bool, port: u16) -> std::io::Result<()> {
     let before = std::fs::read_to_string(settings)?;
     let portal = if skylanders { "true" } else { "false" };
-    let mut text = set_setting(&before, &["EmulatedUsbDevices"], "EmulateSkylanderPortal", portal);
+    let mut text = set_setting(&before, &[], "language", ENGLISH);
+    text = set_setting(&text, &["EmulatedUsbDevices"], "EmulateSkylanderPortal", portal);
+    if skylanders || setting(&text, &["SkylandersIPC"], "enabled").is_some() {
+        text = set_setting(&text, &["SkylandersIPC"], "enabled", portal);
+        text = set_setting(&text, &["SkylandersIPC"], "port", &port.to_string());
+    }
     text = set_setting(&text, &[], "fullscreen", "false");
     text = set_setting(&text, &[], "window_maximized", "false");
     text = set_setting(&text, &["window_position"], "x", OFF_SCREEN);
@@ -874,7 +988,8 @@ impl super::EmulatorBackend for Cemu {
     }
 
     fn features(&self) -> Features {
-        // Starting games, the Skylanders portal through Cemu's own window,
+        // Starting games, the Skylanders portal through Cemu's own window
+        // or the portal server of the build made for Omoio (portal.rs),
         // Cemu's settings for a game, its community's graphic packs and
         // backups of a game's save, which sits where bringing saves over
         // from the user's own Cemu found them. Nothing else is offered until
@@ -887,6 +1002,10 @@ impl super::EmulatorBackend for Cemu {
             packs: true,
             saves: true,
             quiet_behind: true,
+            // Cemu reads no mouse, but the pad Omoio serves it for a keyboard
+            // player turns a stick with the mouse (controllers.rs,
+            // `serve_keyboard`).
+            mouse_aims: true,
             ..Features::default()
         }
     }
@@ -935,13 +1054,27 @@ impl super::EmulatorBackend for Cemu {
         }
         let portable = dir.join("portable");
         let _ = write_first_settings(&portable);
-        let _ = tune_settings(&portable.join("settings.xml"), is_skylanders(&game.title));
+        let skylanders = is_skylanders(&game.title);
+        let _ = tune_settings(&portable.join("settings.xml"), skylanders, portal::server_port(skylanders));
+        if skylanders {
+            if let Ok(data) = app.path().data_dir() {
+                portal::know_kept_names(&data.join("Omoio").join(crate::core::figures::characters_file(Console::WiiU)));
+            }
+        }
         packs::apply(app);
+        // Cemu asks for a served pad only as it starts.
+        controllers::serve_keyboard(app, game);
         Ok(())
     }
 
     fn tidy_window(&self, pid: u32, _game: isize) {
         portal::tidy(pid);
+    }
+
+    fn session_notes(&self, pid: u32) -> Vec<String> {
+        let mut notes = start_errors::notes(pid);
+        notes.extend(portal::way_used(pid).map(str::to_string));
+        notes
     }
 
     fn hush(&self, pid: u32, hushed: bool) -> Result<(), String> {
@@ -980,12 +1113,18 @@ impl super::EmulatorBackend for Cemu {
 
     fn game_settings(&self, app: &AppHandle, game: &Game) -> Result<crate::core::game_settings::GameSettings, String> {
         let title_id = title_id_for(app, game).ok_or(NOT_PLAYED_YET)?;
+        let mut options = game_profile::options();
+        options.push(mouse_aim_option());
+        let mut chosen = game_profile::read(&install_dir(app)?, &title_id);
+        if let Some(aim) = mouse_aim(app, game) {
+            chosen.insert(MOUSE_AIM.to_string(), aim);
+        }
         Ok(crate::core::game_settings::GameSettings {
             emulator: "Cemu".to_string(),
-            options: game_profile::options(),
-            chosen: game_profile::read(&install_dir(app)?, &title_id),
+            options,
+            chosen,
             reasons: std::collections::BTreeMap::new(),
-            common_groups: ["Graphics", "CPU", "General"].map(String::from).to_vec(),
+            common_groups: ["Graphics", "CPU", "General", "Controls"].map(String::from).to_vec(),
         })
     }
 
@@ -996,7 +1135,20 @@ impl super::EmulatorBackend for Cemu {
         chosen: &crate::core::game_settings::Chosen,
     ) -> Result<(), String> {
         let title_id = title_id_for(app, game).ok_or(NOT_PLAYED_YET)?;
-        game_profile::write(&install_dir(app)?, &title_id, &game.title, chosen)
+        let mut chosen = chosen.clone();
+        let aim = chosen
+            .remove(MOUSE_AIM)
+            .filter(|aim| crate::keyboard_pad::AIM_CHOICES.contains(&aim.as_str()));
+        let file = settings_file(app)?;
+        let mut settings = Settings::load(&file);
+        if settings.mouse_aims.get(&game.title_id) != aim.as_ref() {
+            match aim {
+                Some(aim) => settings.mouse_aims.insert(game.title_id.clone(), aim),
+                None => settings.mouse_aims.remove(&game.title_id),
+            };
+            settings.save(&file).map_err(|_| "Couldn't save this game's settings.".to_string())?;
+        }
+        game_profile::write(&install_dir(app)?, &title_id, &game.title, &chosen)
     }
 
     /// A disc image's title id is known only once Cemu has run it, and a
@@ -1095,29 +1247,14 @@ impl super::EmulatorBackend for Cemu {
     }
 
     fn launch(&self, app: &AppHandle, game: &Game) -> Result<u32, String> {
-        let exe = exe_path(app)?;
-        if !exe.is_file() {
-            return Err("Install Cemu from the Emulators screen first, then you can play.".to_string());
+        let started = start(app, game);
+        if started.is_err() {
+            // The pad `prepare` served was for this start. Left alone, it
+            // would wait a minute for a Cemu that never comes (dsu.rs,
+            // `START_WITHIN`).
+            crate::dsu::stop();
         }
-        if !game.path.exists() {
-            return Err("This game isn't where it was. Reconnect the drive it's on.".to_string());
-        }
-        // Known by name as well as by id: a disc image's id is known only once
-        // Cemu has run it, and a game's first start is when it needs this.
-        let pro = crate::core::figures::game_from_title(&game.title) == Some(crate::core::figures::Game::TrapTeam)
-            || title_id_for(app, game).is_some_and(|id| controllers::PRO_FIRST.contains(&id.as_str()));
-        let _ = controllers::first_player(app, pro);
-        // The game's own folder or .wua, so Cemu reads its meta and starts it
-        // as a proper title rather than in the standalone mode it keeps for
-        // loose programs. Given a .wua, Cemu starts the title `game_in_wua`
-        // picks (checked with Trap Team, 6 October 2026). Not `-f`: Omoio places the picture itself, in its window
-        // or across the screen, the same as it does for RPCS3.
-        let child = command(&exe)
-            .arg("-g")
-            .arg(&game.path)
-            .spawn()
-            .map_err(|e| e.to_string())?;
-        Ok(child.id())
+        started
     }
 
     fn detect_version(&self, app: &AppHandle) -> Option<String> {
@@ -1555,12 +1692,21 @@ Deluxe");
     }
 
     #[test]
+    fn cemu_is_set_to_english_over_windows_language() {
+        assert!(FIRST_SETTINGS.contains(&format!("<language>{ENGLISH}</language>")));
+        let system = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<content>\n    <language>0</language>\n</content>\n";
+        let text = set_setting(system, &[], "language", ENGLISH);
+        assert_eq!(text.matches("<language>").count(), 1, "{text}");
+        assert!(text.contains("<language>175</language>"), "{text}");
+    }
+
+    #[test]
     fn settings_are_switched_in_place_or_added() {
         let dir = scratch("portal");
         let file = dir.join("settings.xml");
 
         write_first_settings(&dir).unwrap();
-        tune_settings(&file, true).unwrap();
+        tune_settings(&file, true, 28014).unwrap();
         let text = std::fs::read_to_string(&file).unwrap();
         assert!(text.contains("<EmulateSkylanderPortal>true</EmulateSkylanderPortal>"), "{text}");
         assert!(text.contains("<api>1</api>"), "the rest is left alone");
@@ -1570,12 +1716,63 @@ Deluxe");
         assert!(text.contains("<window_position><x>-30000</x>"), "{text}");
         assert!(text.contains("<TVVolume>100</TVVolume>"), "{text}");
         assert!(text.contains("<y>-30000</y>"), "{text}");
+        assert_eq!(text.matches("<language>175</language>").count(), 1, "{text}");
 
-        tune_settings(&file, false).unwrap();
+        tune_settings(&file, false, 28014).unwrap();
         let text = std::fs::read_to_string(&file).unwrap();
         assert!(text.contains("<EmulateSkylanderPortal>false</EmulateSkylanderPortal>"));
         assert_eq!(text.matches("<EmulatedUsbDevices>").count(), 1, "switched, not added twice");
         assert_eq!(text.matches("<Notification>").count(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_portal_server_is_on_for_a_skylanders_game_only() {
+        let dir = scratch("portal-server");
+        let file = dir.join("settings.xml");
+        let server = |text: &str| {
+            (
+                setting(text, &["SkylandersIPC"], "enabled"),
+                setting(text, &["SkylandersIPC"], "port"),
+            )
+        };
+
+        // Another game first: a file that never had the element stays so.
+        write_first_settings(&dir).unwrap();
+        tune_settings(&file, false, 28014).unwrap();
+        let text = std::fs::read_to_string(&file).unwrap();
+        assert!(!text.contains("SkylandersIPC"), "{text}");
+
+        tune_settings(&file, true, 28014).unwrap();
+        let text = std::fs::read_to_string(&file).unwrap();
+        assert!(
+            text.contains("<SkylandersIPC><enabled>true</enabled><port>28014</port>\n</SkylandersIPC>\n</content>"),
+            "inside <content>, where Cemu's settings are: {text}"
+        );
+
+        // Another port, when another program has Omoio's.
+        tune_settings(&file, true, 51234).unwrap();
+        let text = std::fs::read_to_string(&file).unwrap();
+        assert_eq!(server(&text), (Some("true".to_string()), Some("51234".to_string())));
+        assert_eq!(text.matches("<SkylandersIPC>").count(), 1, "replaced, not added twice: {text}");
+        assert_eq!(text.matches("<port>").count(), 1, "{text}");
+
+        tune_settings(&file, false, 28014).unwrap();
+        let text = std::fs::read_to_string(&file).unwrap();
+        assert_eq!(server(&text), (Some("false".to_string()), Some("28014".to_string())));
+        assert_eq!(text.matches("<SkylandersIPC>").count(), 1, "{text}");
+
+        // As Cemu saves it, with its own layout, and the element written
+        // over again.
+        let saved = CEMU_SETTINGS.replace(
+            "</content>",
+            "    <SkylandersIPC>\n        <enabled>false</enabled>\n        <port>28014</port>\n    </SkylandersIPC>\n</content>",
+        );
+        std::fs::write(&file, &saved).unwrap();
+        tune_settings(&file, true, 28014).unwrap();
+        let text = std::fs::read_to_string(&file).unwrap();
+        assert_eq!(server(&text), (Some("true".to_string()), Some("28014".to_string())));
+        assert!(text.contains("<SkylandersIPC>\n        <enabled>true</enabled>\n        <port>28014</port>"), "{text}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1610,13 +1807,13 @@ Deluxe");
             "<TVDevice>{0.0.0.00000000}.{abc}</TVDevice><TVVolume>55</TVVolume>",
         );
         std::fs::write(&file, &chosen).unwrap();
-        tune_settings(&file, true).unwrap();
+        tune_settings(&file, true, 28014).unwrap();
         let text = std::fs::read_to_string(&file).unwrap();
         assert!(text.contains("<TVDevice>{0.0.0.00000000}.{abc}</TVDevice>"), "{text}");
         assert!(text.contains("<TVVolume>55</TVVolume>"), "a volume someone chose stays: {text}");
 
         std::fs::write(&file, CEMU_SETTINGS).unwrap();
-        tune_settings(&file, true).unwrap();
+        tune_settings(&file, true, 28014).unwrap();
         let text = std::fs::read_to_string(&file).unwrap();
         assert!(text.contains("<TVDevice>default</TVDevice>"), "an empty one is filled in");
         let _ = std::fs::remove_dir_all(&dir);

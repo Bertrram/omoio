@@ -6,6 +6,7 @@
 
 pub mod cemu;
 pub mod dolphin;
+pub mod portal_ipc;
 pub mod qt;
 pub mod rpcs3;
 
@@ -257,6 +258,21 @@ pub trait EmulatorBackend: Sync {
     /// anything the emulator puts on the screen that doesn't belong over the
     /// game.
     fn tidy_window(&self, _pid: u32, _game: isize) {}
+
+    /// Has the emulator hold the mouse in `game`'s window itself, for one
+    /// whose mouse aiming needs more than the cursor kept inside the window
+    /// (cursor.rs), and says whether that was done or isn't needed. Called
+    /// with the game's window in front, until it says yes, once each time the
+    /// window has been shown.
+    fn hold_mouse(&self, _game: isize) -> bool {
+        true
+    }
+
+    /// Lines about what Omoio did in the emulator while the game started as
+    /// `pid` ran, added to the log kept of it once it has ended.
+    fn session_notes(&self, _pid: u32) -> Vec<String> {
+        Vec::new()
+    }
 
     /// Stops the running game hearing the pad while one of Omoio's menus is
     /// over it, or lets it hear again. An emulator that needs nothing done,

@@ -208,6 +208,9 @@ impl super::EmulatorBackend for Dolphin {
             portal: self.console == Console::Wii,
             saves: true,
             quiet_behind: true,
+            // The mouse moves the Wii Remote's pointer and a GameCube stick
+            // (controllers.rs).
+            mouse_aims: true,
             ..Features::default()
         }
     }

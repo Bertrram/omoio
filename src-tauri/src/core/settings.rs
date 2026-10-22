@@ -54,6 +54,11 @@ pub struct Settings {
     /// a place on the pad. The home button unless the user picks another.
     #[serde(default = "default_portal_button")]
     pub portal_button: String,
+    /// What the mouse turns for a keyboard-and-mouse player, by title id,
+    /// in the words the game settings sheet shows. Only games someone chose
+    /// for; any other has the one keyboard_pad.rs picks for it.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub mouse_aims: std::collections::BTreeMap<String, String>,
 }
 
 fn default_keep_sessions() -> usize {
@@ -80,6 +85,7 @@ impl Default for Settings {
             applied_fixes: Default::default(),
             recent_figures: Vec::new(),
             portal_button: default_portal_button(),
+            mouse_aims: Default::default(),
         }
     }
 }
@@ -130,6 +136,7 @@ mod tests {
             applied_fixes: Default::default(),
             recent_figures: vec!["Whirlwind.sky".to_string()],
             portal_button: "Back".to_string(),
+            mouse_aims: [("0005000010181f00".to_string(), "Right stick".to_string())].into(),
         };
         settings.save(&path).unwrap();
 
@@ -140,6 +147,7 @@ mod tests {
         assert_eq!(loaded.keep_sessions, 5);
         assert!(loaded.tuned);
         assert_eq!(loaded.tuned_scale, Some(200));
+        assert_eq!(loaded.mouse_aims["0005000010181f00"], "Right stick");
         let _ = std::fs::remove_file(&path);
     }
 

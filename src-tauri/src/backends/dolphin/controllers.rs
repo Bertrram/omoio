@@ -28,6 +28,13 @@
 //! A game's own layout goes in a profile of Dolphin's, which the game's own
 //! settings file names (`[Controls]` in User/GameSettings, read by
 //! `InputConfig::LoadConfig`).
+//!
+//! A player on the keyboard and mouse is bound to Dolphin's one device for
+//! both, `DInput/0/Keyboard Mouse` (`KeyboardMouse::GetName` and
+//! `DINPUT_SOURCE_NAME`, InputCommon/ControllerInterface/DInput/
+//! DInputKeyboardMouse.cpp lines 272 to 280 and DInput.h, Dolphin 2609a,
+//! read 20 October 2026), always there, so never waited for nor stood in
+//! for (`stand_in`).
 
 use super::ini;
 use crate::core::console::Console;
@@ -206,14 +213,212 @@ fn control(place: &str) -> Option<&'static str> {
 }
 
 /// What a Dolphin setting is bound to for this player: each place's input
-/// on their pad, joined with `|` so any of them presses it.
+/// on their pad, or each key and mouse input on the keyboard, joined with
+/// `|` so any of them presses it (`TOK_OR`, the larger of the two, in
+/// InputCommon/ControlReference/ExpressionParser.cpp lines 401 to 404,
+/// Dolphin 2609a). Every name is in backticks, as Dolphin's own defaults
+/// write them (`GCPad::LoadDefaults`, Core/HW/GCPadEmu.cpp lines 201 to
+/// 260): a bare `1` would be read as a number.
 fn expression(player: &Player, places: &[&str]) -> String {
+    if player.pad.is_keyboard() {
+        let mut bound: Vec<String> = Vec::new();
+        for input in places.iter().flat_map(|place| player.keys(place)) {
+            if let Some(name) = keyboard_input(input, player.mouse) {
+                if !bound.contains(&name) {
+                    bound.push(name);
+                }
+            }
+        }
+        return bound.join(" | ");
+    }
     places
         .iter()
         .filter_map(|place| control(player.input(place)))
         .map(|name| format!("`{name}`"))
         .collect::<Vec<_>>()
         .join(" | ")
+}
+
+/// Dolphin's device for the keyboard and mouse together.
+const KEYBOARD_MOUSE: &str = "DInput/0/Keyboard Mouse";
+
+/// Dolphin's names for the keys a player can be given, by DirectInput key
+/// code (`named_keys`, InputCommon/ControllerInterface/DInput/NamedKeys.h,
+/// Dolphin 2609a, read 20 October 2026; the codes are the `DIK_` values in
+/// the Windows SDK's dinput.h, 10.0.26100.0). Dolphin reads the keyboard
+/// through DirectInput's own key table (`c_dfDIKeyboard`,
+/// DInputKeyboardMouse.cpp line 81), whose codes are the keys' scan codes,
+/// so a key is named by where it sits whatever the keyboard layout, as
+/// Omoio's keys are, and no layout is looked up.
+const NAMED_KEYS: [(u8, &str); 80] = [
+    (0x1E, "A"),
+    (0x30, "B"),
+    (0x2E, "C"),
+    (0x20, "D"),
+    (0x12, "E"),
+    (0x21, "F"),
+    (0x22, "G"),
+    (0x23, "H"),
+    (0x17, "I"),
+    (0x24, "J"),
+    (0x25, "K"),
+    (0x26, "L"),
+    (0x32, "M"),
+    (0x31, "N"),
+    (0x18, "O"),
+    (0x19, "P"),
+    (0x10, "Q"),
+    (0x13, "R"),
+    (0x1F, "S"),
+    (0x14, "T"),
+    (0x16, "U"),
+    (0x2F, "V"),
+    (0x11, "W"),
+    (0x2D, "X"),
+    (0x15, "Y"),
+    (0x2C, "Z"),
+    (0x02, "1"),
+    (0x03, "2"),
+    (0x04, "3"),
+    (0x05, "4"),
+    (0x06, "5"),
+    (0x07, "6"),
+    (0x08, "7"),
+    (0x09, "8"),
+    (0x0A, "9"),
+    (0x0B, "0"),
+    (0x0C, "MINUS"),
+    (0x0D, "EQUALS"),
+    (0x0E, "BACK"),
+    (0x0F, "TAB"),
+    (0x1A, "LBRACKET"),
+    (0x1B, "RBRACKET"),
+    (0x1C, "RETURN"),
+    (0x27, "SEMICOLON"),
+    (0x28, "APOSTROPHE"),
+    (0x29, "GRAVE"),
+    (0x2A, "LSHIFT"),
+    (0x2B, "BACKSLASH"),
+    (0x33, "COMMA"),
+    (0x34, "PERIOD"),
+    (0x35, "SLASH"),
+    (0x36, "RSHIFT"),
+    (0x39, "SPACE"),
+    (0x3A, "CAPITAL"),
+    (0x56, "OEM_102"),
+    (0x37, "MULTIPLY"),
+    (0x47, "NUMPAD7"),
+    (0x48, "NUMPAD8"),
+    (0x49, "NUMPAD9"),
+    (0x4A, "SUBTRACT"),
+    (0x4B, "NUMPAD4"),
+    (0x4C, "NUMPAD5"),
+    (0x4D, "NUMPAD6"),
+    (0x4E, "ADD"),
+    (0x4F, "NUMPAD1"),
+    (0x50, "NUMPAD2"),
+    (0x51, "NUMPAD3"),
+    (0x52, "NUMPAD0"),
+    (0x53, "DECIMAL"),
+    (0x9C, "NUMPADENTER"),
+    (0xB5, "DIVIDE"),
+    (0xC7, "HOME"),
+    (0xC8, "UP"),
+    (0xC9, "PRIOR"),
+    (0xCB, "LEFT"),
+    (0xCD, "RIGHT"),
+    (0xCF, "END"),
+    (0xD0, "DOWN"),
+    (0xD1, "NEXT"),
+    (0xD3, "DELETE"),
+];
+
+/// Dolphin's name for the key with this scan code (`keys::KEYS`). An
+/// extended key, 0xE0 in the high byte, is its low byte with the top bit
+/// set in DirectInput's codes (`DIK_NUMPADENTER` 0x9C for 0xE0 0x1C, in
+/// dinput.h).
+fn key_name(scan: u16) -> Option<&'static str> {
+    let code = match scan >> 8 {
+        0 if scan < 0x80 => scan as u8,
+        0xE0 if scan & 0xFF < 0x80 => (scan & 0xFF) as u8 | 0x80,
+        _ => return None,
+    };
+    NAMED_KEYS.iter().find(|(named, _)| *named == code).map(|(_, name)| *name)
+}
+
+/// How many counts the mouse moves for a stick to go all the way over at
+/// Omoio's own speed, 100 percent: Dolphin's own, the eight it divides the
+/// mouse's movement by for its `Axis` inputs (`MOUSE_AXIS_SENSITIVITY`,
+/// DInputKeyboardMouse.cpp lines 16 to 19, Dolphin 2609a).
+const COUNTS_FOR_FULL_STICK: f64 = 8.0;
+
+/// A Dolphin expression for one of the keyboard player's inputs, `None` for
+/// one Omoio doesn't know. `mouse` is the player's mouse speed in percent.
+///
+/// - The mouse's buttons are `Click 0` to `Click 4`, by their place in
+///   DirectInput's mouse state (`KeyboardMouse::Button::GetName`,
+///   DInputKeyboardMouse.cpp lines 299 to 302): the left as the Wii Remote's
+///   A and the right as its B in Dolphin's own layout, the middle as its
+///   shake (`Wiimote::LoadDefaults`, Core/HW/WiimoteEmu/WiimoteEmu.cpp lines
+///   722 to 747). The side buttons follow as 3 and 4.
+/// - The mouse moving is `RelativeMouse`, the counts it moved since the
+///   game last asked (`RelativeMouseAxis` and `RelativeInputState`,
+///   DInputKeyboardMouse.cpp lines 27 to 49 and ControllerInterface.h lines
+///   147 to 176). Dolphin's `Axis` inputs read the same mouse, but share
+///   each reading with its hotkey thread, which reads every device twice
+///   every 5 ms (`HotkeyScheduler::Run`, DolphinQt/HotkeyScheduler.cpp lines
+///   143 to 156), so the game would be left the scraps. Each count is an
+///   eighth of a stick at 100 percent (`COUNTS_FOR_FULL_STICK`), no more
+///   than the whole stick (`min`), and `smooth` lets it fall back over 50 ms
+///   rather than at once, so a reading the mouse had nothing new for doesn't
+///   drop the stick for a moment (`SmoothExpression`, InputCommon/
+///   ControlReference/FunctionExpression.cpp lines 386 to 428). It rises
+///   within 10 ms; not 0, which would divide by nothing when two readings
+///   come at the same instant. Up is the mouse moving away, `Y-`, as screen
+///   rows count down (Dolphin's own pointer up is `Cursor Y-`).
+/// - The wheel is `RelativeMouse Z`, a press of a tenth of a second for
+///   each notch (`PulseExpression`, FunctionExpression.cpp lines 585 to
+///   635): a notch alone is gone by the next reading, which a game reading
+///   its buttons once a frame could miss.
+fn keyboard_input(input: &str, mouse: u32) -> Option<String> {
+    if let Some(name) = crate::core::keys::scan_code(input).and_then(key_name) {
+        return Some(format!("`{name}`"));
+    }
+    let moved = |axis: &str| {
+        let scale = f64::from(mouse) / (100.0 * COUNTS_FOR_FULL_STICK);
+        format!("smooth(min(`RelativeMouse {axis}` * {scale}, 1), 0.01, 0.05)")
+    };
+    Some(match input {
+        "MouseLeft" => "`Click 0`".to_string(),
+        "MouseRight" => "`Click 1`".to_string(),
+        "MouseMiddle" => "`Click 2`".to_string(),
+        "MouseBack" => "`Click 3`".to_string(),
+        "MouseForward" => "`Click 4`".to_string(),
+        "WheelUp" => "pulse(`RelativeMouse Z+`, 0.1)".to_string(),
+        "WheelDown" => "pulse(`RelativeMouse Z-`, 0.1)".to_string(),
+        "MouseMoveLeft" => moved("X-"),
+        "MouseMoveRight" => moved("X+"),
+        "MouseMoveUp" => moved("Y-"),
+        "MouseMoveDown" => moved("Y+"),
+        _ => return None,
+    })
+}
+
+/// The Wii Remote's pointer for a keyboard player: the mouse cursor over
+/// the game, as in Dolphin's own layout (`Wiimote::LoadDefaults`,
+/// WiimoteEmu.cpp lines 750 to 753), whatever the player's right stick
+/// says, since pointing the remote is what the mouse is for on the Wii.
+/// The right stick's places then have nothing on the Wii: the pad layout
+/// puts only the pointer there (`WII`), and a key on the pointer would
+/// throw it to the edge of the screen for as long as it was held.
+fn pointer(key: &str) -> Option<&'static str> {
+    Some(match key {
+        "IR/Up" => "`Cursor Y-`",
+        "IR/Down" => "`Cursor Y+`",
+        "IR/Left" => "`Cursor X-`",
+        "IR/Right" => "`Cursor X+`",
+        _ => return None,
+    })
 }
 
 /// SDL's name for a pad by its USB vendor and product ids, for the pads its
@@ -259,6 +464,9 @@ fn xinput_slot(pad: &Pad) -> Option<usize> {
 
 /// How Dolphin knows this pad, or `None` for one it can't be told about.
 fn device(pad: &Pad, ids: UsbIds) -> Option<String> {
+    if pad.is_keyboard() {
+        return Some(KEYBOARD_MOUSE.to_string());
+    }
     if let Some(slot) = xinput_slot(pad) {
         return Some(format!("XInput/{slot}/Gamepad"));
     }
@@ -268,18 +476,24 @@ fn device(pad: &Pad, ids: UsbIds) -> Option<String> {
 
 /// One player's settings for Dolphin, the lines of their section.
 fn lines(console: Console, player: &Player, device: Option<&str>, emulated: bool) -> Vec<String> {
+    let keyboard = player.pad.is_keyboard();
     let mut lines = vec![format!("Device = {}", device.unwrap_or(""))];
     let keys: &[(&str, &[&str])] = match console {
         Console::GameCube => &GAMECUBE_KEYS,
         _ => &WII_KEYS,
     };
     for (key, places) in keys {
-        lines.push(format!("{key} = {}", expression(player, places)));
+        let bound = match pointer(key).filter(|_| keyboard) {
+            Some(cursor) => cursor.to_string(),
+            None => expression(player, places),
+        };
+        lines.push(format!("{key} = {bound}"));
     }
     match console {
         Console::GameCube => {
             // As Dolphin's own gamepad profile has them, so a stick reaches
-            // its whole circle.
+            // its whole circle. The mouse turns a stick by degrees as a pad
+            // does, so the keyboard player's are the same.
             lines.push("Main Stick/Calibration = 100.00".to_string());
             lines.push("C-Stick/Calibration = 100.00".to_string());
         }
@@ -287,12 +501,21 @@ fn lines(console: Console, player: &Player, device: Option<&str>, emulated: bool
             lines.push(format!("Source = {}", if emulated { 1 } else { 0 }));
             lines.push("Extension = Nunchuk".to_string());
             // The pointer moves with the stick and stays where it is left,
-            // and goes out of sight when the stick is left alone.
-            lines.push("IR/Relative Input = True".to_string());
+            // and goes out of sight when the stick is left alone. The mouse
+            // cursor is a place on the screen rather than a push, so on the
+            // keyboard the pointer is where the cursor is, as Dolphin has
+            // it by itself (`Cursor::UpdateState`, InputCommon/
+            // ControllerEmu/ControlGroup/Cursor.cpp lines 115 to 135), and
+            // goes out of sight when the mouse is left alone, as with a pad.
+            let relative = if keyboard { "False" } else { "True" };
+            lines.push(format!("IR/Relative Input = {relative}"));
             lines.push("IR/Auto-Hide = True".to_string());
         }
     }
-    lines.push("Rumble/Motor = `Motor L` | `Motor R`".to_string());
+    // The keyboard and mouse have no motors to bind.
+    if !keyboard {
+        lines.push("Rumble/Motor = `Motor L` | `Motor R`".to_string());
+    }
     lines
 }
 
@@ -422,8 +645,8 @@ fn stand_in(players: &[Player], plugged: &[Pad], usable: &dyn Fn(&Player) -> boo
     let mut xinput = plugged.iter().filter(|pad| xinput_slot(pad).is_some());
     let free = xinput.clone().find(|pad| !players.iter().any(|p| p.pad.device == pad.device));
     if let Some(pad) = free.or_else(|| xinput.next()) {
-        let buttons = first.buttons.clone();
-        pad_layout::give(&mut players, 0, Player { pad: pad.clone(), buttons });
+        let (buttons, mouse) = (first.buttons.clone(), first.mouse);
+        pad_layout::give(&mut players, 0, Player { pad: pad.clone(), buttons, mouse });
     }
     players
 }
@@ -443,9 +666,11 @@ fn every_game_file(console: Console) -> &'static str {
 /// `title_id` is the layout for every game: GCPadNew.ini or WiimoteNew.ini.
 /// A game's own goes in profiles its settings file names, for this
 /// console's games only, since every emulator is handed it. A Wii Remote is
-/// switched on for player 1 and for every player whose pad is plugged in;
-/// one switched on with nothing to answer it would look to a game like a
-/// player who never presses anything. A real Wii Remote, the Balance Board
+/// switched on for player 1, for every player whose pad is plugged in and
+/// for the keyboard player; one switched on with nothing to answer it would
+/// look to a game like a player who never presses anything. With a player
+/// on the keyboard, Dolphin keeps the mouse cursor out of sight over the
+/// game (settings.rs, `hold_the_cursor`). A real Wii Remote, the Balance Board
 /// and a GameCube port given another device stay as the user set them up
 /// in Dolphin (`file`, `left_alone`).
 ///
@@ -478,7 +703,9 @@ pub fn write(app: &AppHandle, console: Console, title_id: &str, players: &[Playe
     let emulated: Vec<bool> = players
         .iter()
         .enumerate()
-        .map(|(at, player)| at == 0 || plugged.iter().any(|pad| pad.device == player.pad.device))
+        .map(|(at, player)| {
+            at == 0 || player.pad.is_keyboard() || plugged.iter().any(|pad| pad.device == player.pad.device)
+        })
         .collect();
     let failed = |_| "Couldn't save the controller settings for Dolphin.".to_string();
     // A file that can't be read is left as it is rather than written over
@@ -493,7 +720,12 @@ pub fn write(app: &AppHandle, console: Console, title_id: &str, players: &[Playe
         if console == Console::GameCube {
             standard_controllers(&config.join("Dolphin.ini")).map_err(failed)?;
         }
-        Ok(())
+        let keyboard = players
+            .iter()
+            .enumerate()
+            .take(PLAYERS)
+            .any(|(at, player)| player.pad.is_keyboard() && !left.get(at).copied().unwrap_or(false));
+        super::settings::hold_the_cursor(&config.join("Dolphin.ini"), keyboard).map_err(failed)
     };
     if title_id.is_empty() {
         let left = left_alone_in(console, &config).map_err(failed)?;
@@ -1014,6 +1246,134 @@ mod tests {
         assert_eq!(unfound_player(&bound, &[true, false], &added, &plugged), None);
         let said = notice(0, "DualSense");
         assert!(said.starts_with("Dolphin couldn't find player 1's controller, DualSense,"), "{said}");
+    }
+
+    #[test]
+    fn every_key_a_player_can_be_given_has_a_name_in_dolphin() {
+        for (key, scan) in crate::core::keys::KEYS {
+            assert!(key_name(scan).is_some(), "{key}");
+            assert!(keyboard_input(key, 100).is_some(), "{key}");
+        }
+        let names: Vec<&str> = NAMED_KEYS.iter().map(|(_, name)| *name).collect();
+        for (at, name) in names.iter().enumerate() {
+            assert!(!names[at + 1..].contains(name), "{name} twice");
+        }
+    }
+
+    #[test]
+    fn keys_are_named_by_where_they_sit() {
+        let name = |key: &str| key_name(crate::core::keys::scan_code(key).unwrap());
+        assert_eq!(name("KeyW"), Some("W"));
+        assert_eq!(name("Digit1"), Some("1"));
+        assert_eq!(name("Enter"), Some("RETURN"));
+        assert_eq!(name("NumpadEnter"), Some("NUMPADENTER"));
+        assert_eq!(name("ShiftLeft"), Some("LSHIFT"));
+        assert_eq!(name("Backspace"), Some("BACK"));
+        assert_eq!(name("Backquote"), Some("GRAVE"));
+        assert_eq!(name("IntlBackslash"), Some("OEM_102"));
+        assert_eq!(name("ArrowUp"), Some("UP"));
+        assert_eq!(name("PageDown"), Some("NEXT"));
+        assert_eq!(name("NumpadDivide"), Some("DIVIDE"));
+        assert_eq!(key_name(0xE052), None, "Insert, Omoio's own");
+        assert_eq!(key_name(0xE11D), None);
+    }
+
+    #[test]
+    fn the_keyboard_on_the_wii_is_a_remote_with_a_nunchuk_and_the_mouse_points() {
+        let player = Player::on(Pad::keyboard());
+        let devices = [device(&player.pad, &no_ids)];
+        let text = file(Console::Wii, "", &[player], &devices, &[true], &[]);
+        let mouse = |axis: &str| format!("smooth(min(`RelativeMouse {axis}` * 0.125, 1), 0.01, 0.05)");
+        assert_eq!(
+            text,
+            "[Wiimote1]\r\n\
+             Device = DInput/0/Keyboard Mouse\r\n\
+             Buttons/A = `SPACE`\r\n\
+             Buttons/B = `E` | `Click 2`\r\n\
+             Buttons/1 = `Q`\r\n\
+             Buttons/2 = `LSHIFT`\r\n\
+             Buttons/- = `BACK`\r\n\
+             Buttons/+ = `RETURN`\r\n\
+             D-Pad/Up = `1`\r\n\
+             D-Pad/Down = `3`\r\n\
+             D-Pad/Left = `4`\r\n\
+             D-Pad/Right = `2`\r\n\
+             IR/Up = `Cursor Y-`\r\n\
+             IR/Down = `Cursor Y+`\r\n\
+             IR/Left = `Cursor X-`\r\n\
+             IR/Right = `Cursor X+`\r\n\
+             Shake/X = `R`\r\n\
+             Shake/Y = `R`\r\n\
+             Shake/Z = `R`\r\n\
+             Swing/Forward = `G`\r\n\
+             Nunchuk/Buttons/C = `Click 1` | `K`\r\n\
+             Nunchuk/Buttons/Z = `Click 0` | `J` | `F`\r\n\
+             Nunchuk/Stick/Up = `W`\r\n\
+             Nunchuk/Stick/Down = `S`\r\n\
+             Nunchuk/Stick/Left = `A`\r\n\
+             Nunchuk/Stick/Right = `D`\r\n\
+             Source = 1\r\n\
+             Extension = Nunchuk\r\n\
+             IR/Relative Input = False\r\n\
+             IR/Auto-Hide = True\r\n"
+        );
+        assert!(!text.contains(&mouse("X+")), "the right stick's places are the pointer's");
+    }
+
+    #[test]
+    fn the_mouse_turns_the_gamecube_c_stick_at_the_players_speed() {
+        let player = Player::on(Pad::keyboard());
+        let lines = lines(Console::GameCube, &player, Some(KEYBOARD_MOUSE), true);
+        let has = |line: &str| lines.contains(&line.to_string());
+        assert!(has("Device = DInput/0/Keyboard Mouse"), "{lines:?}");
+        assert!(has("C-Stick/Up = smooth(min(`RelativeMouse Y-` * 0.125, 1), 0.01, 0.05)"), "{lines:?}");
+        assert!(has("C-Stick/Right = smooth(min(`RelativeMouse X+` * 0.125, 1), 0.01, 0.05)"), "{lines:?}");
+        assert!(has("Buttons/X = `Click 0` | `J`"), "{lines:?}");
+        assert!(has("Main Stick/Left = `A`"), "{lines:?}");
+        assert!(has("Triggers/R-Analog = `G`"), "{lines:?}");
+        assert!(!lines.iter().any(|line| line.starts_with("Rumble")), "{lines:?}");
+        let slower = Player::on(Pad::keyboard()).with_mouse(50);
+        let lines = super::lines(Console::GameCube, &slower, Some(KEYBOARD_MOUSE), true);
+        assert!(
+            lines.contains(&"C-Stick/Down = smooth(min(`RelativeMouse Y+` * 0.0625, 1), 0.01, 0.05)".to_string()),
+            "{lines:?}"
+        );
+    }
+
+    #[test]
+    fn a_keyboard_players_own_inputs_are_followed() {
+        let buttons = BTreeMap::from([
+            ("South".to_string(), "Space MouseForward".to_string()),
+            ("RB".to_string(), "WheelUp".to_string()),
+            ("LS Y+".to_string(), "KeyW ArrowUp".to_string()),
+        ]);
+        let player = Player::with_buttons(Pad::keyboard(), buttons);
+        let lines = lines(Console::GameCube, &player, Some(KEYBOARD_MOUSE), true);
+        assert!(lines.contains(&"Buttons/A = `SPACE` | `Click 4`".to_string()), "{lines:?}");
+        assert!(lines.contains(&"Buttons/Z = pulse(`RelativeMouse Z+`, 0.1)".to_string()), "{lines:?}");
+        assert!(lines.contains(&"Main Stick/Up = `W` | `UP`".to_string()), "{lines:?}");
+    }
+
+    #[test]
+    fn a_pad_player_next_to_a_keyboard_player_is_written_as_before() {
+        let pad_alone = vec![Player::on(crate::pads::xinput_slot(0))];
+        let alone_devices: Vec<Option<String>> = pad_alone.iter().map(|p| device(&p.pad, &no_ids)).collect();
+        let alone = file(Console::Wii, "", &pad_alone, &alone_devices, &[true], &[]);
+        let players = vec![Player::on(crate::pads::xinput_slot(0)), Player::on(Pad::keyboard())];
+        let devices: Vec<Option<String>> = players.iter().map(|p| device(&p.pad, &no_ids)).collect();
+        let both = file(Console::Wii, "", &players, &devices, &[true, true], &[]);
+        assert!(both.starts_with(&alone), "{both}");
+        assert!(both[alone.len()..].starts_with("[Wiimote2]\r\nDevice = DInput/0/Keyboard Mouse\r\n"), "{both}");
+    }
+
+    #[test]
+    fn a_keyboard_player_is_usable_and_never_stood_in_for() {
+        let players = vec![Player::on(Pad::keyboard()), Player::on(crate::pads::xinput_slot(1))];
+        let plugged = [crate::pads::xinput_slot(0)];
+        let usable = |player: &Player| device(&player.pad, &no_ids).is_some();
+        assert_eq!(stand_in(&players, &plugged, &usable), players);
+        assert!(missing(&players, &plugged, &usable).is_none());
+        assert!(missing(&players, &[], &usable).is_none(), "with no pad plugged in at all");
     }
 
     #[test]

@@ -6,9 +6,11 @@ import {
   fetchCovers,
   getFirmwareVersion,
   getRpcs3Version,
+  libraryNotice,
   listGames,
   onBigPicture,
   onGameFullscreen,
+  onGameRefused,
   onGameStarted,
   onGameStopped,
   onPadNotFound,
@@ -155,6 +157,20 @@ getFirmwareVersion().then((version) => store.setFirmwareVersion(version));
 listGames()
   .then((games) => store.setGames(games))
   .finally(startUpdateChecks);
+
+// Whatever a load of the game list had to keep or couldn't open is said
+// each time the list comes in, not only at start-up, so a problem met while
+// Omoio is open isn't lost.
+let gamesAsked: unknown = null;
+store.subscribe(({ games }) => {
+  if (!games || games === gamesAsked) return;
+  gamesAsked = games;
+  libraryNotice()
+    .then((notice) => {
+      if (notice) store.setNotice(notice);
+    })
+    .catch(() => {});
+});
 playingGame().then((playing) => store.setPlaying(playing));
 bigPicture().then((state) => store.setBigPicture(state));
 void onBigPicture((state) => store.setBigPicture(state));
@@ -181,9 +197,15 @@ void openSetupIfNeeded().then(() => updateEmulatorsInBackground());
 // Dragging a game onto the window imports it, the same as the Import button.
 void watchForDroppedGames();
 
-onGameStarted((playing) => store.setPlaying(playing));
+onGameStarted((playing) => {
+  store.setNotice(null);
+  store.setPlaying(playing);
+});
 onGameFullscreen((on) => store.setGameFullscreen(on));
 onPadNotFound(showPlayingNote);
+// Said over the library, which is what shows once the emulator has gone,
+// until the next game starts.
+onGameRefused((message) => store.setNotice(message));
 onGameStopped(() => {
   store.setGameFullscreen(false);
   store.setPlaying(null);

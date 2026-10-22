@@ -11,11 +11,20 @@
 //!
 //! The same way, through Cemu's input settings window, it keeps the game from
 //! hearing the pad while the portal menu or Big Picture is over it.
+//!
+//! The build of Cemu made for Omoio (github.com/Bertrram/Cemu, branch
+//! omoio-portal-ipc) also has a portal server like RPCS3's
+//! (backends/portal_ipc.rs), which puts figures on, takes them off, makes
+//! them and keeps the game deaf at once, with no window. When it answers as
+//! the game starts, all of that goes through it; the figure maker's list,
+//! which the server doesn't give, is still read from Cemu's window. Cemu 2.6
+//! has no server, and everything goes through its windows as before.
 
+use crate::backends::portal_ipc::{free_port, Failed, Server, Slot};
 use crate::core::figures::{self, Character};
 use std::path::Path;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::sync::atomic::{AtomicU16, AtomicUsize, Ordering};
+use std::sync::{Mutex, MutexGuard, PoisonError, TryLockError};
 use std::time::{Duration, Instant};
 use windows::core::BOOL;
 use windows::Win32::Foundation::{CloseHandle, HANDLE, HWND, LPARAM, WPARAM};
@@ -46,6 +55,10 @@ const INPUT_SETTINGS: &str = "Input settings";
 const CREATOR: &str = "Skylander Figure Creator";
 const SAVE_FIGURE: &str = "Create Skylander file";
 
+/// The windows Omoio opens in Cemu for the portal, none of them a message
+/// (`start_errors`).
+pub(super) const OWN_WINDOWS: [&str; 4] = [WINDOW, OPEN_FIGURE, CREATOR, SAVE_FIGURE];
+
 /// Asking a list box how many items it has, one item's text and its length,
 /// and the number kept with it. Windows carries these across processes.
 const CB_GETCOUNT: u32 = 0x0146;
@@ -54,6 +67,9 @@ const CB_GETLBTEXTLEN: u32 = 0x0149;
 const CB_GETITEMDATA: u32 = 0x0150;
 
 const LOOKS_DIFFERENT: &str = "Cemu's portal looks different from what Omoio knows.";
+const LOAD_FAILED: &str = "Cemu couldn't put that figure on the portal.";
+const MAKE_FAILED: &str = "Cemu couldn't make that figure.";
+const NOT_ANSWERING: &str = "Cemu's portal isn't answering. Try again.";
 
 /// What a button tells its window when it is clicked, in the high half of a
 /// `WM_COMMAND`'s first number.
@@ -92,6 +108,13 @@ static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
 
 fn turn() -> MutexGuard<'static, ()> {
     ONE_AT_A_TIME.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// Whether an errand in Cemu's portal window is under way. Each
+/// reads the messages Cemu puts up for it (`dismiss_message`), so they are
+/// left to it meanwhile (`start_errors`).
+pub(super) fn busy() -> bool {
+    making() || matches!(ONE_AT_A_TIME.try_lock(), Err(TryLockError::WouldBlock))
 }
 
 /// How many errands with Cemu's figure maker are under way or waiting their
@@ -150,6 +173,205 @@ fn input_settings_gone(pid: u32) {
     until(GONE_WAIT, || {
         quiet().deaf || !windows_of(pid).into_iter().any(|window| title(window) == INPUT_SETTINGS)
     });
+}
+
+/// The port asked of the portal server: its own in the build made for
+/// Omoio, one above RPCS3's 28013 so the two never ask for the same one.
+const DEFAULT_PORT: u16 = 28014;
+
+/// The port written for the game now starting.
+static PORT: AtomicU16 = AtomicU16::new(DEFAULT_PORT);
+
+/// What the server answers `hello` with: its name and the version of its
+/// commands. Any other answer, or none, is a Cemu without it.
+const HELLO: &str = "ok cemu-portal 1";
+
+/// How long after Cemu starts its server is asked for. The server starts
+/// only with the game, once Cemu has put its portal in, and stops with it
+/// (`cemu_initForGame` and `ShutdownTitle`, the build's CafeSystem.cpp lines
+/// 382 to 384 and 993, commit 4607241, read 22 October 2026). In the first
+/// minute of a game Cemu is still loading and building shaders
+/// (`START_WAIT`), so it is given that long.
+const SERVER_WAIT: Duration = Duration::from_secs(60);
+/// Between tries at the server while the game starts.
+const SERVER_RETRY: Duration = Duration::from_millis(250);
+
+/// The port the portal server is to listen on for the game now starting,
+/// for settings.xml (`tune_settings`): its own unless another program has
+/// it, when Windows picks a free one, as for RPCS3's.
+pub fn server_port(on: bool) -> u16 {
+    let port = if on { free_port(DEFAULT_PORT) } else { DEFAULT_PORT };
+    PORT.store(port, Ordering::Relaxed);
+    port
+}
+
+fn ours() -> Server {
+    Server::new(PORT.load(Ordering::Relaxed), SLOTS)
+}
+
+/// The Cemu whose start `prepare` saw, and whether its portal server
+/// answered.
+static ANSWERED: Mutex<Option<(u32, bool)>> = Mutex::new(None);
+
+/// Cemu's characters with each figure's id and variant, as its figure maker
+/// lists them. The server gives only the numbers, and the menu knows a
+/// figure by the name Cemu's window would show for it.
+static NAMES: Mutex<Vec<Character>> = Mutex::new(Vec::new());
+
+/// Asks the Cemu started as `pid` for its portal server while its game
+/// starts, on a thread of its own, until it answers or `SERVER_WAIT` is up.
+///
+/// Until it answers, the portal goes through Cemu's windows. That way round
+/// the two agree: each row of the window only points at the portal slot
+/// Cemu chose for the figure (`EmulatedUSBDeviceFrame.cpp` lines 283 to
+/// 308, `m_skySlots`; `LoadSkylander`, `Skylander.cpp` lines 796 to 837), so
+/// a figure put on through the window is on the portal the server reports,
+/// if maybe in another slot. The window, though, would show none of the
+/// figures the server put on, so once the server has answered it does every
+/// errand it can for the rest of the game.
+pub fn prepare(pid: u32) {
+    *ANSWERED.lock().unwrap_or_else(PoisonError::into_inner) = Some((pid, false));
+    std::thread::spawn(move || {
+        let until = Instant::now() + SERVER_WAIT;
+        let server = ours();
+        loop {
+            // Another Cemu started since has its own asking.
+            if *ANSWERED.lock().unwrap_or_else(PoisonError::into_inner) != Some((pid, false)) {
+                return;
+            }
+            if says_hello(&server) {
+                let mut answered = ANSWERED.lock().unwrap_or_else(PoisonError::into_inner);
+                if *answered == Some((pid, false)) {
+                    *answered = Some((pid, true));
+                }
+                return;
+            }
+            if Instant::now() >= until {
+                return;
+            }
+            std::thread::sleep(SERVER_RETRY);
+        }
+    });
+}
+
+fn says_hello(server: &Server) -> bool {
+    server.ask("hello").is_ok_and(|lines| lines == [HELLO])
+}
+
+/// The portal server of `pid`, when it answered.
+fn answered(pid: u32) -> Option<Server> {
+    (*ANSWERED.lock().unwrap_or_else(PoisonError::into_inner) == Some((pid, true))).then(ours)
+}
+
+/// The server, when it answered and the figures it reports can be named.
+/// Otherwise the window does the errand.
+fn server(pid: u32) -> Option<Server> {
+    answered(pid).filter(|_| !NAMES.lock().unwrap_or_else(PoisonError::into_inner).is_empty())
+}
+
+/// Which way the portal of `pid` was filled, for the log kept of the game,
+/// or `None` when `prepare` never saw it start, as for a game with no
+/// portal.
+pub fn way_used(pid: u32) -> Option<&'static str> {
+    match *ANSWERED.lock().unwrap_or_else(PoisonError::into_inner) {
+        Some((seen, true)) if seen == pid => Some("Omoio: the portal menu used Cemu's portal server."),
+        Some((seen, false)) if seen == pid => Some("Omoio: the portal menu used Cemu's Emulated USB Devices window."),
+        _ => None,
+    }
+}
+
+fn know_names(characters: Vec<Character>) {
+    if !characters.is_empty() {
+        *NAMES.lock().unwrap_or_else(PoisonError::into_inner) = characters;
+    }
+}
+
+/// Takes Cemu's characters from the list the portal menu keeps of them
+/// (`portal_menu::characters`, `{ "version", "characters" }`). A list kept
+/// from another Cemu names the figures all the same, and the menu reads the
+/// list again from a newer one the first time it opens.
+pub fn know_kept_names(file: &Path) {
+    #[derive(serde::Deserialize)]
+    struct Kept {
+        characters: Vec<Character>,
+    }
+    if let Some(kept) = std::fs::read_to_string(file).ok().and_then(|text| serde_json::from_str::<Kept>(&text).ok()) {
+        know_names(kept.characters);
+    }
+}
+
+/// Each slot's name as Cemu's window would show it, and then as the menu
+/// knows it (`shown`). The window shows the list's name for the figure's id
+/// and variant, else "Unknown (<id> <variant>)" (`FindSkylander`,
+/// `Skylander.cpp` lines 984 to 994; `UpdateSkylanderEdits`,
+/// `EmulatedUSBDeviceFrame.cpp` lines 439 to 456; v2.6), and the list is
+/// the one the figure maker offers (lines 340 to 346, `GetListSkylanders`).
+fn named(slots: &[Slot], names: &[Character]) -> Vec<String> {
+    slots.iter().map(|slot| slot.map_or_else(String::new, |(id, variant)| name_of(names, id, variant))).collect()
+}
+
+fn name_of(names: &[Character], id: u16, variant: u16) -> String {
+    let listed = names
+        .iter()
+        .find(|character| character.id == id && character.variant == variant)
+        .map_or_else(|| format!("Unknown ({id} {variant})"), |character| character.name.clone());
+    shown(&listed)
+}
+
+/// What the portal holds, as the server reports it.
+fn on_portal(server: &Server) -> Result<Vec<String>, String> {
+    let slots = server.status().map_err(|_| NOT_ANSWERING.to_string())?;
+    Ok(named(&slots, &NAMES.lock().unwrap_or_else(PoisonError::into_inner)))
+}
+
+/// Puts the figure in `file` on in `slot` through the server. The window's
+/// Load takes off what its row held first (`EmulatedUSBDeviceFrame.cpp`
+/// lines 283 to 300), and the server's `load` wants the slot empty, as
+/// RPCS3's does ("no free slot", the build's `SkylanderPortalIPC.cpp` lines
+/// 136 to 138), so a full slot is emptied and the figure tried again.
+fn load_through(server: &Server, slot: usize, file: &Path) -> Result<(), String> {
+    let path = file.to_str().ok_or(LOAD_FAILED)?;
+    let loaded = match server.load(slot, path) {
+        Err(Failed::Refused(why)) if why == "no free slot" => server.remove(slot).and_then(|()| server.load(slot, path)),
+        other => other,
+    };
+    match loaded {
+        Ok(_) => Ok(()),
+        Err(Failed::Refused(_)) => Err(LOAD_FAILED.to_string()),
+        Err(_) => Err(NOT_ANSWERING.to_string()),
+    }
+}
+
+/// Takes the figure in `slot` off through the server; a slot already empty
+/// is as good.
+fn clear_through(server: &Server, slot: usize) -> Result<(), String> {
+    match server.remove(slot) {
+        Ok(()) => Ok(()),
+        Err(Failed::Refused(why)) if why == "slot empty" => Ok(()),
+        Err(Failed::Refused(_)) => Err("Cemu couldn't take that figure off the portal.".to_string()),
+        Err(_) => Err(NOT_ANSWERING.to_string()),
+    }
+}
+
+/// Has the server make a figure of `character` into `file`, as the figure
+/// maker would (`CreateSkylander`, `Skylander.cpp` lines 857 to 898), and
+/// puts it on in `slot`, which the maker's window does itself once it has
+/// made one (`EmulatedUSBDeviceFrame.cpp` lines 311 to 319). The server
+/// won't make it over a file that is there (the build's
+/// `SkylanderPortalIPC.cpp` lines 166 to 170), and none is: the menu picks
+/// a name not taken (`portal_menu::new_figure`).
+fn create_through(server: &Server, slot: usize, character: &Character, file: &Path) -> Result<(), String> {
+    let path = file.to_str().ok_or(MAKE_FAILED)?;
+    match server.ask(&format!("create {} {} {path}", character.id, character.variant)) {
+        Ok(_) => load_through(server, slot, file),
+        Err(Failed::Refused(_)) => Err(MAKE_FAILED.to_string()),
+        Err(_) => Err(NOT_ANSWERING.to_string()),
+    }
+}
+
+/// Whether the server has the game deaf, or hearing again, as asked.
+fn hush_through(server: &Server, hushed: bool) -> bool {
+    server.ask(if hushed { "hush on" } else { "hush off" }).is_ok()
 }
 
 /// A command from Cemu's menu bar, waiting for the bar to be read if Cemu
@@ -468,11 +690,24 @@ pub fn tidy(pid: u32) {
 /// it runs and kept as the menus want them. `ProcessCommand` drops a command
 /// for a menu item that is turned off, so one that hasn't shown after
 /// `ASK_AGAIN` is taken as lost and sent again.
+///
+/// A portal server that answered keeps the game deaf itself, with no
+/// window: the build's `VPADRead` and `_KPADRead` skip every read while it
+/// is hushed, as while the window is open (vpad.cpp line 267, padscore.cpp
+/// line 474, commit 4607241). The window is used only if the server doesn't
+/// do as asked. The two are apart, and `hush off` doesn't let the game hear
+/// while the window is open, so letting it hear also closes any input
+/// settings window, which there is when the game was made deaf before the
+/// server answered.
 pub fn hush(pid: u32, hushed: bool) -> Result<(), String> {
+    let done = answered(pid).map(|server| hush_through(&server, hushed));
     if !hushed {
         let mut quiet = quiet();
         quiet.deaf = false;
         close_shown(pid, &mut quiet);
+        return if done == Some(false) { Err(NOT_ANSWERING.to_string()) } else { Ok(()) };
+    }
+    if done == Some(true) {
         return Ok(());
     }
     quiet().deaf = true;
@@ -704,7 +939,12 @@ fn show_devices(pid: u32, main: HWND, devices: u32, limit: Duration) -> Option<H
 /// (`MainWindow.cpp`, `RecreateMenu`, v2.6; all read 14 October 2026). So a
 /// command sent then waits rather than being lost, and what counts is that
 /// the portal window's is ahead of it.
+///
+/// With the portal server doing the errands, there is no window to open.
 pub fn ready(pid: u32) {
+    if server(pid).is_some() {
+        return;
+    }
     let _turn = turn();
     if windows_of(pid).into_iter().any(|w| title(w) == WINDOW) {
         return;
@@ -810,6 +1050,9 @@ pub(super) fn dismiss_message(pid: u32, expected: &[&str]) -> Option<String> {
 /// The figures on the portal, by slot.
 pub fn figures(pid: u32) -> Result<Vec<String>, String> {
     let _turn = turn();
+    if let Some(server) = server(pid) {
+        return on_portal(&server);
+    }
     read(open(pid)?)
 }
 
@@ -818,6 +1061,10 @@ pub fn figures(pid: u32) -> Result<Vec<String>, String> {
 pub fn load(pid: u32, slot: usize, file: &Path) -> Result<Vec<String>, String> {
     check(slot)?;
     let _turn = turn();
+    if let Some(server) = server(pid) {
+        load_through(&server, slot, file)?;
+        return on_portal(&server);
+    }
     let window = open(pid)?;
     let load = controls(window, "Button", Some("Load"))
         .into_iter()
@@ -833,7 +1080,7 @@ pub fn load(pid: u32, slot: usize, file: &Path) -> Result<Vec<String>, String> {
     until(SETTLE, || !slot_now(window, slot).is_empty() || message_up(pid, &[OPEN_FIGURE]));
     if let Some(said) = dismiss_message(pid, &[OPEN_FIGURE]) {
         return Err(if said.is_empty() {
-            "Cemu couldn't put that figure on the portal.".to_string()
+            LOAD_FAILED.to_string()
         } else {
             format!("Cemu couldn't put that figure on the portal: {said}")
         });
@@ -845,6 +1092,10 @@ pub fn load(pid: u32, slot: usize, file: &Path) -> Result<Vec<String>, String> {
 pub fn clear(pid: u32, slot: usize) -> Result<Vec<String>, String> {
     check(slot)?;
     let _turn = turn();
+    if let Some(server) = server(pid) {
+        clear_through(&server, slot)?;
+        return on_portal(&server);
+    }
     let window = open(pid)?;
     let button = controls(window, "Button", Some("Clear"))
         .into_iter()
@@ -929,7 +1180,9 @@ fn cancel_creator(creator: HWND) {
 
 /// Every character Cemu's figure maker offers, read from its list: the name
 /// each item shows and the id and variant it carries. The maker is closed
-/// again without making anything.
+/// again without making anything. The portal server has no list, so this
+/// is read from the window with or without it, and names the figures the
+/// server reports from then on.
 pub fn characters(pid: u32) -> Result<Vec<Character>, String> {
     let _making = Making::new();
     let _turn = turn();
@@ -960,6 +1213,7 @@ pub fn characters(pid: u32) -> Result<Vec<Character>, String> {
     if found.is_empty() {
         Err("Couldn't read Cemu's list of characters.".to_string())
     } else {
+        know_names(found.clone());
         Ok(found)
     }
 }
@@ -969,6 +1223,11 @@ pub fn characters(pid: u32) -> Result<Vec<Character>, String> {
 /// holds afterwards.
 pub fn create(pid: u32, slot: usize, character: &Character, file: &Path) -> Result<Vec<String>, String> {
     check(slot)?;
+    if let Some(server) = server(pid) {
+        let _turn = turn();
+        create_through(&server, slot, character, file)?;
+        return on_portal(&server);
+    }
     let _making = Making::new();
     let _turn = turn();
     let window = open(pid)?;
@@ -1012,7 +1271,7 @@ pub fn create(pid: u32, slot: usize, character: &Character, file: &Path) -> Resu
     until(SETTLE, || !slot_now(window, slot).is_empty() || message_up(pid, &[OPEN_FIGURE, SAVE_FIGURE, CREATOR]));
     if let Some(said) = dismiss_message(pid, &[OPEN_FIGURE, SAVE_FIGURE, CREATOR]) {
         return Err(if said.is_empty() {
-            "Cemu couldn't make that figure.".to_string()
+            MAKE_FAILED.to_string()
         } else {
             format!("Cemu couldn't make that figure: {said}")
         });
@@ -1023,6 +1282,217 @@ pub fn create(pid: u32, slot: usize, character: &Character, file: &Path) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::TcpListener;
+    use std::sync::mpsc;
+
+    /// A few lines of Cemu's list (`Skylander.cpp` lines 64, 65, 180, 229,
+    /// 308 and 484, v2.6), as its figure maker shows them.
+    fn list() -> Vec<Character> {
+        [
+            ("Spyro", 16, 0x0000),
+            ("Series 2 Spyro", 16, 0x1801),
+            ("Tempest Timer", 212, 0x300D),
+            ("Dragonâ€™s Peak", 300, 0x0000),
+            ("King Pen", 601, 0x0000),
+            ("Hammer Slam Bowser (Nintendo Only)", 3424, 0x0000),
+        ]
+        .map(|(name, id, variant)| Character { name: name.to_string(), id, variant })
+        .to_vec()
+    }
+
+    #[test]
+    fn a_figure_the_server_reports_is_named_as_cemus_window_names_it() {
+        let list = list();
+        assert_eq!(name_of(&list, 16, 0), "Spyro");
+        assert_eq!(name_of(&list, 16, 0x1801), "Series 2 Spyro");
+        assert_eq!(name_of(&list, 300, 0), "Dragon’s Peak");
+        assert_eq!(name_of(&list, 3424, 0), "Hammer Slam Bowser");
+        // Made with the game's own variants, which the list doesn't have:
+        // the window says "Unknown (212 12302)" and the menu "Tempest Timer".
+        assert_eq!(name_of(&list, 212, 0x300E), "Tempest Timer");
+        assert_eq!(name_of(&list, 601, 0x5000), "King Pen");
+        assert_eq!(name_of(&list, 680, 21000), "Magic Lantern Crystal");
+        assert_eq!(name_of(&list, 999, 0), "Unknown (999 0)");
+        assert_eq!(named(&[None, Some((16, 0x1801))], &list), ["", "Series 2 Spyro"]);
+    }
+
+    #[test]
+    fn the_names_come_from_the_list_the_menu_kept() {
+        let file = std::env::temp_dir().join(format!("omoio-characters-wiiu-{}.json", std::process::id()));
+        let kept = r#"{"version":"2.6","characters":[{"name":"Spyro","id":16,"variant":0}]}"#;
+        std::fs::write(&file, kept).unwrap();
+        know_kept_names(&file);
+        let _ = std::fs::remove_file(&file);
+        let names = NAMES.lock().unwrap_or_else(PoisonError::into_inner);
+        assert_eq!(named(&[Some((16, 0)), None], &names), ["Spyro", ""]);
+    }
+
+    /// A server that reads one line, gives `answer` and closes.
+    fn answering(answer: &'static str) -> Server {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            BufReader::new(&stream).read_line(&mut String::new()).unwrap();
+            (&stream).write_all(answer.as_bytes()).unwrap();
+        });
+        Server::new(port, SLOTS)
+    }
+
+    fn nobody() -> Server {
+        Server::new(TcpListener::bind(("127.0.0.1", 0)).unwrap().local_addr().unwrap().port(), SLOTS)
+    }
+
+    #[test]
+    fn only_the_server_of_omoios_build_answers_hello() {
+        assert!(says_hello(&answering("ok cemu-portal 1\n")));
+        assert!(!says_hello(&answering("ok cemu-portal 2\n")));
+        assert!(!says_hello(&answering("ok\n")));
+        // RPCS3's server, which has no `hello` (`SkylanderPortalIPC.cpp` line 182).
+        assert!(!says_hello(&answering("error unknown command\n")));
+        // Cemu 2.6, which has no server at all.
+        assert!(!says_hello(&nobody()));
+    }
+
+    /// A server that answers as the one in the build of Cemu made for Omoio
+    /// does (`ProcessCommand`, its `SkylanderPortalIPC.cpp` lines 189 to
+    /// 252, commit 4607241), on a portal of sixteen slots, with figures made
+    /// and read where Cemu makes and reads a figure's id and variant
+    /// (`CreateSkylander`, `Skylander.cpp` lines 857 to 898;
+    /// `LoadSkylanderPath`, `EmulatedUSBDeviceFrame.cpp` lines 302 and 303).
+    /// It takes `connections` commands, one to a connection, and each line it
+    /// read comes back through `heard`.
+    fn fork_like(connections: usize) -> (Server, mpsc::Receiver<String>) {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (tell, heard) = mpsc::channel();
+        std::thread::spawn(move || {
+            let mut portal: [Slot; SLOTS] = [None; SLOTS];
+            for _ in 0..connections {
+                let (stream, _) = listener.accept().unwrap();
+                let mut line = String::new();
+                BufReader::new(&stream).read_line(&mut line).unwrap();
+                let line = line.trim_end().to_string();
+                let answer = fork_answer(&mut portal, &line);
+                let _ = tell.send(line);
+                (&stream).write_all(answer.as_bytes()).unwrap();
+            }
+        });
+        (Server::new(port, SLOTS), heard)
+    }
+
+    fn fork_answer(portal: &mut [Slot; SLOTS], line: &str) -> String {
+        let (command, rest) = line.split_once(' ').unwrap_or((line, ""));
+        match command {
+            "hello" => "ok cemu-portal 1\n".to_string(),
+            "status" => {
+                let mut text: String = portal
+                    .iter()
+                    .enumerate()
+                    .map(|(number, slot)| match slot {
+                        Some((id, variant)) => format!("slot{number} loaded {id} {variant}\n"),
+                        None => format!("slot{number} empty\n"),
+                    })
+                    .collect();
+                text.push_str("ok\n");
+                text
+            }
+            "load" => {
+                let (slot, path) = rest.split_once(' ').unwrap();
+                let Ok(data) = std::fs::read(path) else {
+                    return "error cannot open file\n".to_string();
+                };
+                if data.len() != 0x400 {
+                    return "error not a skylander file\n".to_string();
+                }
+                let id = u16::from_le_bytes([data[0x10], data[0x11]]);
+                let variant = u16::from_le_bytes([data[0x1C], data[0x1D]]);
+                let free = match slot {
+                    "-1" => portal.iter().position(Option::is_none),
+                    slot => Some(slot.parse::<usize>().unwrap()).filter(|&slot| portal[slot].is_none()),
+                };
+                let Some(slot) = free else {
+                    return "error no free slot\n".to_string();
+                };
+                portal[slot] = Some((id, variant));
+                format!("ok {slot}\n")
+            }
+            "remove" => match portal.get_mut(rest.parse::<usize>().unwrap()).map(Option::take) {
+                Some(Some(_)) => "ok\n".to_string(),
+                Some(None) => "error slot empty\n".to_string(),
+                None => "error invalid slot\n".to_string(),
+            },
+            "create" => {
+                let words: Vec<&str> = rest.splitn(3, ' ').collect();
+                let mut data = vec![0u8; 0x400];
+                data[0x10..0x12].copy_from_slice(&words[0].parse::<u16>().unwrap().to_le_bytes());
+                data[0x1C..0x1E].copy_from_slice(&words[1].parse::<u16>().unwrap().to_le_bytes());
+                std::fs::write(words[2], data).unwrap();
+                "ok\n".to_string()
+            }
+            "hush" if rest == "on" || rest == "off" => "ok\n".to_string(),
+            _ => "error unknown command\n".to_string(),
+        }
+    }
+
+    #[test]
+    fn figures_go_on_and_off_through_a_server_like_the_forks() {
+        let dir = std::env::temp_dir().join(format!("omoio-cemu-portal-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (spyro, king_pen) = (dir.join("Spyro.sky"), dir.join("King Pen.sky"));
+        let (server, heard) = fork_like(12);
+        assert!(says_hello(&server));
+        create_through(&server, 3, &Character { name: "Spyro".into(), id: 16, variant: 0 }, &spyro).unwrap();
+        // Made where Spyro is, who comes off first, as the window's Load
+        // takes off what its row held.
+        let king = Character { name: "King Pen".into(), id: 601, variant: 0x5000 };
+        create_through(&server, 3, &king, &king_pen).unwrap();
+        let slots = server.status().unwrap();
+        assert_eq!(slots.len(), 16);
+        assert_eq!(slots[3], Some((601, 0x5000)));
+        assert_eq!(slots.iter().filter(|slot| slot.is_some()).count(), 1);
+        assert_eq!(named(&slots, &list())[3], "King Pen");
+        clear_through(&server, 3).unwrap();
+        clear_through(&server, 3).unwrap();
+        assert!(hush_through(&server, true));
+        assert!(hush_through(&server, false));
+
+        let heard: Vec<String> = heard.iter().take(12).collect();
+        let (spyro, king_pen) = (spyro.to_str().unwrap(), king_pen.to_str().unwrap());
+        let said = [
+            "hello".to_string(),
+            format!("create 16 0 {spyro}"),
+            format!("load 3 {spyro}"),
+            format!("create 601 20480 {king_pen}"),
+            format!("load 3 {king_pen}"),
+            "remove 3".to_string(),
+            format!("load 3 {king_pen}"),
+            "status".to_string(),
+            "remove 3".to_string(),
+            "remove 3".to_string(),
+            "hush on".to_string(),
+            "hush off".to_string(),
+        ];
+        assert_eq!(heard, said);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn what_the_server_turns_down_or_doesnt_answer_is_said_plainly() {
+        let dir = std::env::temp_dir().join(format!("omoio-cemu-refused-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let notes = dir.join("notes.txt");
+        std::fs::write(&notes, "not a figure").unwrap();
+        let (server, _) = fork_like(2);
+        assert_eq!(load_through(&server, 0, &notes), Err(LOAD_FAILED.to_string()));
+        assert_eq!(clear_through(&server, 16), Err("Cemu couldn't take that figure off the portal.".to_string()));
+        let gone = nobody();
+        assert_eq!(load_through(&gone, 0, &notes), Err(NOT_ANSWERING.to_string()));
+        assert_eq!(clear_through(&gone, 0), Err(NOT_ANSWERING.to_string()));
+        assert!(!hush_through(&gone, true));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn a_slot_reads_as_the_menu_names_it() {

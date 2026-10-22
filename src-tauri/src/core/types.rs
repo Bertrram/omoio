@@ -61,6 +61,9 @@ pub struct GameEntry {
     /// shows: "The portal menu doesn't work in this version yet. It works in
     /// the Wii U version."
     pub portal_note: Option<String>,
+    /// For Imaginators, what works of the figures an emulator makes
+    /// (`figures::made_figures_note`).
+    pub figures_note: Option<&'static str>,
 }
 
 #[derive(Clone, Serialize)]

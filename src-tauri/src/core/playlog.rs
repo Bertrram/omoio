@@ -22,6 +22,8 @@ pub enum Ending {
     Stopped,
     Closed,
     Crashed,
+    /// The emulator said it couldn't start the game, and why.
+    Refused,
 }
 
 impl Ending {
@@ -30,6 +32,7 @@ impl Ending {
             Self::Stopped => "Stopped from Omoio",
             Self::Closed => "Closed normally",
             Self::Crashed => "Ended unexpectedly",
+            Self::Refused => "Didn't start",
         }
     }
 }
@@ -171,6 +174,7 @@ pub fn troubleshooting_prompt(session: &Session, applied: &[(String, String)]) -
             Ending::Crashed => "ended unexpectedly",
             Ending::Closed => "closed normally",
             Ending::Stopped => "was stopped by me from Omoio",
+            Ending::Refused => "never started: the emulator refused the game",
         },
         format_duration(session.seconds)
     ));

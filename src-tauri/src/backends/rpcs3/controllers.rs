@@ -33,6 +33,8 @@
 //! the build (v0.0.43-20247) its releases page gave as the latest on 8 October
 //! 2026, and in the SDL it builds with, SDL 3.4 at commit 829a65d.
 
+use super::keyboard::{self, Layout};
+use crate::core::keys;
 use crate::core::pad_layout::{self, Pad, Player, PLAYERS};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -450,12 +452,17 @@ fn parse_players(text: &str, plugged: &[Plugged]) -> Vec<Option<Player>> {
 }
 
 /// The file RPCS3 reads, with `plugged` the pads gilrs reads that are plugged
-/// in, for naming them as RPCS3 does. Every button is written, not just the
+/// in, for naming them as RPCS3 does, and `layout` the keyboard layout a
+/// keyboard player's keys are named on. Every button is written, not just the
 /// ones that differ, because a fresh profile has them all empty. Leaving one
 /// out means leaving it unbound.
-fn profile_text(players: &[Player], plugged: &[Plugged]) -> String {
+fn profile_text(players: &[Player], plugged: &[Plugged], layout: &Layout) -> String {
     let mut out = String::new();
     for (at, player) in players.iter().enumerate().take(PLAYERS) {
+        if player.pad.is_keyboard() {
+            out.push_str(&keyboard_player(at + 1, player, layout));
+            continue;
+        }
         let (handler, device) = rpcs3_pad(&player.pad, plugged);
         out.push_str(&format!("Player {} Input:\n", at + 1));
         out.push_str(&format!("  Handler: {handler}\n"));
@@ -485,6 +492,70 @@ fn profile_text(players: &[Player], plugged: &[Plugged]) -> String {
     out
 }
 
+/// RPCS3's own mouse speed for its keyboard pad, X and Y (`cfg_pad`,
+/// pad_config.h lines 147 to 150): how far the stick turns as soon as the
+/// mouse moves, out of 255 to its edge, and how much further for each pixel
+/// moved, in hundredths (`keyboard_pad_handler::mouseMoveEvent`,
+/// keyboard_pad_handler.cpp lines 680 to 734).
+const MOUSE_DEADZONE: (u32, u32) = (60, 60);
+const MOUSE_ACCELERATION: (u32, u32) = (200, 250);
+
+/// RPCS3's own mouse speed with a player's, in percent. Only the
+/// acceleration is scaled: the deadzone is where the stick starts as soon as
+/// the mouse moves at all, there to get past a game's own deadzone, and
+/// lowered with the speed it would make small moves do nothing.
+fn mouse_speed(percent: u32) -> [(&'static str, u32); 4] {
+    let (slowest, fastest) = keys::MOUSE_RANGE;
+    let percent = percent.clamp(slowest, fastest);
+    let scaled = |own: u32| (own * percent + 50) / 100;
+    [
+        ("Mouse Deadzone X Axis", MOUSE_DEADZONE.0),
+        ("Mouse Deadzone Y Axis", MOUSE_DEADZONE.1),
+        ("Mouse Acceleration X Axis", scaled(MOUSE_ACCELERATION.0)),
+        ("Mouse Acceleration Y Axis", scaled(MOUSE_ACCELERATION.1)),
+    ]
+}
+
+/// A keyboard-and-mouse player, `number` counted from 1, as RPCS3's keyboard
+/// pad reads one (RPCS3 build 0.0.43-20344, read 20 October 2026).
+///
+/// The handler takes a player only when the device is "Keyboard"
+/// (`keyboard_pad_handler::bindPadToDevice`, keyboard_pad_handler.cpp lines
+/// 1043 to 1045; `pad::keyboard_device_name`, pad_config.h line 12). Every
+/// button is written, the PS button too, empty as RPCS3 writes a button with
+/// nothing on it: a button left out takes the handler's own key
+/// (`pad_thread::Init`, pad_thread.cpp lines 142 to 153, reloads the profile
+/// over `init_config`'s keys), and its own for the PS button is Backspace,
+/// Omoio's Select (`init_config`, keyboard_pad_handler.cpp line 47).
+///
+/// The mouse turns the stick by how far it moved since its last move
+/// (Relative, lines 650 to 661). The handler also reads the lerp factors,
+/// which at RPCS3's own 100 move a stick or button the moment its key goes
+/// down (pad_config.h lines 152 to 155; keyboard_pad_handler.cpp lines 199
+/// to 208, 361 to 367 and 1059 to 1062). Anything else it reads is RPCS3's
+/// own default whether written or not. The stick deadzones a pad's profile
+/// has are left out: the keyboard pad's `process` (lines 1183 to 1387)
+/// never reads them.
+fn keyboard_player(number: usize, player: &Player, layout: &Layout) -> String {
+    let mut out = format!("Player {number} Input:\n");
+    out.push_str("  Handler: Keyboard\n");
+    out.push_str("  Device: \"Keyboard\"\n");
+    out.push_str("  Buddy Device: \"\"\n");
+    out.push_str("  Config:\n");
+    for (key, place) in PS3 {
+        let names = keyboard::button(player.keys(place), layout);
+        out.push_str(&format!("    {key}: {}\n", quoted(&names)));
+    }
+    out.push_str("    Mouse Movement Mode: Relative\n");
+    for (key, value) in mouse_speed(player.mouse) {
+        out.push_str(&format!("    {key}: {value}\n"));
+    }
+    for key in ["Left Stick Lerp Factor", "Right Stick Lerp Factor", "Analog Button Lerp Factor", "Trigger Lerp Factor"] {
+        out.push_str(&format!("    {key}: 100\n"));
+    }
+    out
+}
+
 /// A name can hold anything the hardware reports, including a colon, which
 /// would end the key early.
 fn quoted(value: &str) -> String {
@@ -495,14 +566,31 @@ fn quoted(value: &str) -> String {
 pub fn write(app: &AppHandle, title_id: &str, players: &[Player]) -> Result<(), String> {
     let usable = |p: &Player| {
         let handler = p.pad.handler.as_str();
-        p.pad.is_none() || (!p.pad.device.is_empty() && (handler == "XInput" || handler == "SDL" || is_sony(handler)))
+        p.pad.is_none()
+            || p.pad.is_keyboard()
+            || (!p.pad.device.is_empty() && (handler == "XInput" || handler == "SDL" || is_sony(handler)))
     };
     if !players.iter().all(usable) {
         return Err("Couldn't save the controller settings.".to_string());
     }
     std::fs::create_dir_all(profile_dir(app, title_id)?).map_err(|e| e.to_string())?;
-    std::fs::write(profile_path(app, title_id)?, profile_text(players, &plugged()))
+    std::fs::write(profile_path(app, title_id)?, profile_text(players, &plugged(), &keyboard::layout_now()))
         .map_err(|_| "Couldn't save the controller settings.".to_string())
+}
+
+/// Whether the profile RPCS3 reads for `title_id` has a keyboard-and-mouse
+/// player: the game's own, else the one for every game (`cfg_input::load`,
+/// pad_config.cpp lines 130 to 158).
+pub fn keyboard_plays(app: &AppHandle, title_id: &str) -> bool {
+    read_profile(app, title_id)
+        .or_else(|| read_profile(app, ""))
+        .is_some_and(|text| has_keyboard_player(&text))
+}
+
+fn has_keyboard_player(profile: &str) -> bool {
+    sections(profile)
+        .iter()
+        .any(|section| read_value(section, "Handler").as_deref() == Some("Keyboard"))
 }
 
 /// Takes a game's own profile away, so it goes back to the one for every game.
@@ -640,6 +728,7 @@ pub fn unfound(app: &AppHandle, title_id: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    use super::keyboard::us;
     use super::*;
 
     fn pad(handler: &str, device: &str) -> Pad {
@@ -664,13 +753,13 @@ mod tests {
     #[test]
     fn a_player_with_no_controller_gets_rpcs3s_null_handler() {
         let players = [Player::on(pad("XInput", "XInput Pad #1")), Player::on(Pad::none())];
-        let text = profile_text(&players, &[]);
+        let text = profile_text(&players, &[], &us);
         assert!(text.contains("Player 2 Input:\n  Handler: Null\n  Device: \"\"\n"), "{text}");
     }
 
     #[test]
     fn xinput_profiles_use_its_names_for_the_face_buttons() {
-        let text = profile_text(&[Player::on(pad("XInput", "XInput Pad #1"))], &[]);
+        let text = profile_text(&[Player::on(pad("XInput", "XInput Pad #1"))], &[], &us);
         assert!(text.starts_with("Player 1 Input:\n"));
         assert!(text.contains("  Handler: XInput\n"));
         assert!(text.contains("  Device: \"XInput Pad #1\"\n"));
@@ -685,7 +774,7 @@ mod tests {
     /// RPCS3's own handlers. Nothing about it may change.
     #[test]
     fn an_xinput_player_is_written_exactly_as_before() {
-        let text = profile_text(&[Player::on(pad("XInput", "XInput Pad #1"))], &[]);
+        let text = profile_text(&[Player::on(pad("XInput", "XInput Pad #1"))], &[], &us);
         assert_eq!(
             text,
             "Player 1 Input:\n  Handler: XInput\n  Device: \"XInput Pad #1\"\n  Buddy Device: \"\"\n  Config:\n    \
@@ -703,7 +792,7 @@ mod tests {
 
     #[test]
     fn sdl_profiles_keep_sdl_names() {
-        let text = profile_text(&[Player::on(pad("SDL", "DualSense Wireless Controller 0"))], &[]);
+        let text = profile_text(&[Player::on(pad("SDL", "DualSense Wireless Controller 0"))], &[], &us);
         assert!(text.contains("  Handler: SDL\n"));
         assert!(text.contains("    Cross: \"South\"\n"));
         assert!(text.contains("    Left Stick Deadzone: 8000\n"));
@@ -712,7 +801,7 @@ mod tests {
     #[test]
     fn a_changed_button_lands_on_the_ps3_input_in_that_place() {
         let buttons = BTreeMap::from([("South".to_string(), "East".to_string())]);
-        let text = profile_text(&[Player::with_buttons(pad("XInput", "XInput Pad #1"), buttons)], &[]);
+        let text = profile_text(&[Player::with_buttons(pad("XInput", "XInput Pad #1"), buttons)], &[], &us);
         assert!(text.contains("    Cross: \"B\"\n"));
         assert!(text.contains("    Circle: \"B\"\n"), "the other place keeps its own");
     }
@@ -725,7 +814,7 @@ mod tests {
             &crate::pads::xinput_slots(),
         );
         players[1] = Player::with_buttons(players[1].pad.clone(), buttons);
-        let text = profile_text(&players, &[]);
+        let text = profile_text(&players, &[], &us);
         for number in 1..=4 {
             assert!(text.contains(&format!("Player {number} Input:\n")));
         }
@@ -778,7 +867,7 @@ mod tests {
     fn a_dualsense_goes_through_rpcs3s_own_handler_by_slot() {
         let buttons = BTreeMap::from([("South".to_string(), "East".to_string())]);
         let player = Player::with_buttons(dualsense().pad, buttons);
-        let text = profile_text(&[player], &[dualsense()]);
+        let text = profile_text(&[player], &[dualsense()], &us);
         for line in [
             "  Handler: DualSense\n",
             "  Device: \"DualSense Pad #1\"\n",
@@ -807,7 +896,7 @@ mod tests {
     fn a_dualsense_player_reads_back_as_the_pad_plugged_in() {
         let buttons = BTreeMap::from([("South".to_string(), "East".to_string())]);
         let player = Player::with_buttons(dualsense().pad, buttons);
-        let text = profile_text(&[player.clone()], &[dualsense()]);
+        let text = profile_text(&[player.clone()], &[dualsense()], &us);
         assert_eq!(parse_players(&text, &[dualsense()])[0], Some(player));
     }
 
@@ -816,14 +905,14 @@ mod tests {
     #[test]
     fn a_dualsense_player_waits_on_its_slot_while_unplugged() {
         let buttons = BTreeMap::from([("South".to_string(), "East".to_string())]);
-        let text = profile_text(&[Player::with_buttons(dualsense().pad, buttons)], &[dualsense()]);
+        let text = profile_text(&[Player::with_buttons(dualsense().pad, buttons)], &[dualsense()], &us);
         let back = parse_players(&text, &[])[0].clone().unwrap();
         assert_eq!(back.pad.device, "DualSense Pad #1");
         assert_eq!(back.pad.handler, "DualSense");
         assert_eq!(back.pad.family, "playstation");
         assert_eq!(back.pad.name, "DualSense");
         assert_eq!(back.input("South"), "East");
-        assert_eq!(profile_text(&[back], &[]), text, "written again as it was");
+        assert_eq!(profile_text(&[back], &[], &us), text, "written again as it was");
     }
 
     #[test]
@@ -866,7 +955,7 @@ mod tests {
                 ("SDL", "Unknown Pad 1".to_string()),
             ]
         );
-        let text = profile_text(&[Player::on(plugged[0].pad.clone())], &plugged);
+        let text = profile_text(&[Player::on(plugged[0].pad.clone())], &plugged, &us);
         assert!(text.contains("  Handler: SDL\n  Device: \"Nintendo Switch Pro Controller 1\"\n"));
         assert!(text.contains("    Cross: \"South\"\n"));
         assert_eq!(parse_players(&text, &plugged)[0].as_ref().unwrap().pad, plugged[0].pad);
@@ -877,13 +966,13 @@ mod tests {
     #[test]
     fn a_sony_pad_not_plugged_in_is_named_where_rpcs3_will_find_it() {
         let away = on_usb("PS5 Controller 1", Some((SONY, 0x0CE6))).pad;
-        let text = profile_text(&[Player::on(away)], &[dualsense()]);
+        let text = profile_text(&[Player::on(away)], &[dualsense()], &us);
         assert!(text.contains("  Handler: DualSense\n  Device: \"DualSense Pad #2\"\n"), "{text}");
         assert!(text.contains("    Cross: \"Cross\"\n"));
         let ds4 = on_usb("PS4 Controller 0", Some((SONY, 0x09CC))).pad;
-        assert!(profile_text(&[Player::on(ds4)], &[]).contains("  Handler: DualShock 4\n  Device: \"DS4 Pad #1\"\n"));
+        assert!(profile_text(&[Player::on(ds4)], &[], &us).contains("  Handler: DualShock 4\n  Device: \"DS4 Pad #1\"\n"));
         let pro = on_usb("Nintendo Switch Pro Controller 0", Some((0x057E, 0x2009))).pad;
-        assert!(profile_text(&[Player::on(pro)], &[])
+        assert!(profile_text(&[Player::on(pro)], &[], &us)
             .contains("  Handler: SDL\n  Device: \"Nintendo Switch Pro Controller 0\"\n"));
     }
 
@@ -891,8 +980,8 @@ mod tests {
     fn sony_pads_plugged_in_change_nothing_for_an_xbox_pad() {
         let player = Player::on(pad("XInput", "XInput Pad #1"));
         assert_eq!(
-            profile_text(&[player.clone()], &[dualsense()]),
-            profile_text(&[player], &[])
+            profile_text(&[player.clone()], &[dualsense()], &us),
+            profile_text(&[player], &[], &us)
         );
     }
 
@@ -963,5 +1052,81 @@ mod tests {
         let text = "    Left Stick Left: \"LS X-\"\n    Left: \"Left\"\n";
         assert_eq!(read_value(text, "Left").as_deref(), Some("Left"));
         assert_eq!(read_value(text, "Left Stick Left").as_deref(), Some("LS X-"));
+    }
+
+    /// The layout a keyboard player starts with, whole, on a US keyboard.
+    #[test]
+    fn a_keyboard_player_gets_rpcs3s_keyboard_pad() {
+        let text = profile_text(&[Player::on(Pad::keyboard())], &[], &us);
+        assert_eq!(
+            text,
+            "Player 1 Input:\n  Handler: Keyboard\n  Device: \"Keyboard\"\n  Buddy Device: \"\"\n  Config:\n    \
+             Cross: \"Space\"\n    Circle: \"E,Mouse Middle\"\n    Square: \"Mouse Left,J\"\n    \
+             Triangle: \"Mouse Right,K\"\n    \
+             Up: \"1\"\n    Down: \"3\"\n    Left: \"4\"\n    Right: \"2\"\n    \
+             L1: \"Q\"\n    L2: \"F\"\n    L3: \"Shift Left\"\n    R1: \"R\"\n    R2: \"G\"\n    R3: \"C\"\n    \
+             Start: \"Return\"\n    Select: \"Backspace\"\n    PS Button: \"\"\n    \
+             Left Stick Left: \"A\"\n    Left Stick Right: \"D\"\n    \
+             Left Stick Up: \"W\"\n    Left Stick Down: \"S\"\n    \
+             Right Stick Left: \"Mouse MLeft\"\n    Right Stick Right: \"Mouse MRight\"\n    \
+             Right Stick Up: \"Mouse MUp\"\n    Right Stick Down: \"Mouse MDown\"\n    \
+             Mouse Movement Mode: Relative\n    \
+             Mouse Deadzone X Axis: 60\n    Mouse Deadzone Y Axis: 60\n    \
+             Mouse Acceleration X Axis: 200\n    Mouse Acceleration Y Axis: 250\n    \
+             Left Stick Lerp Factor: 100\n    Right Stick Lerp Factor: 100\n    \
+             Analog Button Lerp Factor: 100\n    Trigger Lerp Factor: 100\n"
+        );
+        assert!(!text.contains("Stick Deadzone"), "the keyboard pad has no stick deadzone");
+    }
+
+    #[test]
+    fn the_mouse_speed_scales_rpcs3s_own() {
+        let text = profile_text(&[Player::on(Pad::keyboard()).with_mouse(50)], &[], &us);
+        for line in [
+            "    Mouse Deadzone X Axis: 60\n",
+            "    Mouse Deadzone Y Axis: 60\n",
+            "    Mouse Acceleration X Axis: 100\n",
+            "    Mouse Acceleration Y Axis: 125\n",
+        ] {
+            assert!(text.contains(line), "{line:?} missing from\n{text}");
+        }
+        assert_eq!(mouse_speed(1000), mouse_speed(keys::MOUSE_RANGE.1), "kept within Omoio's range");
+        assert!(mouse_speed(keys::MOUSE_RANGE.1).iter().all(|(key, value)| !key.contains("Deadzone") || *value <= 255));
+    }
+
+    /// Keys are named on the layout given, and a place can have several,
+    /// mouse and keys together.
+    #[test]
+    fn a_keyboard_players_keys_follow_the_keyboard_layout() {
+        let german = |scan: u16| -> Option<(u16, char)> {
+            match scan {
+                0x15 => Some((0x5A, 'z')),
+                0x2C => Some((0x59, 'y')),
+                _ => us(scan),
+            }
+        };
+        let buttons = BTreeMap::from([
+            ("North".to_string(), "KeyY MouseRight NumpadEnter".to_string()),
+            ("Guide".to_string(), "KeyZ".to_string()),
+        ]);
+        let text = profile_text(&[Player::with_buttons(Pad::keyboard(), buttons)], &[], &german);
+        assert!(text.contains("    Triangle: \"Z,Mouse Right,Num+Enter\"\n"), "{text}");
+        assert!(text.contains("    PS Button: \"Y\"\n"), "{text}");
+    }
+
+    /// A pad player's part of the file is the same with a keyboard player
+    /// beside them, and RPCS3's file read back finds the keyboard player.
+    #[test]
+    fn a_pad_player_beside_a_keyboard_player_is_written_as_before() {
+        let xbox = Player::on(pad("XInput", "XInput Pad #1"));
+        let alone = profile_text(&[xbox.clone()], &[], &us);
+        let both = profile_text(&[xbox, Player::on(Pad::keyboard())], &[], &us);
+        assert!(both.starts_with(&alone), "{both}");
+        assert!(both[alone.len()..].starts_with("Player 2 Input:\n  Handler: Keyboard\n  Device: \"Keyboard\"\n"));
+        assert!(has_keyboard_player(&both));
+        assert!(!has_keyboard_player(&alone));
+        let back = parse_players(&both, &[]);
+        assert_eq!(back[0].as_ref().map(|p| p.pad.device.as_str()), Some("XInput Pad #1"));
+        assert!(back[1].is_none(), "a keyboard player is never read back as a pad");
     }
 }

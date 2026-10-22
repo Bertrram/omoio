@@ -1,10 +1,11 @@
 import { controllerView, padInput, saveController, type ControllerView } from "../api";
 import { capFace, partOf } from "../components/padArt";
-import { nameOf } from "../components/padNames";
+import { keyNames, keyboardLayout, nameOf, type KeyLayout } from "../components/padNames";
 import {
   DIRECTION,
   FACE,
   GROUPS,
+  KEY_GROUPS,
   MIDDLE,
   SHOULDERS,
   assignInput,
@@ -24,7 +25,12 @@ function problem(err: unknown, fallback: string): string {
 export function padScreen(kit: Kit, cap: (input: string) => string, start: number): Screen {
   let shown = start;
   let view: ControllerView | null = null;
+  let layout: KeyLayout = null;
   let asked = false;
+
+  /// A keyboard-and-mouse player's keys are changed on the desktop, where
+  /// the keys can be pressed.
+  const onKeyboard = () => view?.players[shown].pad.handler === "Keyboard";
 
   /// What a place does, for a question about it: "Cross on PS3, B on Wii U".
   const meaning = (known: ControllerView, place: string) =>
@@ -60,7 +66,7 @@ export function padScreen(kit: Kit, cap: (input: string) => string, start: numbe
 
   const screen: Screen = {
     section: "settings",
-    first: () => "place:South",
+    first: () => (onKeyboard() ? "pad:which" : "place:South"),
     tab(step) {
       if (!view) return;
       shown = (shown + step + view.players.length) % view.players.length;
@@ -78,8 +84,11 @@ export function padScreen(kit: Kit, cap: (input: string) => string, start: numbe
       if (!view) {
         if (!asked) {
           asked = true;
-          controllerView("")
-            .then((found) => (view = found))
+          Promise.all([controllerView(""), keyboardLayout()])
+            .then(([found, keys]) => {
+              view = found;
+              layout = keys;
+            })
             .catch((err) => kit.say(problem(err, "Couldn't read the controller settings.")))
             .finally(() => kit.redraw(screen));
         }
@@ -129,6 +138,10 @@ export function padScreen(kit: Kit, cap: (input: string) => string, start: numbe
       which.dataset.hint = "Change";
       which.append(h("span", `bp-pad-dot${player.connected ? " on" : ""}`), `${player.pad.name} · ${player.connected ? "Plugged in" : "Not plugged in"}`);
       bar.append(which);
+      if (onKeyboard()) {
+        page.append(bar, keyList(known, shown, layout));
+        return page;
+      }
       if (Object.entries(buttons).some(([place, input]) => place !== input)) {
         const reset = navButton("bp-btn", "pad:reset", () =>
           kit.ask({
@@ -219,6 +232,33 @@ export function padScreen(kit: Kit, cap: (input: string) => string, start: numbe
     },
   };
   return screen;
+}
+
+/// A keyboard-and-mouse player's keys, to read. They are changed on the
+/// desktop's Controller screen, where a key can be pressed for each.
+function keyList(known: ControllerView, index: number, layout: KeyLayout): HTMLElement {
+  const player = known.players[index];
+  const list = h("div", "bp-list");
+  list.append(
+    h(
+      "p",
+      "bp-list-note bp-padpage-note",
+      `Player ${index + 1} plays on the keyboard and mouse. Their keys are changed on the Controller screen outside Big Picture.`
+    )
+  );
+  for (const group of KEY_GROUPS) {
+    list.append(h("div", "bp-list-h", group.title));
+    for (const place of group.places) {
+      const on = known.consoles
+        .filter((console) => console.buttons[place])
+        .map((console) => `${console.buttons[place]} on ${console.name}`)
+        .join(", ");
+      const label = DIRECTION[place] ? nameOf("keyboard", place) : on;
+      const keys = keyNames(player.buttons[place] ?? "", layout);
+      list.append(row(`key:${place}`, label, keys.length > 0 ? keys.join(" or ") : "Nothing"));
+    }
+  }
+  return list;
 }
 
 /// The d-pad's or a stick's directions as a list, since they are rarely

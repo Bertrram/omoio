@@ -90,6 +90,8 @@ export interface Game {
     /// The game stops reading the pad while Omoio is in front of it, so
     /// Big Picture's presses never reach a game waiting behind it.
     quiet_behind: boolean;
+    /// Someone on the keyboard and mouse aims with the mouse in this game.
+    mouse_aims: boolean;
   };
   /// Whether the portal menu works in this game. Omoio's own rule, so the
   /// interface never guesses it from the title.
@@ -97,10 +99,18 @@ export interface Game {
   /// For a Skylanders game the menu doesn't work in: "The portal menu
   /// doesn't work in this version yet. It works in the Wii U version."
   portal_note: string | null;
+  /// For Imaginators, what works of the Senseis and Creation Crystals an
+  /// emulator makes.
+  figures_note: string | null;
 }
 
 export function listGames(): Promise<Game[]> {
   return invoke("list_games");
+}
+
+/// Set once when reading the library had to keep a copy of it, otherwise null.
+export function libraryNotice(): Promise<string | null> {
+  return invoke("library_notice");
 }
 
 export function importGame(path: string): Promise<Game> {
@@ -124,6 +134,9 @@ export interface ImportWarning {
   /// warning "The portal menu works in the Wii U version." Empty when there
   /// is no such version.
   better: string;
+  /// For Imaginators, what works of the Senseis and Creation Crystals an
+  /// emulator makes. Empty for any other game.
+  figures: string;
 }
 
 export interface ImportCheck {
@@ -194,6 +207,12 @@ export function onPadNotFound(handler: (message: string) => void): Promise<Unlis
   return listen<string>("pad-not-found", (event) => handler(event.payload));
 }
 
+/// When the emulator wouldn't start the game and said why, right before
+/// "game-stopped". The message is worded for the person playing.
+export function onGameRefused(handler: (message: string) => void): Promise<UnlistenFn> {
+  return listen<string>("game-refused", (event) => handler(event.payload));
+}
+
 export interface Machine {
   rpcs3: string | null;
   cpu: string | null;
@@ -209,7 +228,7 @@ export interface PlaySession {
   title: string;
   started: string;
   seconds: number;
-  ending: "stopped" | "closed" | "crashed";
+  ending: "stopped" | "closed" | "crashed" | "refused";
   machine: Machine;
   problems: string[];
   log_file: string;
@@ -657,6 +676,8 @@ export interface Listing {
   portal_menu: boolean | null;
   /// For a Skylanders game the menu doesn't work in, where it does.
   portal_note: string | null;
+  /// For Imaginators, what works of the figures an emulator makes.
+  figures_note: string | null;
 }
 
 export interface CatalogueFilter {
@@ -712,7 +733,7 @@ export function droppedKind(path: string): Promise<DroppedKind> {
 }
 
 /// Which kind of pad, for its drawing and the names on its buttons.
-export type PadFamily = "xbox" | "playstation" | "nintendo" | "generic";
+export type PadFamily = "xbox" | "playstation" | "nintendo" | "generic" | "keyboard";
 
 export interface Pad {
   /// How the emulators address it, e.g. "XInput Pad #1".
@@ -727,8 +748,29 @@ export interface PlayerSetup {
   /// Whether that pad is plugged in right now.
   connected: boolean;
   /// Every place on a pad, by SDL name such as "South", and the input on this
-  /// player's pad standing for it.
+  /// player's pad standing for it. On the keyboard, its keys and mouse inputs
+  /// separated by spaces, keys by their KeyboardEvent.code, such as "KeyW".
   buttons: Record<string, string>;
+  /// How fast the mouse turns a stick, in percent.
+  mouse: number;
+}
+
+/// What a keyboard-and-mouse player can be given (core/keys.rs).
+export interface KeyboardChoices {
+  /// The pad a player is given to play on the keyboard and mouse.
+  pad: Pad;
+  /// Every key, by its KeyboardEvent.code.
+  keys: string[];
+  /// "MouseLeft", "WheelUp" and the rest.
+  mouse_buttons: string[];
+  /// "MouseMoveLeft" and the rest, which turn a stick.
+  mouse_moves: string[];
+  /// Keys that can't be given, with why.
+  refused: [string, string][];
+  /// The slowest and fastest the mouse can go, in percent.
+  mouse_range: [number, number];
+  /// What each place starts with on the keyboard, "" for nothing.
+  defaults: Record<string, string>;
 }
 
 /// What one console calls each place on a pad.
@@ -751,6 +793,7 @@ export interface ControllerView {
   /// Every place a layout covers.
   inputs: string[];
   consoles: ConsoleButtons[];
+  keyboard: KeyboardChoices;
 }
 
 export function controllerView(titleId: string): Promise<ControllerView> {
@@ -761,14 +804,16 @@ export function setUpController(titleId: string): Promise<void> {
   return invoke("set_up_controller", { titleId });
 }
 
-/// `number` is the player, counted from 1.
+/// `number` is the player, counted from 1. `mouse` is the mouse's speed in
+/// percent, for a keyboard-and-mouse player.
 export function saveController(
   titleId: string,
   number: number,
   pad: Pad,
-  buttons: Record<string, string>
+  buttons: Record<string, string>,
+  mouse?: number
 ): Promise<void> {
-  return invoke("save_controller", { titleId, number, pad, buttons });
+  return invoke("save_controller", { titleId, number, pad, buttons, mouse: mouse ?? null });
 }
 
 export function forgetController(titleId: string): Promise<void> {

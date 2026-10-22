@@ -2,7 +2,7 @@ use crate::archive;
 use crate::backends::{rpcs3, EmulatorBackend};
 use crate::core::console::Console;
 use crate::core::import_warning::{self, Imported, List, Warning};
-use crate::core::library::Library;
+use crate::core::library::{Kept, Library};
 use crate::core::playlog::{self, Session as PlaySession};
 use crate::core::settings::Settings;
 use crate::core::types::{GameEntry, HardwareInfo, Progress};
@@ -261,10 +261,10 @@ pub async fn import_archive(
             }
         };
 
-        let library_file = library_path(&app)?;
-        let mut library = Library::load(&library_file);
-        library.upsert(game.clone());
-        library.save(&library_file)?;
+        Library::edit(&library_path(&app)?, |library| {
+            library.upsert(game.clone());
+            Ok(())
+        })?;
         Ok(entry(&app, game))
     })
     .await
@@ -351,6 +351,7 @@ fn entry(app: &AppHandle, game: crate::core::library::Game) -> GameEntry {
         features,
         portal_menu: crate::core::figures::offers_portal_menu(features, game.console, &game.title),
         portal_note: crate::core::figures::portal_menu_note(game.console, &game.title),
+        figures_note: crate::core::figures::made_figures_note(game.console, &game.title),
         game,
     }
 }
@@ -366,13 +367,13 @@ pub fn add_to_library(
     title_id: String,
     title: String,
 ) -> Result<(), String> {
-    let file = library_path(&app)?;
-    let mut library = Library::load(&file);
-    if library.games().iter().any(|g| g.title_id == title_id) {
-        return Err("That game is already in your library.".into());
-    }
-    library.upsert(crate::core::library::Game::not_set_up(console, title_id, title));
-    library.save(&file)
+    Library::edit(&library_path(&app)?, |library| {
+        if library.games().iter().any(|g| g.title_id == title_id) {
+            return Err("That game is already in your library.".into());
+        }
+        library.upsert(crate::core::library::Game::not_set_up(console, title_id, title));
+        Ok(())
+    })
 }
 
 #[derive(serde::Serialize)]
@@ -464,6 +465,18 @@ pub fn list_games(app: AppHandle) -> Result<Vec<GameEntry>, String> {
     Ok(library.games().iter().cloned().map(|g| entry(&app, g)).collect())
 }
 
+/// Said once over the library when loading it had to keep a copy of the file
+/// or take one back, so a list that came back short is never a mystery.
+#[tauri::command]
+pub fn library_notice() -> Option<&'static str> {
+    Library::take_notice().map(|kept| match kept {
+        Kept::Restored => "Your game list was missing, so Omoio brought it back from the copy it kept.",
+        Kept::Partly => "Omoio couldn't read part of your game list, so it kept a copy and loaded what it could.",
+        Kept::Whole => "Omoio couldn't read your game list, so it kept a copy and started a new one.",
+        Kept::Unopened => "Omoio couldn't open your game list, so none of it shows for now. It's left as it was. Restart Omoio to see your games.",
+    })
+}
+
 /// Every console's compatibility list, from the copies Omoio keeps. A list
 /// never downloaded is empty, so nothing here waits on the network.
 fn compat_lists(app: &AppHandle) -> Vec<List> {
@@ -546,10 +559,10 @@ pub async fn import_game(app: AppHandle, path: String) -> Result<GameEntry, Stri
             return Err(why);
         }
         let game = crate::backends::identify(Path::new(&path))?;
-        let library_file = library_path(&app)?;
-        let mut library = Library::load(&library_file);
-        library.upsert(game.clone());
-        library.save(&library_file)?;
+        Library::edit(&library_path(&app)?, |library| {
+            library.upsert(game.clone());
+            Ok(())
+        })?;
         Ok(entry(&app, game))
     })
     .await
@@ -648,6 +661,9 @@ fn launch(app: AppHandle, title_id: &str) -> Result<(), String> {
     );
     session.set_fullscreen(Settings::load(&settings_path(&app)?).start_fullscreen);
     crate::session::watch(app.clone(), pid);
+    if backend.features().mouse_aims && crate::controllers::keyboard_plays(&app, &game.title_id) {
+        crate::cursor::watch(app.clone(), pid);
+    }
     // Said over the game, in the bar the interface puts up when the game's
     // window comes (session::watch sends "game-started" then), so not before
     // that window is there, however long the emulator takes to boot.
@@ -768,7 +784,10 @@ pub fn reveal_folder(path: String) -> Result<(), String> {
 /// touched; this only forgets them.
 #[tauri::command]
 pub fn forget_all_games(app: AppHandle) -> Result<(), String> {
-    Library::default().save(&library_path(&app)?)
+    Library::edit(&library_path(&app)?, |library| {
+        library.forget_all();
+        Ok(())
+    })
 }
 
 #[tauri::command]
@@ -839,13 +858,11 @@ pub fn set_game_fullscreen(app: AppHandle, fullscreen: bool) {
 
 #[tauri::command]
 pub fn remove_game(app: AppHandle, title_id: String) -> Result<(), String> {
-    let library_file = library_path(&app)?;
-    let mut library = Library::load(&library_file);
     // Only the entry goes; the user's files are theirs and stay where they are.
-    if library.remove(&title_id) {
-        library.save(&library_file)?;
-    }
-    Ok(())
+    Library::edit(&library_path(&app)?, |library| {
+        library.remove(&title_id);
+        Ok(())
+    })
 }
 
 #[tauri::command]
@@ -1035,8 +1052,10 @@ pub async fn scan_folder(
             );
         });
 
+        // Read for what is already there, and changed only at the end, in
+        // one go, so imports made while a drive is scanned stay.
         let library_file = library_path(&app)?;
-        let mut library = Library::load(&library_file);
+        let library = Library::load(&library_file);
         let mut result = ScanResult {
             added: 0,
             already_there: 0,
@@ -1045,6 +1064,7 @@ pub async fn scan_folder(
             warnings: Vec::new(),
         };
         let mut added = Vec::new();
+        let mut found = Vec::new();
 
         let total = dumps.len();
         for (done, dump) in dumps.iter().enumerate() {
@@ -1054,7 +1074,7 @@ pub async fn scan_folder(
             }
             match crate::backends::identify(dump) {
                 Ok(game) => {
-                    if library.games().iter().any(|g| g.title_id == game.title_id) {
+                    if library.games().iter().chain(&found).any(|g| g.title_id == game.title_id) {
                         result.already_there += 1;
                     } else {
                         let _ = app.emit(
@@ -1067,7 +1087,7 @@ pub async fn scan_folder(
                             },
                         );
                         added.push(Imported::of(&game));
-                        library.upsert(game);
+                        found.push(game);
                         result.added += 1;
                     }
                 }
@@ -1078,7 +1098,14 @@ pub async fn scan_folder(
         }
 
         if result.added > 0 {
-            library.save(&library_file)?;
+            Library::edit(&library_file, |library| {
+                for game in found {
+                    if !library.games().iter().any(|g| g.title_id == game.title_id) {
+                        library.upsert(game);
+                    }
+                }
+                Ok(())
+            })?;
             let lists = compat_lists(&app);
             result.warnings = added.iter().filter_map(|game| import_warning::warning(game, &lists)).collect();
         }
@@ -1145,12 +1172,7 @@ pub async fn install_update(
         .unwrap_or_default();
     // Already there, so only the library's note needs catching up.
     if installed == update.version {
-        let mut library = Library::load(&file);
-        if let Some(game) = library.get_mut(&title_id) {
-            game.update_version = Some(installed);
-            library.save(&file)?;
-        }
-        return Ok(());
+        return note_update(&file, &title_id, installed);
     }
     let published = rpcs3::updates::available(&title_id).await?;
     let mut steps = rpcs3::updates::chain(&published, &installed, &update.version);
@@ -1197,14 +1219,19 @@ pub async fn install_update(
         })
         .await?;
         before += step.size;
-
-        let mut library = Library::load(&file);
-        if let Some(game) = library.get_mut(&title_id) {
-            game.update_version = Some(step.version.clone());
-            library.save(&file)?;
-        }
+        note_update(&file, &title_id, step.version.clone())?;
     }
     Ok(())
+}
+
+/// Notes in the library the update a game now runs.
+fn note_update(file: &Path, title_id: &str, version: String) -> Result<(), String> {
+    Library::edit(file, |library| {
+        if let Some(game) = library.get_mut(title_id) {
+            game.update_version = Some(version);
+        }
+        Ok(())
+    })
 }
 
 /// Whether the game has saved anything, and the copies kept of its saves.
@@ -1388,8 +1415,29 @@ pub struct PlayerView {
     pub pad: crate::core::pad_layout::Pad,
     /// Whether that pad is plugged in right now.
     pub connected: bool,
-    /// Every place on a pad and the input standing for it.
+    /// Every place on a pad and the input standing for it. On the keyboard,
+    /// the keys and mouse inputs, separated by spaces.
     pub buttons: std::collections::BTreeMap<String, String>,
+    /// How fast the mouse turns a stick, in percent.
+    pub mouse: u32,
+}
+
+/// What a keyboard-and-mouse player can be given, from core/keys.rs.
+#[derive(serde::Serialize)]
+pub struct KeyboardView {
+    /// The pad a player is given to play on the keyboard and mouse.
+    pub pad: crate::core::pad_layout::Pad,
+    /// Every key, by its `KeyboardEvent.code` name.
+    pub keys: Vec<&'static str>,
+    pub mouse_buttons: Vec<&'static str>,
+    pub mouse_moves: Vec<&'static str>,
+    /// Keys that can't be given, with why.
+    pub refused: Vec<(&'static str, &'static str)>,
+    /// The slowest and fastest the mouse can go, in percent.
+    pub mouse_range: (u32, u32),
+    /// What each place starts with on the keyboard, for showing Reset only
+    /// when it would change something.
+    pub defaults: std::collections::BTreeMap<&'static str, &'static str>,
 }
 
 /// What one console calls each place on a pad.
@@ -1417,6 +1465,7 @@ pub struct ControllerView {
     /// Every place a layout covers.
     pub inputs: Vec<&'static str>,
     pub consoles: Vec<ConsoleButtons>,
+    pub keyboard: KeyboardView,
 }
 
 /// `title_id` empty is the layout for every game.
@@ -1438,9 +1487,11 @@ pub fn controller_view(app: AppHandle, title_id: String) -> ControllerView {
             .players
             .iter()
             .map(|player| PlayerView {
-                connected: connected.iter().any(|pad| pad.device == player.pad.device),
+                // The keyboard is always there.
+                connected: player.pad.is_keyboard() || connected.iter().any(|pad| pad.device == player.pad.device),
                 pad: player.pad.clone(),
                 buttons: player.all_buttons(),
+                mouse: player.mouse,
             })
             .collect(),
         pads,
@@ -1456,6 +1507,18 @@ pub fn controller_view(app: AppHandle, title_id: String) -> ControllerView {
                 buttons: backend.button_names().iter().copied().collect(),
             })
             .collect(),
+        keyboard: {
+            use crate::core::keys;
+            KeyboardView {
+                pad: crate::core::pad_layout::Pad::keyboard(),
+                keys: keys::KEYS.iter().map(|(name, _)| *name).collect(),
+                mouse_buttons: keys::MOUSE_BUTTONS.to_vec(),
+                mouse_moves: keys::MOUSE_MOVES.to_vec(),
+                refused: keys::REFUSED.to_vec(),
+                mouse_range: keys::MOUSE_RANGE,
+                defaults: crate::core::pad_layout::INPUTS.iter().map(|place| (*place, keys::default_input(place))).collect(),
+            }
+        },
     }
 }
 
@@ -1472,12 +1535,14 @@ pub fn save_controller(
     number: usize,
     pad: crate::core::pad_layout::Pad,
     buttons: std::collections::BTreeMap<String, String>,
+    mouse: Option<u32>,
 ) -> Result<(), String> {
     crate::controllers::save_player(
         &app,
         &title_id,
         number,
         crate::core::pad_layout::Player::with_buttons(pad, buttons),
+        mouse,
     )
 }
 
@@ -1720,11 +1785,13 @@ pub async fn portal_figures(app: AppHandle) -> Result<Vec<String>, String> {
     names
 }
 
-/// `slot` counts from 0. A figure that went on is remembered as used, so the
+/// `slot` counts from 0. A copy of the figure is kept first, before the
+/// emulator opens it. A figure that went on is remembered as used, so the
 /// menu lists it first next time.
 #[tauri::command]
 pub async fn portal_load(app: AppHandle, slot: usize, figure: String) -> Result<Vec<String>, String> {
     let (backend, pid) = running_emulator(&app)?;
+    crate::portal_menu::back_up(&app, Path::new(&figure));
     let path = figure.clone();
     let names = tauri::async_runtime::spawn_blocking(move || backend.portal_load(pid, slot, Path::new(&path)))
         .await;

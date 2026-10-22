@@ -32,6 +32,15 @@ export const GROUPS: { key: string; title: string; side: "left" | "right"; place
   { key: "RS", title: "Right stick", side: "right", places: ["RS", "RS Y+", "RS Y-", "RS X-", "RS X+"] },
 ];
 
+/// Every place as a list in groups, as the labels around the drawing group
+/// them, for a player on the keyboard, which has no drawing.
+export const KEY_GROUPS: { title: string; places: string[] }[] = [
+  { title: "Face buttons", places: FACE },
+  { title: "Shoulders and triggers", places: ["LB", "RB", "LT", "RT"] },
+  { title: "Middle buttons", places: MIDDLE },
+  ...GROUPS.map(({ title, places }) => ({ title, places })),
+];
+
 /// Within a group, the direction alone says enough.
 export const DIRECTION: Record<string, string> = {
   Up: "Up",

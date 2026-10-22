@@ -4,12 +4,16 @@ mod backends;
 mod big_picture;
 mod commands;
 mod controllers;
+mod cursor;
+mod dsu;
 pub mod core;
 mod hardware;
+mod keyboard_pad;
 pub mod import;
 mod pads;
 mod figure_pictures;
 mod portal_menu;
+mod raw_input;
 mod saves;
 pub mod session;
 mod sony_pad;
@@ -18,6 +22,7 @@ mod vc_runtime;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    cursor::let_go_if_omoio_fails();
     tauri::Builder::default()
         .manage(commands::InstallState::default())
         .manage(session::Session::default())
@@ -82,6 +87,7 @@ pub fn run() {
             commands::get_firmware_version,
             commands::install_firmware,
             commands::list_games,
+            commands::library_notice,
             commands::import_game,
             commands::import_check,
             commands::game_warning,

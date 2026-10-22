@@ -7,6 +7,7 @@
 //! emulator turns the places into its own console's buttons. A pad set up
 //! once then feels the same in every game.
 
+use crate::core::keys;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -43,6 +44,10 @@ pub struct Pad {
 /// them.
 pub const NO_PAD: &str = "None";
 
+/// The handler of the keyboard and mouse, when someone chose them for a
+/// player.
+pub const KEYBOARD: &str = "Keyboard";
+
 impl Pad {
     /// No controller at all, chosen for a player so no pad is ever given to
     /// them by itself (`fill`, `seat`, `give_lone_pad`). It is kept in the
@@ -64,15 +69,55 @@ impl Pad {
     pub fn is_none(&self) -> bool {
         self.handler == NO_PAD
     }
+
+    /// The keyboard and mouse, chosen for a player the way no controller is,
+    /// and never given to anyone by itself. Its device is a name with no
+    /// number on the end, which no pad plugged in has (pads.rs names each by
+    /// its name and a number), so it is never taken for one, and being one
+    /// device, it goes to one player at a time (`give`).
+    pub fn keyboard() -> Self {
+        Pad {
+            device: "Keyboard and mouse".to_string(),
+            name: "Keyboard and mouse".to_string(),
+            handler: KEYBOARD.to_string(),
+            family: "keyboard".to_string(),
+        }
+    }
+
+    /// Whether this is `Pad::keyboard`.
+    pub fn is_keyboard(&self) -> bool {
+        self.handler == KEYBOARD
+    }
+
+    /// Whether a player on this is waiting for a pad to be plugged in. No
+    /// controller and the keyboard were chosen, and are there already.
+    fn waits_to_be_plugged_in(&self) -> bool {
+        !self.is_none() && !self.is_keyboard()
+    }
+}
+
+fn default_mouse() -> u32 {
+    keys::DEFAULT_MOUSE
+}
+
+fn is_default_mouse(mouse: &u32) -> bool {
+    *mouse == keys::DEFAULT_MOUSE
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Player {
     pub pad: Pad,
-    /// The places whose input is not the place itself. Nothing else is kept,
-    /// so a layout nobody changed is empty.
+    /// The places whose input is not the one they start with: the place
+    /// itself on a pad, and on the keyboard the keys in `keys::default_input`.
+    /// Nothing else is kept, so a layout nobody changed is empty.
     #[serde(default)]
     pub buttons: BTreeMap<String, String>,
+    /// How fast the mouse turns a stick, in percent of each emulator's own
+    /// speed. Only the keyboard and mouse use it. It is left out of the file
+    /// while it is the default, so a layout kept before there was one reads
+    /// the same.
+    #[serde(default = "default_mouse", skip_serializing_if = "is_default_mouse")]
+    pub mouse: u32,
 }
 
 impl Player {
@@ -80,23 +125,57 @@ impl Player {
         Self {
             pad,
             buttons: BTreeMap::new(),
+            mouse: keys::DEFAULT_MOUSE,
         }
     }
 
     /// Keeps only places and inputs a layout knows, and only where they
-    /// differ.
+    /// differ from what the place starts with. On the keyboard an input is
+    /// one key or mouse input or more, separated by spaces (`keys`).
     pub fn with_buttons(pad: Pad, buttons: BTreeMap<String, String>) -> Self {
+        let keyboard = pad.is_keyboard();
         let known = |name: &str| INPUTS.contains(&name);
         let buttons = buttons
             .into_iter()
-            .filter(|(place, input)| known(place) && known(input) && place != input)
+            .filter(|(place, _)| known(place))
+            .filter_map(|(place, input)| {
+                if keyboard {
+                    let input = keys::normalise(&input)?;
+                    (input != keys::default_input(&place)).then_some((place, input))
+                } else {
+                    (known(&input) && place != input).then_some((place, input))
+                }
+            })
             .collect();
-        Self { pad, buttons }
+        Self {
+            pad,
+            buttons,
+            mouse: keys::DEFAULT_MOUSE,
+        }
     }
 
-    /// The input on this player's pad that stands for `place`.
+    /// `self` with the mouse at `percent`, kept within `keys::MOUSE_RANGE`.
+    pub fn with_mouse(mut self, percent: u32) -> Self {
+        let (slowest, fastest) = keys::MOUSE_RANGE;
+        self.mouse = percent.clamp(slowest, fastest);
+        self
+    }
+
+    /// The input on this player's pad that stands for `place`. On the
+    /// keyboard, its keys and mouse inputs separated by spaces, which `keys`
+    /// gives one by one.
     pub fn input<'a>(&'a self, place: &'a str) -> &'a str {
-        self.buttons.get(place).map_or(place, String::as_str)
+        match self.buttons.get(place) {
+            Some(input) => input,
+            None if self.pad.is_keyboard() => keys::default_input(place),
+            None => place,
+        }
+    }
+
+    /// The keys and mouse inputs a keyboard player presses for `place`, none
+    /// for a place with nothing on it.
+    pub fn keys<'a>(&'a self, place: &'a str) -> impl Iterator<Item = &'a str> {
+        self.input(place).split_whitespace()
     }
 
     /// Every place with its input, for the Controller screen.
@@ -204,7 +283,7 @@ pub fn seat_from(players: &mut [Player], connected: &[Pad], seatable: &[Pad]) ->
         }
         let waiting = players
             .iter()
-            .position(|p| !p.pad.is_none() && !connected.iter().any(|c| c.device == p.pad.device));
+            .position(|p| p.pad.waits_to_be_plugged_in() && !connected.iter().any(|c| c.device == p.pad.device));
         if let Some(at) = waiting {
             players[at].pad = pad.clone();
             moved = true;
@@ -221,8 +300,8 @@ pub fn seat_from(players: &mut [Player], connected: &[Pad], seatable: &[Pad]) ->
 /// moment while it is switched on or off. A pad a player already has is
 /// never moved, and player 1's own pad cannot be plugged in, since this one
 /// is the only one. Their buttons stay as they were. Player 1 with no
-/// controller chosen (`Pad::none`) keeps none. Returns whether player 1
-/// changed.
+/// controller chosen (`Pad::none`) keeps none, and player 1 on the keyboard
+/// keeps it. Returns whether player 1 changed.
 pub fn give_lone_pad(players: &mut [Player], connected: &[Pad]) -> bool {
     let [pad] = connected else {
         return false;
@@ -231,7 +310,7 @@ pub fn give_lone_pad(players: &mut [Player], connected: &[Pad]) -> bool {
     if xbox || players.iter().any(|p| p.pad.device == pad.device) {
         return false;
     }
-    let Some(first) = players.first_mut().filter(|first| !first.pad.is_none()) else {
+    let Some(first) = players.first_mut().filter(|first| first.pad.waits_to_be_plugged_in()) else {
         return false;
     };
     first.pad = pad.clone();
@@ -239,15 +318,28 @@ pub fn give_lone_pad(players: &mut [Player], connected: &[Pad]) -> bool {
 }
 
 /// Gives player `at` this pad and layout. A pad another player had is swapped
-/// over, so no pad ever drives two players. Any number of players can have
-/// no controller (`Pad::none`), so that is never swapped.
+/// over, so no pad ever drives two players, and the keyboard counts as one
+/// pad. Any number of players can have no controller (`Pad::none`), so that
+/// is never swapped.
+///
+/// Between two pads each player keeps their own buttons, as a place on one
+/// pad is the same place on any. A key means nothing on a pad and a pad's
+/// button nothing on the keyboard, so when the keyboard and a pad change
+/// hands, each player's buttons and mouse speed go with the device.
 pub fn give(players: &mut [Player], at: usize, player: Player) {
+    let mut player = player;
     let swapped = (!player.pad.is_none())
         .then(|| players.iter().position(|p| p.pad.device == player.pad.device))
-        .flatten();
+        .flatten()
+        .filter(|&other| other != at);
     if let Some(other) = swapped {
-        if other != at {
+        if players[other].pad.is_keyboard() == players[at].pad.is_keyboard() {
             players[other].pad = players[at].pad.clone();
+        } else {
+            let ours = players[at].clone();
+            let theirs = std::mem::replace(&mut players[other], ours);
+            player.buttons = theirs.buttons;
+            player.mouse = theirs.mouse;
         }
     }
     players[at] = player;
@@ -460,6 +552,79 @@ mod tests {
         let back: Layouts = serde_json::from_str(&text).unwrap();
         assert!(back.every_game[0].pad.is_none());
         assert_eq!(back.every_game[0].pad, Pad::none());
+    }
+
+    #[test]
+    fn a_keyboard_player_is_not_waiting_for_a_pad() {
+        let mut players = default_players(&[], &slots());
+        players[0] = Player::on(Pad::keyboard());
+        let connected = [pad("XInput Pad #1"), pad("PS5 Controller 0")];
+        assert!(seat(&mut players, &connected));
+        assert_eq!(
+            devices(&players),
+            ["Keyboard and mouse", "XInput Pad #1", "PS5 Controller 0", "XInput Pad #4"],
+            "pads go to the next players whose pad is missing"
+        );
+        assert!(!give_lone_pad(&mut players, &[pad("PS5 Controller 0")]));
+        let mut alone = vec![Player::on(Pad::keyboard())];
+        assert!(!give_lone_pad(&mut alone, &[pad("PS5 Controller 1")]));
+        assert!(alone[0].pad.is_keyboard());
+    }
+
+    #[test]
+    fn the_keyboard_goes_to_one_player_at_a_time() {
+        let mut players = default_players(&[], &slots());
+        give(&mut players, 0, Player::on(Pad::keyboard()));
+        give(&mut players, 2, Player::on(Pad::keyboard()));
+        assert_eq!(
+            devices(&players),
+            ["XInput Pad #3", "XInput Pad #2", "Keyboard and mouse", "XInput Pad #4"]
+        );
+    }
+
+    #[test]
+    fn buttons_go_with_the_device_between_the_keyboard_and_a_pad() {
+        let keys = BTreeMap::from([("South".to_string(), "KeyG".to_string())]);
+        let pad_buttons = BTreeMap::from([("South".to_string(), "East".to_string())]);
+        let mut players = default_players(&[], &slots());
+        players[0] = Player::with_buttons(Pad::keyboard(), keys).with_mouse(150);
+        players[1] = Player::with_buttons(pad("XInput Pad #2"), pad_buttons);
+        // Player 2 picks the keyboard, sending the buttons they had.
+        let sent = players[1].buttons.clone();
+        give(&mut players, 1, Player::with_buttons(Pad::keyboard(), sent));
+        assert!(players[1].pad.is_keyboard());
+        assert_eq!(players[1].input("South"), "KeyG", "the keys came with the keyboard");
+        assert_eq!(players[1].mouse, 150);
+        assert_eq!(players[0].pad.device, "XInput Pad #2");
+        assert_eq!(players[0].input("South"), "East", "the pad's buttons came with the pad");
+        assert_eq!(players[0].mouse, keys::DEFAULT_MOUSE);
+    }
+
+    #[test]
+    fn a_keyboard_player_keeps_only_the_keys_changed() {
+        let buttons = BTreeMap::from([
+            ("South".to_string(), "Space".to_string()),
+            ("East".to_string(), "KeyX".to_string()),
+            ("West".to_string(), "Insert".to_string()),
+            ("North".to_string(), "North".to_string()),
+        ]);
+        let player = Player::with_buttons(Pad::keyboard(), buttons);
+        assert_eq!(player.buttons.len(), 1, "{:?}", player.buttons);
+        assert_eq!(player.input("East"), "KeyX");
+        assert_eq!(player.input("South"), "Space");
+        assert_eq!(player.keys("West").collect::<Vec<_>>(), ["MouseLeft", "KeyJ"], "a refused key leaves the place as it was");
+        assert_eq!(player.keys("Guide").count(), 0);
+        assert_eq!(player.all_buttons()["LS Y+"], "KeyW");
+    }
+
+    #[test]
+    fn the_mouse_speed_is_kept_only_when_changed() {
+        let player = Player::on(Pad::keyboard()).with_mouse(1000);
+        assert_eq!(player.mouse, keys::MOUSE_RANGE.1);
+        let text = serde_json::to_string(&Player::on(Pad::keyboard())).unwrap();
+        assert!(!text.contains("\"mouse\""), "{text}");
+        let back: Player = serde_json::from_str(&serde_json::to_string(&player).unwrap()).unwrap();
+        assert_eq!(back, player);
     }
 
     #[test]

@@ -5,6 +5,7 @@ pub mod firmware;
 pub mod fixes;
 pub mod game_config;
 pub mod graphics;
+mod keyboard;
 pub mod launch;
 #[cfg(windows)]
 pub mod overlay;
@@ -12,6 +13,7 @@ pub mod packages;
 pub mod patches;
 #[cfg(windows)]
 pub mod portal;
+pub mod portal_ipc;
 pub mod saves;
 pub mod updates;
 
@@ -113,10 +115,23 @@ fn copies(exe: &Path) -> (sysinfo::System, Vec<sysinfo::Pid>) {
         true,
         ProcessRefreshKind::nothing().with_exe(UpdateKind::OnlyIfNotSet),
     );
+    // Compared with every link followed: Windows reports a running program
+    // by the path it found it at, and a folder on the way may be a link, as
+    // Omoio's own data folder is on one PC (seen 20 October 2026: Omoio took
+    // a running game's RPCS3 for none, started `rpcs3 --version` beside it to
+    // learn its version, and RPCS3 0.0.43-20351 met it with "Another instance
+    // of RPCS3 is running", which held the portal menu up).
+    let wanted = std::fs::canonicalize(exe).ok();
+    let same = |own: &Path| {
+        own.as_os_str().eq_ignore_ascii_case(exe.as_os_str())
+            || (own.file_name().zip(exe.file_name()).is_some_and(|(own, exe)| own.eq_ignore_ascii_case(exe))
+                && wanted.is_some()
+                && std::fs::canonicalize(own).ok() == wanted)
+    };
     let ours = system
         .processes()
         .iter()
-        .filter(|(_, process)| process.exe().is_some_and(|own| own.as_os_str().eq_ignore_ascii_case(exe.as_os_str())))
+        .filter(|(_, process)| process.exe().is_some_and(same))
         .map(|(&pid, _)| pid)
         .collect();
     (system, ours)
@@ -403,7 +418,29 @@ impl super::EmulatorBackend for Rpcs3 {
             portal: true,
             // Omoio switches RPCS3's background input off before each game.
             quiet_behind: true,
+            // RPCS3's keyboard handler puts the mouse moving on a stick
+            // (controllers.rs).
+            mouse_aims: true,
         }
+    }
+
+    /// RPCS3's portal server on for a Skylanders game and off for any other,
+    /// written before RPCS3 starts, which is when it reads it. A file that
+    /// couldn't be written leaves the portal to RPCS3's windows, so the game
+    /// starts all the same.
+    fn prepare(&self, app: &AppHandle, game: &crate::core::library::Game) -> Result<(), String> {
+        let skylanders = crate::core::figures::is_skylanders(&game.title);
+        if exe_path(app)?.exists() {
+            let _ = portal_ipc::get_ready(&install_dir(app)?.join("config"), skylanders);
+        }
+        #[cfg(windows)]
+        if skylanders {
+            if let Ok(data) = app.path().data_dir() {
+                let kept = crate::core::figures::characters_file(crate::core::console::Console::Ps3);
+                portal::know_kept_names(&data.join("Omoio").join(kept));
+            }
+        }
+        Ok(())
     }
 
     fn portal_figures(&self, pid: u32) -> Result<Vec<String>, String> {
@@ -438,6 +475,17 @@ impl super::EmulatorBackend for Rpcs3 {
 
     fn tidy_window(&self, pid: u32, game: isize) {
         portal::tidy(pid, game);
+    }
+
+    #[cfg(windows)]
+    fn session_notes(&self, pid: u32) -> Vec<String> {
+        portal::way_used(pid).map(str::to_string).into_iter().collect()
+    }
+
+    /// RPCS3's mouse lock, without which aiming stops at the window's edge
+    /// (launch.rs, `KEYBOARD_SETTINGS`).
+    fn hold_mouse(&self, game: isize) -> bool {
+        launch::lock_mouse(game)
     }
 
     /// Omoio's menus keep the game deaf by taking the keyboard from its

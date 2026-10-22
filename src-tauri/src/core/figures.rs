@@ -73,6 +73,13 @@ pub fn is_skylanders(title: &str) -> bool {
     title.to_lowercase().contains("skylanders")
 }
 
+/// The file in Omoio's data folder that keeps the characters a console's
+/// emulator can make figures of (portal_menu.rs, `characters`).
+pub fn characters_file(console: Console) -> String {
+    let key = serde_json::to_string(&console).unwrap_or_default().replace('"', "");
+    format!("characters-{key}.json")
+}
+
 /// Which game a title is, from its name. `None` for one Omoio can't tell,
 /// which then shows every figure.
 pub fn game_from_title(title: &str) -> Option<Game> {
@@ -150,6 +157,30 @@ pub fn portal_menu_note(console: Console, title: &str) -> Option<String> {
     } else {
         format!("The portal menu doesn't work in this version yet. It works in {}.", versions(&elsewhere))
     })
+}
+
+/// What Imaginators' page and its import warning say about Senseis and
+/// Creation Crystals an emulator made. The game checks a factory signature on
+/// them that no emulator's figure maker writes (Cemu's
+/// `SkylanderUSB::CreateSkylander`, Skylander.cpp lines 857 to 898, v2.6;
+/// RPCS3's rpcs3qt/skylander_dialog.cpp lines 608 to 627) and calls one
+/// without it broken (Cemu issue 1964, RPCS3 issue 10713). On the Wii U,
+/// Cemu's Signature Patch turns the check off and Omoio switches it on; on
+/// the PS3 nothing does. Said before anyone imports the game (Bertram, 22
+/// October 2026, after players found their Senseis "corrupted").
+pub fn made_figures_note(console: Console, title: &str) -> Option<&'static str> {
+    if game_from_title(title) != Some(Game::Imaginators) {
+        return None;
+    }
+    match console {
+        Console::Ps3 => Some(
+            "Senseis and Creation Crystals made in an emulator don't work in the PS3 version. The game checks for a factory signature only real figures have.",
+        ),
+        Console::WiiU => Some(
+            "Senseis and Creation Crystals made in an emulator work only while the Signature Patch is on. Omoio switches it on, and you'll find it under Community packs.",
+        ),
+        Console::Wii | Console::GameCube => None,
+    }
 }
 
 /// The game a figure id came out with. All eight sidekicks came out with

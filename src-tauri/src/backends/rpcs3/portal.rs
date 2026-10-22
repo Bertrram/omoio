@@ -16,7 +16,15 @@
 //! than Windows' (`dialogs=none`), which open faster and answer UI Automation
 //! like the rest. Nothing moves the mouse. How this was proven is in
 //! docs/what-we-verified.md, "Skylanders".
+//!
+//! An RPCS3 from 10 October 2026 on also has a portal server, which puts
+//! figures on and takes them off at once, with no window (portal_ipc.rs).
+//! When it answers as the game starts, the figures go through it, and the
+//! manager opens only to make a figure or list the characters, which the
+//! server can't. Anything the server turns down or doesn't answer goes
+//! through the manager as before.
 
+use super::portal_ipc::{self, Failed, Server, Slot};
 use crate::backends::qt::{
     self, all_windows, arrives, class, gone, hide, key, name, open_menus, out_of_sight, process_of, showing, soon,
     title, value, visible, Automation as Qt, WAIT,
@@ -84,13 +92,86 @@ const START_WAIT: Duration = Duration::from_secs(30);
 const STEP_WAIT: Duration = Duration::from_millis(300);
 const END_WAIT: Duration = Duration::from_secs(1);
 
-/// One errand in RPCS3's windows at a time: the manager opening while a game
+/// How long the portal server may take to answer once RPCS3's main window
+/// shows. RPCS3 starts it before that window and again as the game boots
+/// (portal_ipc.rs), so this covers only the moment between the two.
+const SERVER_WAIT: Duration = Duration::from_secs(5);
+/// Between tries at the server while the game starts.
+const SERVER_RETRY: Duration = Duration::from_millis(100);
+
+/// One errand on the portal at a time: the manager opening while a game
 /// starts and a figure the user picked meanwhile would each open windows the
 /// other is waiting for, and one clears away the windows another left open.
+/// The server's errands take their turn too, so a figure picked as the game
+/// starts waits until it is known which way it goes.
 static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
 
 fn turn() -> MutexGuard<'static, ()> {
     ONE_AT_A_TIME.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// The RPCS3 whose start `prepare` saw, and whether its portal server
+/// answered then.
+static ANSWERED: Mutex<Option<(u32, bool)>> = Mutex::new(None);
+
+/// RPCS3's characters with each figure's id and variant, as its figure maker
+/// lists them. The server gives only the numbers, and the menu knows a
+/// figure by the name RPCS3's manager would show for it.
+static NAMES: Mutex<Vec<Character>> = Mutex::new(Vec::new());
+
+/// The portal server of `pid`, when it answered as the game started and the
+/// figures it reports can be named. Otherwise the manager does the errand.
+fn server(pid: u32) -> Option<Server> {
+    let answered = *ANSWERED.lock().unwrap_or_else(PoisonError::into_inner) == Some((pid, true));
+    (answered && !NAMES.lock().unwrap_or_else(PoisonError::into_inner).is_empty()).then(portal_ipc::ours)
+}
+
+/// Which way the portal of `pid` was filled, for the log kept of the game,
+/// or `None` when `prepare` never saw it start, as for a game with no
+/// portal.
+pub fn way_used(pid: u32) -> Option<&'static str> {
+    match *ANSWERED.lock().unwrap_or_else(PoisonError::into_inner) {
+        Some((seen, true)) if seen == pid => Some("Omoio: the portal menu used RPCS3's portal server."),
+        Some((seen, false)) if seen == pid => Some("Omoio: the portal menu used RPCS3's Skylanders Manager."),
+        _ => None,
+    }
+}
+
+fn know_names(characters: Vec<Character>) {
+    if !characters.is_empty() {
+        *NAMES.lock().unwrap_or_else(PoisonError::into_inner) = characters;
+    }
+}
+
+/// Takes RPCS3's characters from the list the portal menu keeps of them
+/// (`portal_menu::characters`, `{ "version", "characters" }`). A list kept
+/// from an older RPCS3 names the figures all the same, and the menu reads
+/// the list again from a newer one the first time it opens.
+pub fn know_kept_names(file: &Path) {
+    #[derive(serde::Deserialize)]
+    struct Kept {
+        characters: Vec<Character>,
+    }
+    if let Some(kept) = std::fs::read_to_string(file).ok().and_then(|text| serde_json::from_str::<Kept>(&text).ok()) {
+        know_names(kept.characters);
+    }
+}
+
+/// Each slot's name as the manager would show it: its list's name for the
+/// id and variant (`rpcs3qt/skylander_dialog.cpp` lines 779 to 806; the
+/// same list the figure maker offers, lines 511 to 523), else its "Unknown"
+/// line, which `shown` names where Omoio can.
+fn named(slots: &[Slot]) -> Vec<String> {
+    let names = NAMES.lock().unwrap_or_else(PoisonError::into_inner);
+    slots.iter().map(|slot| slot.map_or_else(String::new, |(id, variant)| name_of(&names, id, variant))).collect()
+}
+
+fn name_of(names: &[Character], id: u16, variant: u16) -> String {
+    names
+        .iter()
+        .find(|character| character.id == id && character.variant == variant)
+        .map(|character| character.name.clone())
+        .unwrap_or_else(|| shown(&format!("Unknown (Id:{id} Var:{variant})")))
 }
 
 /// UI Automation, with RPCS3's words for what goes wrong in its windows.
@@ -257,8 +338,9 @@ fn find_menu_item(automation: &Automation, pid: u32, menus: &IUIAutomationElemen
 }
 
 /// Gets the portal ready while a Skylanders game starts: RPCS3's main window
-/// is hidden the moment it shows, and the manager opened behind it, so the
-/// first figure goes on as quickly as any other.
+/// is hidden the moment it shows. When the portal server answers, that is
+/// all. When it doesn't, the manager is opened behind the main window, so
+/// the first figure goes on as quickly as any other.
 pub fn prepare(pid: u32) {
     std::thread::spawn(move || {
         let Some(main) = soon(START_WAIT, || main_window(pid).filter(|&window| visible(window))) else {
@@ -266,12 +348,30 @@ pub fn prepare(pid: u32) {
         };
         hide(main);
         let _turn = turn();
+        let answers = answers_soon();
+        *ANSWERED.lock().unwrap_or_else(PoisonError::into_inner) = Some((pid, answers));
+        if server(pid).is_some() {
+            return;
+        }
         if let Ok(automation) = Automation::new() {
             if let Ok(window) = manager(&automation, pid) {
                 warm_up(&automation, pid, window);
             }
         }
     });
+}
+
+fn answers_soon() -> bool {
+    let until = std::time::Instant::now() + SERVER_WAIT;
+    loop {
+        if portal_ipc::ours().status().is_ok() {
+            return true;
+        }
+        if std::time::Instant::now() >= until {
+            return false;
+        }
+        std::thread::sleep(SERVER_RETRY);
+    }
 }
 
 /// Opens one of Qt's file windows and closes it again, unseen, while the game
@@ -388,6 +488,17 @@ fn choose_file(automation: &Automation, picker: HWND, file: &Path) -> Result<(),
 /// The figures on the portal, by slot.
 pub fn figures(pid: u32) -> Result<Vec<String>, String> {
     let _turn = turn();
+    on_portal(pid)
+}
+
+/// What the portal holds, from the server when it answers, else from the
+/// manager. Both count the slots alike: the manager's row `i` shows the
+/// portal's slot `i` (`skylander_dialog.cpp` lines 779 to 806), and its
+/// buttons in row `i` load and clear that slot (lines 725 to 777).
+fn on_portal(pid: u32) -> Result<Vec<String>, String> {
+    if let Some(slots) = server(pid).and_then(|server| server.status().ok()) {
+        return Ok(named(&slots));
+    }
     let automation = Automation::new()?;
     let window = manager(&automation, pid)?;
     read(&automation, window)
@@ -398,6 +509,9 @@ pub fn figures(pid: u32) -> Result<Vec<String>, String> {
 pub fn load(pid: u32, slot: usize, file: &Path) -> Result<Vec<String>, String> {
     check(slot)?;
     let _turn = turn();
+    if server(pid).is_some_and(|server| load_through(&server, slot, file)) {
+        return on_portal(pid);
+    }
     let automation = Automation::new()?;
     let window = manager(&automation, pid)?;
     put_away_leftovers(pid);
@@ -408,10 +522,38 @@ pub fn load(pid: u32, slot: usize, file: &Path) -> Result<Vec<String>, String> {
     settled(&automation, pid, window, LOAD_FAILED)
 }
 
+/// Whether the server put the figure on. The manager's Load takes off what
+/// the slot held first (`skylander_dialog.cpp` lines 753 to 777), and the
+/// server's `load` wants the slot empty, so a full slot is emptied and the
+/// figure tried again. A figure turned down for any other reason goes
+/// through the manager, which takes some files the server doesn't, such as
+/// one longer than a figure (`SkylanderPortalIPC.cpp` lines 74 to 86), and
+/// says what went wrong in RPCS3's own message.
+fn load_through(server: &Server, slot: usize, file: &Path) -> bool {
+    let Some(path) = file.to_str() else {
+        return false;
+    };
+    match server.load(slot, path) {
+        Ok(_) => true,
+        Err(Failed::Refused(why)) if why == "no free slot" => server.remove(slot).is_ok() && server.load(slot, path).is_ok(),
+        Err(_) => false,
+    }
+}
+
 /// Takes the figure in `slot` off the portal, and returns what is left.
 pub fn clear(pid: u32, slot: usize) -> Result<Vec<String>, String> {
     check(slot)?;
     let _turn = turn();
+    if let Some(server) = server(pid) {
+        let off = match server.remove(slot) {
+            Ok(()) => true,
+            Err(Failed::Refused(why)) => why == "slot empty",
+            Err(_) => false,
+        };
+        if off {
+            return on_portal(pid);
+        }
+    }
     let automation = Automation::new()?;
     let window = manager(&automation, pid)?;
     let manager = automation.window(window)?;
@@ -439,6 +581,15 @@ pub fn create(pid: u32, slot: usize, character: &Character, file: &Path) -> Resu
     if let Err(problem) = make(&automation, pid, maker, character, file) {
         put_away_leftovers(pid);
         return Err(problem);
+    }
+    // The manager shows the new figure only at its next look at the portal,
+    // up to half a second later (`skylander_dialog.cpp` lines 706 to 709),
+    // where the server sees it at once.
+    if server(pid).is_some() {
+        if dismiss_message(pid) {
+            return Err(MAKE_FAILED.to_string());
+        }
+        return on_portal(pid);
     }
     settled(&automation, pid, window, MAKE_FAILED)
 }
@@ -490,7 +641,10 @@ pub fn characters(pid: u32) -> Result<Vec<Character>, String> {
     key(maker, VK_ESCAPE);
     gone(maker);
     match found {
-        Ok(found) if !found.is_empty() => Ok(found),
+        Ok(found) if !found.is_empty() => {
+            know_names(found.clone());
+            Ok(found)
+        }
         _ => Err("Couldn't read RPCS3's list of characters.".to_string()),
     }
 }
@@ -561,6 +715,32 @@ mod tests {
         assert_eq!(shown("Unknown (Id:999 Var:0)"), "Unknown (Id:999 Var:0)");
         assert_eq!(unknown("Unknown (Id:16 Var:6145)"), Some((16, 0x1801)));
         assert_eq!(unknown("Unknown Spyro"), None);
+    }
+
+    #[test]
+    fn a_figure_the_server_reports_is_named_as_the_manager_names_it() {
+        // A few lines of RPCS3's list (`skylander_dialog.cpp` lines 68 and 184).
+        let list = [("Spyro", 16, 0x0000), ("Series 2 Spyro", 16, 0x1801), ("Tempest Timer", 212, 0x300D)]
+            .map(|(name, id, variant)| Character { name: name.to_string(), id, variant });
+        assert_eq!(name_of(&list, 16, 0), "Spyro");
+        assert_eq!(name_of(&list, 16, 0x1801), "Series 2 Spyro");
+        assert_eq!(name_of(&list, 212, 0x300D), "Tempest Timer");
+        // The trap as Trap Team makes it, which the manager calls "Unknown
+        // (Id:212 Var:12302)" and the menu "Tempest Timer".
+        assert_eq!(name_of(&list, 212, 0x300E), "Tempest Timer");
+        // A Creation Crystal, which no list has.
+        assert_eq!(name_of(&list, 680, 0x5208), "Magic Lantern Crystal");
+        assert_eq!(name_of(&list, 999, 0), "Unknown (Id:999 Var:0)");
+    }
+
+    #[test]
+    fn the_names_come_from_the_list_the_menu_kept() {
+        let file = std::env::temp_dir().join(format!("omoio-characters-ps3-{}.json", std::process::id()));
+        let kept = r#"{"version":"0.0.43-20275-68e0d602","characters":[{"name":"Spyro","id":16,"variant":0}]}"#;
+        std::fs::write(&file, kept).unwrap();
+        know_kept_names(&file);
+        let _ = std::fs::remove_file(&file);
+        assert_eq!(named(&[Some((16, 0)), None, Some((999, 0))]), ["Spyro", "", "Unknown (Id:999 Var:0)"]);
     }
 
     #[test]

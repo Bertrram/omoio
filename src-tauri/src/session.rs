@@ -94,7 +94,7 @@ impl Session {
 
     /// The game's window and its emulator, while the window is on the
     /// screen.
-    fn shown(&self) -> Option<(isize, u32)> {
+    pub(crate) fn shown(&self) -> Option<(isize, u32)> {
         let inner = self.inner.lock().unwrap();
         let running = inner.as_ref().filter(|r| !r.hidden)?;
         Some((running.window?, running.pid))
@@ -249,7 +249,16 @@ pub fn watch(app: AppHandle, pid: u32) {
                     .unwrap_or(0);
                 let playing = session.end();
                 if let Some(playing) = playing {
-                    keep_session_log(&app, &playing, seconds, stopped_by_us);
+                    // Cemu says why it won't start a game only in a message,
+                    // which Omoio read and closed (backends::cemu::start_errors).
+                    let refused = crate::backends::cemu::start_errors::take(pid);
+                    let notes = crate::backends::for_console(playing.console)
+                        .map(|backend| backend.session_notes(pid))
+                        .unwrap_or_default();
+                    keep_session_log(&app, &playing, seconds, stopped_by_us, refused.as_ref(), &notes);
+                    if let Some(refused) = refused {
+                        let _ = app.emit("game-refused", refused.shown);
+                    }
                     let _ = app.emit("game-stopped", playing);
                 }
                 return;
@@ -367,6 +376,23 @@ pub fn quiet_game(app: &AppHandle) {
         }
         if portal {
             backend.ready_portal(pid);
+            // Cemu reads keys in whichever of its windows is active
+            // (`CemuApp::FilterEvent`, CemuApp.cpp lines 389 to 409, v2.6),
+            // and its portal window takes the front as it opens
+            // (MainWindow.cpp lines 1500 to 1517), before the input settings
+            // window that keeps the game deaf is up. So a keyboard player's
+            // arrow keys meant for the menu could reach the game until `hush`
+            // was done (read in the source on 20 October 2026, not yet seen).
+            // The menu takes the front back at once, which makes Cemu let go
+            // of every key (lines 401 to 405). Only for a keyboard player, so
+            // nothing changes for a pad.
+            // Never from another program the player went to meanwhile.
+            let ours = overlay::front() == 0 || overlay::front_belongs_to(&[std::process::id(), pid]);
+            if ours && crate::controllers::keyboard_plays(&app, &playing.title_id) {
+                if let Some(window) = app.get_webview_window("portal") {
+                    let _ = window.set_focus();
+                }
+            }
         }
         if backend.hush(pid, over).is_ok() && over {
             if let Some(window) = app.get_webview_window(if portal { "portal" } else { "main" }) {
@@ -573,10 +599,18 @@ fn learn_version(app: &AppHandle, title_id: &str, version: String) {
         return;
     };
     let file = data_dir.join("Omoio").join("library.json");
-    let mut library = crate::core::library::Library::load(&file);
-    if let Some(game) = library.get_mut(title_id).filter(|game| game.version.is_none()) {
-        game.version = Some(version);
-        let _ = library.save(&file);
+    use crate::core::library::Library;
+    let unknown = |library: &Library| {
+        library.games().iter().any(|game| game.title_id == title_id && game.version.is_none())
+    };
+    // Looked at first, so a game whose version is known costs no save.
+    if unknown(&Library::load(&file)) {
+        let _ = Library::edit(&file, |library| {
+            if let Some(game) = library.get_mut(title_id).filter(|game| game.version.is_none()) {
+                game.version = Some(version);
+            }
+            Ok(())
+        });
     }
 }
 
@@ -584,20 +618,37 @@ fn learn_version(app: &AppHandle, title_id: &str, version: String) {
 /// and records how it ended. Emulators overwrite their own log on the next
 /// launch, so this is the only chance to keep it, and to learn from it what
 /// the game's own files couldn't say.
-fn keep_session_log(app: &AppHandle, playing: &Playing, seconds: u64, stopped_by_us: bool) {
+fn keep_session_log(
+    app: &AppHandle,
+    playing: &Playing,
+    seconds: u64,
+    stopped_by_us: bool,
+    refused: Option<&crate::backends::cemu::start_errors::Refusal>,
+    notes: &[String],
+) {
     use crate::core::playlog::{self, Ending, Session as LoggedSession};
 
     let backend = crate::backends::for_console(playing.console);
-    let log = backend
-        .as_ref()
-        .and_then(|backend| backend.log_file(app))
-        .and_then(|path| std::fs::read_to_string(path).ok())
-        .unwrap_or_default();
+    // Cemu starts no log for a game it refused, and the one there is the
+    // game before's, so what it said in its message is kept in its place.
+    let mut log = match refused {
+        Some(refused) => refused.said.clone(),
+        None => backend
+            .as_ref()
+            .and_then(|backend| backend.log_file(app))
+            .and_then(|path| std::fs::read_to_string(path).ok())
+            .unwrap_or_default(),
+    };
+    for note in notes {
+        log.push_str(&format!("\n{note}\n"));
+    }
     if let Some(version) = backend.as_ref().and_then(|backend| backend.version_from_log(&log)) {
         learn_version(app, &playing.title_id, version);
     }
 
-    let ending = if stopped_by_us {
+    let ending = if refused.is_some() {
+        Ending::Refused
+    } else if stopped_by_us {
         Ending::Stopped
     } else if playlog::has_fatal(&log) {
         Ending::Crashed
@@ -627,7 +678,10 @@ fn keep_session_log(app: &AppHandle, playing: &Playing, seconds: u64, stopped_by
         seconds,
         ending,
         machine: playlog::read_machine(&log),
-        problems: playlog::read_problems(&log, 40),
+        problems: match refused {
+            Some(refused) => vec![refused.shown.clone()],
+            None => playlog::read_problems(&log, 40),
+        },
         log_file: log_file.to_string_lossy().into_owned(),
     };
 

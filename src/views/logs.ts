@@ -28,6 +28,7 @@ const ENDING: Record<PlaySession["ending"], { label: string; tone: string }> = {
   stopped: { label: "Stopped from Omoio", tone: "" },
   closed: { label: "Closed normally", tone: "go" },
   crashed: { label: "Ended unexpectedly", tone: "warn" },
+  refused: { label: "Didn't start", tone: "warn" },
 };
 
 async function copy(text: string, button: HTMLButtonElement, done: string): Promise<void> {
@@ -67,10 +68,17 @@ function sessionCard(session: PlaySession): HTMLElement {
   const problems = card.querySelector<HTMLElement>(".session-problems")!;
   const summary = document.createElement("div");
   summary.className = "session-summary";
+  // Only RPCS3's log is read for errors (read_problems in core/playlog.rs
+  // looks for its own marks), so for another emulator a problem is Omoio's
+  // own words for why the game didn't start (keep_session_log in
+  // session.rs), and is said in full.
+  const ourWords = session.console !== undefined && session.console !== "ps3";
   summary.textContent =
     session.problems.length === 0
       ? `${emulator} logged no errors.`
-      : `${session.problems.length} error${session.problems.length === 1 ? "" : "s"} logged.`;
+      : ourWords
+        ? session.problems.join(" ")
+        : `${session.problems.length} error${session.problems.length === 1 ? "" : "s"} logged.`;
   problems.appendChild(summary);
 
   const list = document.createElement("pre");
@@ -81,6 +89,8 @@ function sessionCard(session: PlaySession): HTMLElement {
 
   const show = card.querySelector<HTMLButtonElement>('[data-act="show"]')!;
   show.disabled = session.problems.length === 0;
+  // Nothing more to show than the summary says.
+  if (ourWords) show.classList.add("gone");
   show.onclick = () => {
     list.hidden = !list.hidden;
     show.textContent = list.hidden ? "Show errors" : "Hide errors";

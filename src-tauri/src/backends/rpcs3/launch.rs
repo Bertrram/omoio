@@ -114,12 +114,138 @@ fn with_setting(existing: &str, section: &str, key: &str, value: &str) -> String
     out
 }
 
-fn prepare_gui_settings(app: &AppHandle) -> Result<(), String> {
+/// One line of RPCS3's GUI settings file taken out of its section, and the
+/// rest of the file left as it was.
+fn without_setting(existing: &str, section: &str, key: &str) -> String {
+    let mut lines: Vec<&str> = Vec::new();
+    let mut in_section = false;
+    for line in existing.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            in_section = trimmed == section;
+        } else if in_section && trimmed.split('=').next() == Some(key) {
+            continue;
+        }
+        lines.push(line);
+    }
+    let mut out = lines.join("\n");
+    out.push('\n');
+    out
+}
+
+/// The value of one line of RPCS3's GUI settings file, in its section.
+fn setting<'a>(existing: &'a str, section: &str, key: &str) -> Option<&'a str> {
+    let mut in_section = false;
+    for line in existing.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            in_section = trimmed == section;
+        } else if in_section {
+            if let Some((name, value)) = trimmed.split_once('=') {
+                if name == key {
+                    return Some(value);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// RPCS3's game window settings Omoio sets while a keyboard-and-mouse
+/// player plays, by section, key and value.
+///
+/// The cursor over the game hides once the mouse has been still a second.
+/// RPCS3 hides it only when asked: `hideMouseOnIdle`, off by default, with
+/// `hideMouseOnIdleTime`, 2000 ms by default (`gui_settings.h` lines 296 and
+/// 297), read each time the game window comes to the front or goes
+/// (`gs_frame::handle_cursor`, gs_frame.cpp lines 1168 to 1195). It hides
+/// the cursor only while the game window is in front and shows it again as
+/// the mouse moves (`update_cursor`, lines 612 to 642, and `gs_frame::event`,
+/// lines 1255 to 1259). A second rather than RPCS3's two, as the mouse rests
+/// only between moves.
+///
+/// The mouse lock moves from Ctrl+L to Ctrl+F9 (`MOUSE_LOCK`). Relative
+/// mouse movement turns the stick by how far the cursor moved inside the
+/// game window (`keyboard_pad_handler::mouseMoveEvent`, lines 650 to 661),
+/// so it stops at the window's edge unless RPCS3's lock puts the cursor back
+/// in the middle after every move (lines 612 to 648). In a window the lock
+/// comes on only by its shortcut, a toggle (gs_frame.cpp lines 292 to 295
+/// and 603 to 610; `game_window_mouse_lock`, shortcut_settings.cpp line
+/// 75), and goes off at every change of the window's visibility (lines 1175
+/// to 1180), so Omoio presses it (`lock_mouse`). Ctrl+L would also reach the
+/// game as L, a key a player may have; F9 is no key a player can be given
+/// (core/keys.rs), and RPCS3 gives Ctrl+F9 no other job.
+///
+/// All from RPCS3 build 0.0.43-20344, read 20 October 2026. With no keyboard
+/// player the lines are taken out again, and only when they are Omoio's own,
+/// so a pad player's settings are what they were, and a choice made in
+/// RPCS3's own settings stays.
+const KEYBOARD_SETTINGS: [(&str, &str, &str); 3] = [
+    ("[GSFrame]", "hideMouseOnIdle", "true"),
+    ("[GSFrame]", "hideMouseOnIdleTime", "1000"),
+    ("[Shortcuts]", "game_window_mouse_lock", MOUSE_LOCK),
+];
+
+/// The shortcut for RPCS3's mouse lock while a keyboard player plays.
+const MOUSE_LOCK: &str = "Ctrl+F9";
+
+fn with_cursor_for(existing: &str, keyboard: bool) -> String {
+    let ours = KEYBOARD_SETTINGS
+        .iter()
+        .all(|(section, key, value)| setting(existing, section, key) == Some(value));
+    if keyboard {
+        KEYBOARD_SETTINGS
+            .iter()
+            .fold(existing.to_string(), |text, (section, key, value)| with_setting(&text, section, key, value))
+    } else if ours {
+        KEYBOARD_SETTINGS
+            .iter()
+            .fold(existing.to_string(), |text, (section, key, _)| without_setting(&text, section, key))
+    } else {
+        existing.to_string()
+    }
+}
+
+/// Presses RPCS3's mouse lock (`MOUSE_LOCK`) in the game's window, and says
+/// whether it did. SendInput types into whatever window is in front ("SendInput
+/// function", Microsoft Learn, read 20 October 2026), so it is pressed only
+/// with the game's window in front at that very moment, never into another
+/// program the player has just gone to. Nor while the player holds Shift,
+/// Ctrl, Alt or a Windows key: RPCS3 would read Ctrl+Shift+F9, which is no
+/// shortcut, and the lock would stay off. Asked again at the next look.
+pub fn lock_mouse(game: isize) -> bool {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        GetAsyncKeyState, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS,
+        KEYEVENTF_KEYUP, VIRTUAL_KEY, VK_CONTROL, VK_F9, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+    let held = |vk: VIRTUAL_KEY| unsafe { GetAsyncKeyState(i32::from(vk.0)) } as u16 & 0x8000 != 0;
+    if [VK_SHIFT, VK_CONTROL, VK_MENU, VK_LWIN, VK_RWIN].into_iter().any(held) {
+        return false;
+    }
+    if unsafe { GetForegroundWindow() }.0 as isize != game {
+        return false;
+    }
+    let key = |vk: VIRTUAL_KEY, up: bool| INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: vk,
+                dwFlags: if up { KEYEVENTF_KEYUP } else { KEYBD_EVENT_FLAGS(0) },
+                ..Default::default()
+            },
+        },
+    };
+    let presses = [key(VK_CONTROL, false), key(VK_F9, false), key(VK_F9, true), key(VK_CONTROL, true)];
+    unsafe { SendInput(&presses, std::mem::size_of::<INPUT>() as i32) == presses.len() as u32 }
+}
+
+fn prepare_gui_settings(app: &AppHandle, keyboard: bool) -> Result<(), String> {
     let dir = super::install_dir(app)?.join("GuiConfigs");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let file = dir.join("CurrentSettings.ini");
     let existing = std::fs::read_to_string(&file).unwrap_or_default();
-    let updated = with_keys_freed(&with_welcome_disabled(&existing));
+    let updated = with_cursor_for(&with_keys_freed(&with_welcome_disabled(&existing)), keyboard);
     if updated == existing {
         return Ok(());
     }
@@ -177,7 +303,7 @@ pub fn launch(app: &AppHandle, game: &Game) -> Result<u32, String> {
     // its own over them.
     super::end_running(&exe);
     register(app, game)?;
-    prepare_gui_settings(app)?;
+    prepare_gui_settings(app, super::controllers::keyboard_plays(app, &game.title_id))?;
     keep_pad_to_the_game(app);
     leave_fullscreen_to_omoio(app);
 
@@ -303,6 +429,25 @@ mod tests {
 
         let fresh = with_keys_freed("[GSFrame]\nscreen=0\n");
         assert!(fresh.contains("[Shortcuts]\ngame_window_toggle_recording=\ngame_window_toggle_fullscreen=\n"));
+    }
+
+    #[test]
+    fn hides_the_cursor_only_while_a_keyboard_player_plays() {
+        // As Omoio leaves the file before every game, with its shortcuts
+        // freed (`with_keys_freed`).
+        let existing = "[GSFrame]\nscreen=0\n\n[Meta]\nx=2\n[Shortcuts]\ngame_window_toggle_recording=\n";
+        let keyboard = with_cursor_for(existing, true);
+        assert!(keyboard.contains("hideMouseOnIdle=true\nhideMouseOnIdleTime=1000\n[Meta]"), "{keyboard}");
+        assert!(keyboard.find("[GSFrame]").unwrap() < keyboard.find("hideMouseOnIdle").unwrap());
+        assert!(keyboard.contains("[Shortcuts]\ngame_window_toggle_recording=\ngame_window_mouse_lock=Ctrl+F9\n"), "{keyboard}");
+        assert_eq!(with_cursor_for(&keyboard, true), keyboard, "already hidden");
+        assert_eq!(with_cursor_for(&keyboard, false), existing, "back as it was for a pad player");
+        assert_eq!(with_cursor_for(existing, false), existing, "a pad player's file is left alone");
+        let own = "[GSFrame]\nhideMouseOnIdle=true\nhideMouseOnIdleTime=2000\n";
+        assert_eq!(with_cursor_for(own, false), own, "a choice made in RPCS3 stays");
+        let fresh = with_cursor_for("", true);
+        assert!(fresh.contains("hideMouseOnIdle=true\nhideMouseOnIdleTime=1000\n"), "{fresh}");
+        assert!(fresh.contains("game_window_mouse_lock=Ctrl+F9"), "{fresh}");
     }
 
     #[test]

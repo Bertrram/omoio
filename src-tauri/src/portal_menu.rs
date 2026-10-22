@@ -8,6 +8,7 @@
 //! maker makes into the same folder. Omoio never writes figure data itself;
 //! a Trap Team trap is read, for the villain it holds, and a file the user
 //! brought only as far as its plain first blocks, to tell a Creation Crystal.
+//! Before a figure goes on, a copy of its file is kept aside (`back_up`).
 
 use crate::backends::EmulatorBackend;
 use crate::core::console::Console;
@@ -23,7 +24,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
-use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VIRTUAL_KEY, VK_CONTROL, VK_INSERT, VK_SHIFT};
+use windows::Win32::UI::Input::KeyboardAndMouse::{
+    GetAsyncKeyState, VIRTUAL_KEY, VK_CONTROL, VK_INSERT, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT, VK_TAB,
+};
 
 const LABEL: &str = "portal";
 
@@ -72,6 +75,28 @@ static FAMILY: Mutex<String> = Mutex::new(String::new());
 /// setting name it.
 const MENU_KEY: VIRTUAL_KEY = VK_INSERT;
 
+/// Tab opens and closes the menu too, for a keyboard with no Insert key,
+/// such as a Surface's (Bertram, 21 October 2026): a keyboard player's
+/// mouse is kept inside the game (cursor.rs), so the Portal button can't be
+/// reached either. Tab is on every keyboard and is no key a player can be
+/// given (core/keys.rs). It counts only with the game's window or the menu
+/// in front, so it still moves between buttons in Omoio's own window, and
+/// never with Ctrl, Alt or a Windows key held, nor with Alt or a Windows key
+/// held at the look before, so Alt+Tab and Windows+Tab still switch
+/// programs however quickly they are let go. Shift is let through: a
+/// keyboard player holds it for the left stick's press (core/keys.rs).
+///
+/// The emulators still hear Tab, since Omoio can't keep a key from them.
+/// RPCS3 and Cemu give it no job (rpcs3qt/shortcut_settings.cpp lines 73 to
+/// 94, build 0.0.43-20344; MainWindow::OnKeyUp, Cemu v2.6), though RPCS3
+/// hears it as another key, Backtab, while Shift is held (Qt's
+/// qwindowskeymapper.cpp lines 1219 to 1220, Qt 6.12.0), which no layout
+/// uses. Dolphin turns its speed limit off while Tab is held
+/// (HotkeyManager.cpp line 433, `HK_TOGGLE_THROTTLE`, 2609a), which the
+/// Hotkeys.ini Omoio writes leaves out (backends/dolphin/settings.rs,
+/// `quiet_hotkeys`) unless the player has set hotkeys up in Dolphin.
+const SECOND_MENU_KEY: VIRTUAL_KEY = VK_TAB;
+
 /// Whether the menu key went down since the last look, from whether it was
 /// down then (`was`), is down now (`down`), and Windows' note that it went
 /// down since the last ask (`tapped`). Looked at every 50 ms, a tap of about
@@ -84,9 +109,9 @@ fn key_went_down(was: bool, down: bool, tapped: bool) -> bool {
     !was && (down || tapped)
 }
 
-/// Reads the menu key, remembering in `was` whether it was down.
-fn menu_key_pressed(was: &mut bool) -> bool {
-    let state = unsafe { GetAsyncKeyState(i32::from(MENU_KEY.0)) } as u16;
+/// Reads `key`, remembering in `was` whether it was down.
+fn menu_key_pressed(key: VIRTUAL_KEY, was: &mut bool) -> bool {
+    let state = unsafe { GetAsyncKeyState(i32::from(key.0)) } as u16;
     let down = state & 0x8000 != 0;
     let pressed = key_went_down(*was, down, state & 0x0001 != 0);
     *was = down;
@@ -103,10 +128,26 @@ fn omoio_or_game_in_front(game: Option<isize>) -> bool {
     front != 0 && (Some(front) == game || overlay::process_of(front) == std::process::id())
 }
 
+fn key_held(key: VIRTUAL_KEY) -> bool {
+    let state = unsafe { GetAsyncKeyState(i32::from(key.0)) } as u16;
+    state & 0x8000 != 0
+}
+
 /// Whether Shift or Ctrl is held with the menu key.
 fn with_shift_or_ctrl() -> bool {
-    let held = |key: VIRTUAL_KEY| unsafe { GetAsyncKeyState(i32::from(key.0)) } as u16 & 0x8000 != 0;
-    held(VK_SHIFT) || held(VK_CONTROL)
+    key_held(VK_SHIFT) || key_held(VK_CONTROL)
+}
+
+/// Whether the game's window or the menu is in front, for `SECOND_MENU_KEY`.
+fn game_or_menu_in_front(app: &AppHandle, game: Option<isize>) -> bool {
+    use crate::backends::rpcs3::overlay;
+    let front = overlay::front();
+    let menu = app
+        .get_webview_window(LABEL)
+        .filter(|_| showing(app))
+        .and_then(|window| window.hwnd().ok())
+        .map(|hwnd| hwnd.0 as isize);
+    front != 0 && (Some(front) == game || Some(front) == menu)
 }
 
 fn data_dir(app: &AppHandle) -> Result<PathBuf, String> {
@@ -402,6 +443,85 @@ pub fn add(app: &AppHandle, paths: &[String]) -> Result<usize, String> {
     Ok(added)
 }
 
+/// How many copies of one figure are kept, the newest. A copy is 1 KB.
+const BACKUPS_KEPT: usize = 20;
+
+/// Where the copies are kept, inside the figures folder so a player who
+/// opens it from Settings finds them: a folder for each figure by its file
+/// name, and in it the file as it was each time it went on, when it had
+/// changed since, named for the second it was taken, as save backups are
+/// (saves.rs).
+fn backups(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(folder(app)?.join("Backups"))
+}
+
+/// Keeps a copy of a figure's file before it goes on the portal, so a
+/// figure the game later calls broken can be put back as it was. While a
+/// figure is on, its emulator writes each block the game sends straight into
+/// the file (Cemu's `SkylanderUSB::WriteBlock` and `Skylander::Save`,
+/// Skylander.cpp lines 919 to 939 and 1001 to 1008, v2.6; RPCS3's
+/// `sky_portal::write_block` and `skylander::save`, Emu/Io/Skylander.cpp
+/// lines 35 to 47 and 144 to 163, master 599ab4f; read 22 October 2026), so
+/// a write cut off by the figure coming off or the emulator closing stays
+/// as far as the game got. The copy is the file's bytes as they are; nothing
+/// in them is decrypted or changed. A figure that can't be copied still goes
+/// on.
+pub fn back_up(app: &AppHandle, figure: &Path) {
+    let taken = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs());
+    if let Ok(backups) = backups(app) {
+        let _ = back_up_into(figure, &backups, taken);
+    }
+}
+
+/// Copies `figure` into its folder among `backups`, unless the newest copy
+/// there already holds the same bytes, and lets the oldest copies go past
+/// `BACKUPS_KEPT`. Returns the copy made, if one was.
+fn back_up_into(figure: &Path, backups: &Path, taken: u64) -> std::io::Result<Option<PathBuf>> {
+    let (Some(name), Some(extension)) = (figure.file_name(), figure.extension()) else {
+        return Ok(None);
+    };
+    let bytes = std::fs::read(figure)?;
+    let kept = backups.join(name);
+    let copies = copies_in(&kept);
+    if copies.last().is_some_and(|newest| std::fs::read(newest).is_ok_and(|held| held == bytes)) {
+        return Ok(None);
+    }
+    std::fs::create_dir_all(&kept)?;
+    // Two in the same second, as a figure put on, taken off and put on
+    // again can make, would share a name and the second would replace the
+    // first.
+    let mut second = taken;
+    let mut copy = kept.join(second.to_string()).with_extension(extension);
+    while copy.exists() {
+        second += 1;
+        copy = kept.join(second.to_string()).with_extension(extension);
+    }
+    std::fs::write(&copy, &bytes)?;
+    let copies = copies_in(&kept);
+    for old in &copies[..copies.len().saturating_sub(BACKUPS_KEPT)] {
+        let _ = std::fs::remove_file(old);
+    }
+    Ok(Some(copy))
+}
+
+/// The copies kept of one figure, oldest first, by the second in each name.
+fn copies_in(kept: &Path) -> Vec<PathBuf> {
+    let mut copies: Vec<(u64, PathBuf)> = std::fs::read_dir(kept)
+        .map(|entries| {
+            entries
+                .flatten()
+                .map(|entry| entry.path())
+                .filter(|path| path.is_file())
+                .filter_map(|path| Some((path.file_stem()?.to_str()?.parse().ok()?, path)))
+                .collect()
+        })
+        .unwrap_or_default();
+    copies.sort();
+    copies.into_iter().map(|(_, path)| path).collect()
+}
+
 /// The characters an emulator's figure maker offered, kept with the
 /// emulator's version so a newer emulator is asked again.
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -420,8 +540,7 @@ pub fn characters(
     console: Console,
     pid: u32,
 ) -> Result<Vec<Character>, String> {
-    let key = serde_json::to_string(&console).unwrap_or_default().replace('"', "");
-    let own = format!("characters-{key}.json");
+    let own = figures::characters_file(console);
     let version = backend.detect_version(app).unwrap_or_default();
     let file = data_dir(app)?.join(&own);
     let kept = std::fs::read_to_string(&file)
@@ -661,8 +780,9 @@ pub fn watch(app: AppHandle, pid: u32) {
         let mut ticks = 0u32;
         // Windows keeps its note of a press until asked, so one from before
         // the game started is cleared rather than taken for a press now.
-        let mut key_was = false;
-        menu_key_pressed(&mut key_was);
+        let (mut key_was, mut second_was, mut switching_was) = (false, false, false);
+        menu_key_pressed(MENU_KEY, &mut key_was);
+        menu_key_pressed(SECOND_MENU_KEY, &mut second_was);
         loop {
             std::thread::sleep(Duration::from_millis(50));
             ticks = ticks.wrapping_add(1);
@@ -671,7 +791,11 @@ pub fn watch(app: AppHandle, pid: u32) {
             }
             // Read every time, in front or not, so a press meant for another
             // program is used up rather than kept for later.
-            let key = menu_key_pressed(&mut key_was);
+            let key = menu_key_pressed(MENU_KEY, &mut key_was);
+            let second = menu_key_pressed(SECOND_MENU_KEY, &mut second_was);
+            // Alt+Tab let go between two looks reads as Tab alone.
+            let switching = key_held(VK_MENU) || key_held(VK_LWIN) || key_held(VK_RWIN);
+            let switched = std::mem::replace(&mut switching_was, switching) || switching;
             let session = app.state::<Session>();
             if session.pid() != Some(pid) {
                 let handle = app.clone();
@@ -693,7 +817,8 @@ pub fn watch(app: AppHandle, pid: u32) {
                 .find(|pad| crate::pads::held(&pad.device).is_some_and(|held| held.iter().any(|h| *h == wanted)));
             let now = pressing.is_some();
             let by_pad = now && !was;
-            let by_key = key && !with_shift_or_ctrl() && omoio_or_game_in_front(session.window());
+            let by_key = (key && !with_shift_or_ctrl() && omoio_or_game_in_front(session.window()))
+                || (second && !key_held(VK_CONTROL) && !switched && game_or_menu_in_front(&app, session.window()));
             if by_pad || by_key {
                 if let Some(pad) = pressing.filter(|_| by_pad) {
                     *FAMILY.lock().unwrap() = pad.family;
@@ -768,5 +893,89 @@ mod tests {
         assert_eq!(crystal_in(&broken), None);
         assert_eq!(crystal_in(&made_figure(680, 0x5208)[..512]), None);
         assert_eq!(crystal_in(&[made_figure(680, 0x5208), vec![0]].concat()), None);
+    }
+
+    /// A folder of its own for one test, emptied first.
+    fn scratch(name: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!("omoio-figure-backups-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    /// King Pen as the game might have left him, `mark` standing in for
+    /// what it wrote.
+    fn played(mark: u8) -> Vec<u8> {
+        let mut figure = made_figure(601, 0x5000);
+        figure[0x80] = mark;
+        figure
+    }
+
+    #[test]
+    fn a_figure_is_copied_as_it_is_before_it_goes_on() {
+        let root = scratch("copied");
+        let figure = root.join("King Pen.sky");
+        let backups = root.join("Backups");
+        std::fs::write(&figure, played(1)).unwrap();
+        let copy = back_up_into(&figure, &backups, 1_000).unwrap().unwrap();
+        assert_eq!(copy, backups.join("King Pen.sky").join("1000.sky"));
+        assert_eq!(std::fs::read(&copy).unwrap(), played(1));
+        assert_eq!(std::fs::read(&figure).unwrap(), played(1), "the figure itself is left as it was");
+        // On again, unchanged: nothing new.
+        assert_eq!(back_up_into(&figure, &backups, 2_000).unwrap(), None);
+        // Changed by the game since: a new copy beside the old one.
+        std::fs::write(&figure, played(2)).unwrap();
+        let newer = back_up_into(&figure, &backups, 3_000).unwrap().unwrap();
+        assert_eq!(std::fs::read(&newer).unwrap(), played(2));
+        assert_eq!(copies_in(&backups.join("King Pen.sky")), [copy, newer]);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn copies_taken_in_the_same_second_each_keep_their_own() {
+        let root = scratch("second");
+        let figure = root.join("King Pen.sky");
+        let backups = root.join("Backups");
+        std::fs::write(&figure, played(1)).unwrap();
+        back_up_into(&figure, &backups, 500).unwrap();
+        std::fs::write(&figure, played(2)).unwrap();
+        let second = back_up_into(&figure, &backups, 500).unwrap().unwrap();
+        assert_eq!(second, backups.join("King Pen.sky").join("501.sky"));
+        assert_eq!(std::fs::read(backups.join("King Pen.sky").join("500.sky")).unwrap(), played(1));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn only_the_newest_copies_are_kept() {
+        let root = scratch("newest");
+        let figure = root.join("King Pen.sky");
+        let backups = root.join("Backups");
+        let made = BACKUPS_KEPT as u64 + 3;
+        // From 90, so the names go from two digits to three and are told
+        // apart by number rather than as text.
+        for n in 0..made {
+            std::fs::write(&figure, played(n as u8)).unwrap();
+            back_up_into(&figure, &backups, 90 + n).unwrap();
+        }
+        let copies = copies_in(&backups.join("King Pen.sky"));
+        assert_eq!(copies.len(), BACKUPS_KEPT);
+        assert_eq!(copies[0], backups.join("King Pen.sky").join("93.sky"));
+        assert_eq!(std::fs::read(&copies[BACKUPS_KEPT - 1]).unwrap(), played(made as u8 - 1));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn each_figure_file_has_copies_of_its_own() {
+        let root = scratch("own");
+        let backups = root.join("Backups");
+        for name in ["King Pen.sky", "King Pen.bin", "King Pen 2.sky"] {
+            std::fs::write(root.join(name), played(7)).unwrap();
+            assert!(back_up_into(&root.join(name), &backups, 10).unwrap().is_some(), "{name}");
+        }
+        assert_eq!(copies_in(&backups.join("King Pen.bin")), [backups.join("King Pen.bin").join("10.bin")]);
+        // A figure that isn't there anymore is left to the emulator to report.
+        assert!(back_up_into(&root.join("Gone.sky"), &backups, 10).is_err());
+        assert!(!backups.join("Gone.sky").exists());
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
