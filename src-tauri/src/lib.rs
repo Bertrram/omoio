@@ -22,6 +22,7 @@ mod vc_runtime;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    cursor::let_go_if_omoio_fails();
     tauri::Builder::default()
         .manage(commands::InstallState::default())
         .manage(session::Session::default())

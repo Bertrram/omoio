@@ -112,6 +112,18 @@ fn let_go() {
     let _ = unsafe { ClipCursor(None) };
 }
 
+/// Lets the cursor go if Omoio fails. A release build ends at once when it
+/// does (`panic = "abort"`, Cargo.toml), before the next look could let go,
+/// and the cursor would stay held, on one pixel for a Wii U player, until
+/// something else came to the front.
+pub fn let_go_if_omoio_fails() {
+    let before = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let_go();
+        before(info);
+    }));
+}
+
 /// The inside of a window, without its frame, on the screen.
 fn inside(window: isize) -> Option<RECT> {
     let window = HWND(window as *mut _);
