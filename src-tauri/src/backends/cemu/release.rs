@@ -34,7 +34,7 @@ pub const DOWNLOAD: &str = "https://github.com/Bertrram/Cemu/releases/download/v
 pub const FILE: &str = "cemu-2.6-1-windows-x64.zip";
 
 /// SHA-256 of `DOWNLOAD`, as hex.
-pub const SHA256: &str = "2213132be8b5dfd89757e286732fdace64b63956fbd857ecd826ce17ab25b309";
+pub const SHA256: &str = "ad63701e3a14e2886649078de19422c7495c4fe99f2869c12bc783a9b25ad877";
 
 /// Cemu's own release this one is built from, which names SDL pads the same
 /// way and is what an Omoio before this build installed.
