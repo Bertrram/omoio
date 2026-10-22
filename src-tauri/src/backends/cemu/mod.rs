@@ -875,11 +875,25 @@ const ENGLISH: &str = "175";
 ///   cloud PC's stream, is next to silent: Swap Force measured 0.010 of full
 ///   level at 20 and 0.353 at 100. Only that starting value is raised, so a
 ///   volume someone set in Cemu stays.
-fn tune_settings(settings: &Path, skylanders: bool) -> std::io::Result<()> {
+/// - The portal server of the build of Cemu made for Omoio (portal.rs) is
+///   on for a Skylanders game, listening on `port`, and off for any other,
+///   so no port is held for a game that has no portal. A file that never
+///   had it is left without it for a game with no portal. Cemu 2.6 reads
+///   only the settings it knows (`CemuConfig::Load`, CemuConfig.cpp lines 20
+///   to 351) and makes the file afresh from them whenever it saves
+///   (`XMLConfig::Save`, XMLConfig.h lines 389 to 438, as from its settings
+///   window, GeneralSettings2.cpp line 1075; read 22 October 2026), so
+///   there the element does nothing and is gone after Cemu's next save,
+///   until it is written again before the next game.
+fn tune_settings(settings: &Path, skylanders: bool, port: u16) -> std::io::Result<()> {
     let before = std::fs::read_to_string(settings)?;
     let portal = if skylanders { "true" } else { "false" };
     let mut text = set_setting(&before, &[], "language", ENGLISH);
     text = set_setting(&text, &["EmulatedUsbDevices"], "EmulateSkylanderPortal", portal);
+    if skylanders || setting(&text, &["SkylanderIPC"], "enabled").is_some() {
+        text = set_setting(&text, &["SkylanderIPC"], "enabled", portal);
+        text = set_setting(&text, &["SkylanderIPC"], "port", &port.to_string());
+    }
     text = set_setting(&text, &[], "fullscreen", "false");
     text = set_setting(&text, &[], "window_maximized", "false");
     text = set_setting(&text, &["window_position"], "x", OFF_SCREEN);
@@ -939,7 +953,8 @@ impl super::EmulatorBackend for Cemu {
     }
 
     fn features(&self) -> Features {
-        // Starting games, the Skylanders portal through Cemu's own window,
+        // Starting games, the Skylanders portal through Cemu's own window
+        // or the portal server of the build made for Omoio (portal.rs),
         // Cemu's settings for a game, its community's graphic packs and
         // backups of a game's save, which sits where bringing saves over
         // from the user's own Cemu found them. Nothing else is offered until
@@ -1004,7 +1019,13 @@ impl super::EmulatorBackend for Cemu {
         }
         let portable = dir.join("portable");
         let _ = write_first_settings(&portable);
-        let _ = tune_settings(&portable.join("settings.xml"), is_skylanders(&game.title));
+        let skylanders = is_skylanders(&game.title);
+        let _ = tune_settings(&portable.join("settings.xml"), skylanders, portal::server_port(skylanders));
+        if skylanders {
+            if let Ok(data) = app.path().data_dir() {
+                portal::know_kept_names(&data.join("Omoio").join(crate::core::figures::characters_file(Console::WiiU)));
+            }
+        }
         packs::apply(app);
         // Cemu asks for a served pad only as it starts.
         controllers::serve_keyboard(app, game);
@@ -1016,7 +1037,9 @@ impl super::EmulatorBackend for Cemu {
     }
 
     fn session_notes(&self, pid: u32) -> Vec<String> {
-        start_errors::notes(pid)
+        let mut notes = start_errors::notes(pid);
+        notes.extend(portal::way_used(pid).map(str::to_string));
+        notes
     }
 
     fn hush(&self, pid: u32, hushed: bool) -> Result<(), String> {
@@ -1214,6 +1237,9 @@ impl super::EmulatorBackend for Cemu {
         let pid = child.id();
         crate::dsu::follow(pid);
         start_errors::watch(child, game.path.to_string_lossy().into_owned());
+        if is_skylanders(&game.title) {
+            portal::prepare(pid);
+        }
         Ok(pid)
     }
 
@@ -1666,7 +1692,7 @@ Deluxe");
         let file = dir.join("settings.xml");
 
         write_first_settings(&dir).unwrap();
-        tune_settings(&file, true).unwrap();
+        tune_settings(&file, true, 28014).unwrap();
         let text = std::fs::read_to_string(&file).unwrap();
         assert!(text.contains("<EmulateSkylanderPortal>true</EmulateSkylanderPortal>"), "{text}");
         assert!(text.contains("<api>1</api>"), "the rest is left alone");
@@ -1678,11 +1704,61 @@ Deluxe");
         assert!(text.contains("<y>-30000</y>"), "{text}");
         assert_eq!(text.matches("<language>175</language>").count(), 1, "{text}");
 
-        tune_settings(&file, false).unwrap();
+        tune_settings(&file, false, 28014).unwrap();
         let text = std::fs::read_to_string(&file).unwrap();
         assert!(text.contains("<EmulateSkylanderPortal>false</EmulateSkylanderPortal>"));
         assert_eq!(text.matches("<EmulatedUsbDevices>").count(), 1, "switched, not added twice");
         assert_eq!(text.matches("<Notification>").count(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_portal_server_is_on_for_a_skylanders_game_only() {
+        let dir = scratch("portal-server");
+        let file = dir.join("settings.xml");
+        let server = |text: &str| {
+            (
+                setting(text, &["SkylanderIPC"], "enabled"),
+                setting(text, &["SkylanderIPC"], "port"),
+            )
+        };
+
+        // Another game first: a file that never had the element stays so.
+        write_first_settings(&dir).unwrap();
+        tune_settings(&file, false, 28014).unwrap();
+        let text = std::fs::read_to_string(&file).unwrap();
+        assert!(!text.contains("SkylanderIPC"), "{text}");
+
+        tune_settings(&file, true, 28014).unwrap();
+        let text = std::fs::read_to_string(&file).unwrap();
+        assert!(
+            text.contains("<SkylanderIPC><enabled>true</enabled><port>28014</port>\n</SkylanderIPC>\n</content>"),
+            "inside <content>, where Cemu's settings are: {text}"
+        );
+
+        // Another port, when another program has Omoio's.
+        tune_settings(&file, true, 51234).unwrap();
+        let text = std::fs::read_to_string(&file).unwrap();
+        assert_eq!(server(&text), (Some("true".to_string()), Some("51234".to_string())));
+        assert_eq!(text.matches("<SkylanderIPC>").count(), 1, "replaced, not added twice: {text}");
+        assert_eq!(text.matches("<port>").count(), 1, "{text}");
+
+        tune_settings(&file, false, 28014).unwrap();
+        let text = std::fs::read_to_string(&file).unwrap();
+        assert_eq!(server(&text), (Some("false".to_string()), Some("28014".to_string())));
+        assert_eq!(text.matches("<SkylanderIPC>").count(), 1, "{text}");
+
+        // As Cemu saves it, with its own layout, and the element written
+        // over again.
+        let saved = CEMU_SETTINGS.replace(
+            "</content>",
+            "    <SkylanderIPC>\n        <enabled>false</enabled>\n        <port>28014</port>\n    </SkylanderIPC>\n</content>",
+        );
+        std::fs::write(&file, &saved).unwrap();
+        tune_settings(&file, true, 28014).unwrap();
+        let text = std::fs::read_to_string(&file).unwrap();
+        assert_eq!(server(&text), (Some("true".to_string()), Some("28014".to_string())));
+        assert!(text.contains("<SkylanderIPC>\n        <enabled>true</enabled>\n        <port>28014</port>"), "{text}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1717,13 +1793,13 @@ Deluxe");
             "<TVDevice>{0.0.0.00000000}.{abc}</TVDevice><TVVolume>55</TVVolume>",
         );
         std::fs::write(&file, &chosen).unwrap();
-        tune_settings(&file, true).unwrap();
+        tune_settings(&file, true, 28014).unwrap();
         let text = std::fs::read_to_string(&file).unwrap();
         assert!(text.contains("<TVDevice>{0.0.0.00000000}.{abc}</TVDevice>"), "{text}");
         assert!(text.contains("<TVVolume>55</TVVolume>"), "a volume someone chose stays: {text}");
 
         std::fs::write(&file, CEMU_SETTINGS).unwrap();
-        tune_settings(&file, true).unwrap();
+        tune_settings(&file, true, 28014).unwrap();
         let text = std::fs::read_to_string(&file).unwrap();
         assert!(text.contains("<TVDevice>default</TVDevice>"), "an empty one is filled in");
         let _ = std::fs::remove_dir_all(&dir);
