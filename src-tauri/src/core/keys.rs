@@ -19,18 +19,18 @@
 /// its scan code.
 ///
 /// Left out on purpose: Insert and Tab, which open the portal menu
-/// (portal_menu.rs, `MENU_KEY` and `SECOND_MENU_KEY`), and F11, which is Omoio's fullscreen
-/// (session.rs). The other function keys, Escape, Ctrl, Alt and the Windows
-/// keys are left out too, as the emulators and Windows itself give them jobs
-/// of their own while a game runs, read in each emulator's source on 20
-/// October 2026: Escape leaves fullscreen in RPCS3 and Cemu and stops the
-/// game in Dolphin, Alt with Enter changes fullscreen in all three, Ctrl
-/// with S saves a state in RPCS3 and restarts the game from it, Ctrl with R
-/// restarts it, Ctrl with P opens Dolphin's Skylanders portal, and F10, F12
-/// and Dolphin's F1 to F8 pause, take screenshots and load states
-/// (RPCS3's rpcs3qt/shortcut_settings.cpp lines 73 to 94 at build
-/// 0.0.43-20344, Cemu's MainWindow::OnKeyUp at v2.6, Dolphin's
-/// HotkeyManager.cpp lines 409 to 476 at 2609a).
+/// (portal_menu.rs, `MENU_KEY` and `SECOND_MENU_KEY`), and F11, which is
+/// Omoio's fullscreen (session.rs). The other function keys, Escape, Ctrl,
+/// Alt and the Windows keys are left out too, as the emulators and Windows
+/// itself give them jobs of their own while a game runs, read in each
+/// emulator's source on 20 October 2026: Escape leaves fullscreen in RPCS3
+/// and Cemu and stops the game in Dolphin, Alt with Enter changes
+/// fullscreen in all three, Ctrl with S saves a state in RPCS3 and restarts
+/// the game from it, Ctrl with R restarts it, Ctrl with P opens Dolphin's
+/// Skylanders portal, and F10, F12 and Dolphin's F1 to F8 pause, take
+/// screenshots and load states (RPCS3's rpcs3qt/shortcut_settings.cpp lines
+/// 73 to 94 at build 0.0.43-20344, Cemu's MainWindow::OnKeyUp at v2.6,
+/// Dolphin's HotkeyManager.cpp lines 409 to 476 at 2609a).
 pub const KEYS: [(&str, u16); 79] = [
     ("KeyA", 0x1E),
     ("KeyB", 0x30),
@@ -158,18 +158,10 @@ pub fn known(input: &str) -> bool {
 /// menus there, so Enter on it would cancel where a player means to go on
 /// (Bertram, 21 October 2026, after J, K and L felt wrong in play). The
 /// shoulders sit beside W, Q and R, and the triggers under them, F and G.
-/// The d-pad is on 1 to 4, in the order up,
-/// right, down, left, clockwise as on the pad. Back is on Backspace rather
-/// than Tab: Dolphin's own hotkeys turn its speed limit off while Tab is
-/// held (HotkeyManager.cpp line 433, `HK_TOGGLE_THROTTLE` on TAB, and
-/// HotkeyScheduler.cpp line 492, at 2609a), which Omoio's empty Hotkeys.ini
-/// prevents only where the player hasn't set hotkeys up in Dolphin
-/// (backends/dolphin/settings.rs, `quiet_hotkeys`), and RPCS3 hears Tab as
-/// another key, Backtab, while Shift, the left stick's press, is held
-/// (Qt's qwindowskeymapper.cpp lines 1219 to 1220, Qt 6.12.0). The Guide
-/// button has no key:
-/// it opens the console's own menu, which nobody needs mid-game, and a key
-/// for it would be one more to press by mistake.
+/// The d-pad is on 1 to 4, in the order up, right, down, left, clockwise as
+/// on the pad, and Back is on Backspace. The Guide button has no key: it
+/// opens the console's own menu, which nobody needs mid-game, and a key for
+/// it would be one more to press by mistake.
 pub fn default_input(place: &str) -> &'static str {
     match place {
         "South" => "Space",

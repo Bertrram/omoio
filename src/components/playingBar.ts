@@ -21,8 +21,9 @@ export function renderPlayingBar(playing: Playing): HTMLElement {
 
   // The portal menu for a player whose pad Omoio can't read, only in a game
   // the menu works in. Insert opens and closes it too while the game or
-  // Omoio is in front (MENU_KEY in src-tauri/src/portal_menu.rs), which also
-  // works once the picture covers the screen and this button is behind it.
+  // Omoio is in front, and Tab while the game or the menu is (MENU_KEY and
+  // SECOND_MENU_KEY in src-tauri/src/portal_menu.rs), which also works once
+  // the picture covers the screen and this button is behind it.
   // The list of games may come in after the bar is drawn, as when a game
   // is started from Big Picture before the library was ever shown, so the
   // button is shown once it does. The bar goes when the game ends.
