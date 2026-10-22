@@ -103,9 +103,9 @@ pub async fn newest_version() -> Result<String, String> {
     Ok(release::version().to_string())
 }
 
-/// Downloads the release Omoio was checked against from Cemu's own GitHub
-/// page, checks it is the file that was checked, and unpacks it into Omoio's
-/// folder. Returns the version installed.
+/// Downloads the release Omoio was checked against, its own build of Cemu
+/// (release.rs), checks it is the file that was published, and unpacks it
+/// into Omoio's folder. Returns the version installed.
 pub async fn install(app: AppHandle, cancel: Arc<AtomicBool>) -> Result<String, String> {
     let client = reqwest::Client::new();
 
