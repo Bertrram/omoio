@@ -76,6 +76,9 @@ pub struct Listing {
     /// For a Skylanders game the menu doesn't work in, the line saying where
     /// it does, as a game's page says it.
     pub portal_note: Option<String>,
+    /// For Imaginators, what works of the figures an emulator makes
+    /// (`figures::made_figures_note`).
+    pub figures_note: Option<&'static str>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -320,6 +323,7 @@ fn listing_of(mut entries: Vec<Entry>) -> Listing {
         features: Features::default(),
         portal_menu: is_skylanders(&first.name).then(|| has_portal_menu(first.console, &first.name)),
         portal_note: portal_menu_note(first.console, &first.name),
+        figures_note: crate::core::figures::made_figures_note(first.console, &first.name),
     }
 }
 

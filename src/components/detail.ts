@@ -101,6 +101,7 @@ function fill(body: HTMLElement, hero: HTMLElement, game: Game): void {
     </div>
     <div class="note plain gone" id="detail-wii-moves"></div>
     <div class="note plain gone" id="detail-no-portal"></div>
+    <div class="note plain gone" id="detail-figures"></div>
     <div class="gone" id="detail-portal">
       <div class="d-group-h">
         <span class="sec-h">Skylanders</span>
@@ -216,6 +217,11 @@ function fill(body: HTMLElement, hero: HTMLElement, game: Game): void {
     const noPortal = body.querySelector<HTMLElement>("#detail-no-portal")!;
     noPortal.textContent = game.portal_note;
     noPortal.classList.remove("gone");
+  }
+  if (game.figures_note) {
+    const figures = body.querySelector<HTMLElement>("#detail-figures")!;
+    figures.textContent = game.figures_note;
+    figures.classList.remove("gone");
   }
 
   // The button that opens the portal menu over a Skylanders game, shown only
@@ -512,6 +518,7 @@ function fillListing(body: HTMLElement, hero: HTMLElement, { listing }: Catalogu
       <div class="compat"><span class="status" id="listing-compat"></span></div>
       <div class="note plain" id="listing-compat-note"></div>
       <div class="note plain gone" id="listing-no-portal"></div>
+      <div class="note plain gone" id="listing-figures"></div>
     </div>
     <div class="sec gone" id="listing-updates-sec">
       <div class="sec-h">Official updates</div>
@@ -574,6 +581,11 @@ function fillListing(body: HTMLElement, hero: HTMLElement, { listing }: Catalogu
     const noPortal = body.querySelector<HTMLElement>("#listing-no-portal")!;
     noPortal.textContent = listing.portal_note;
     noPortal.classList.remove("gone");
+  }
+  if (listing.figures_note) {
+    const figures = body.querySelector<HTMLElement>("#listing-figures")!;
+    figures.textContent = listing.figures_note;
+    figures.classList.remove("gone");
   }
   // Some lists also say when a release's result was last reported.
   if (release && listing.features.compatibility) {

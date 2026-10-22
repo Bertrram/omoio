@@ -99,6 +99,9 @@ export interface Game {
   /// For a Skylanders game the menu doesn't work in: "The portal menu
   /// doesn't work in this version yet. It works in the Wii U version."
   portal_note: string | null;
+  /// For Imaginators, what works of the Senseis and Creation Crystals an
+  /// emulator makes.
+  figures_note: string | null;
 }
 
 export function listGames(): Promise<Game[]> {
@@ -131,6 +134,9 @@ export interface ImportWarning {
   /// warning "The portal menu works in the Wii U version." Empty when there
   /// is no such version.
   better: string;
+  /// For Imaginators, what works of the Senseis and Creation Crystals an
+  /// emulator makes. Empty for any other game.
+  figures: string;
 }
 
 export interface ImportCheck {
@@ -670,6 +676,8 @@ export interface Listing {
   portal_menu: boolean | null;
   /// For a Skylanders game the menu doesn't work in, where it does.
   portal_note: string | null;
+  /// For Imaginators, what works of the figures an emulator makes.
+  figures_note: string | null;
 }
 
 export interface CatalogueFilter {

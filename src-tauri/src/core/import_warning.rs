@@ -151,15 +151,21 @@ pub struct Warning {
     /// warning, where the menu works instead: "The portal menu works in the
     /// Wii U version." Empty when there is no such version.
     pub better: String,
+    /// For Imaginators: "Senseis and Creation Crystals made in an emulator
+    /// don't work in the PS3 version. ..." (`figures::made_figures_note`),
+    /// said even where nothing else is. Empty for any other game.
+    pub figures: String,
 }
 
-/// The warning for a Skylanders game the portal menu doesn't work in, or
-/// for a game whose own emulator rates it below playing well. `None` when
-/// neither: it plays well, has been played in Omoio, or nobody has rated it.
+/// The warning for a Skylanders game the portal menu doesn't work in, for
+/// Imaginators, whose made figures need saying, or for a game whose own
+/// emulator rates it below playing well. `None` when none of these: it
+/// plays well, has been played in Omoio, or nobody has rated it.
 pub fn warning(game: &Imported, lists: &[List]) -> Option<Warning> {
     let portal = portal_warning(game);
     let rated = rated(game, lists);
-    if portal.is_none() && rated.is_none() {
+    let figures = figures::made_figures_note(game.console, &game.title).unwrap_or_default();
+    if portal.is_none() && rated.is_none() && figures.is_empty() {
         return None;
     }
     let (rating, better) = rated.unwrap_or_default();
@@ -176,6 +182,7 @@ pub fn warning(game: &Imported, lists: &[List]) -> Option<Warning> {
         portal,
         rating,
         better,
+        figures: figures.to_string(),
     })
 }
 
@@ -378,6 +385,18 @@ mod tests {
     }
 
     #[test]
+    fn imaginators_says_what_its_made_figures_need() {
+        let ps3 = warning(&ps3_game("BLES02240", "Skylanders Imaginators"), &lists()).unwrap();
+        assert!(ps3.figures.starts_with("Senseis and Creation Crystals made in an emulator don't work in the PS3 version."));
+        // The Wii U's has the menu and plays Perfect, and is warned of its
+        // made figures alone.
+        let wii_u = warning(&wii_u_game("Skylanders Imaginators"), &lists()).unwrap();
+        assert_eq!((wii_u.portal.as_str(), wii_u.rating.as_str(), wii_u.better.as_str()), ("", "", ""));
+        assert!(wii_u.figures.contains("only while the Signature Patch is on"));
+        assert_eq!(warning(&wii_u_game("Skylanders Trap Team"), &lists()), None, "no other game");
+    }
+
+    #[test]
     fn every_version_with_the_portal_menu_is_named() {
         let wii = |title: &str| Imported { console: Console::Wii, title_id: "SVXP52".into(), title: title.into() };
         let swap_force = warning(&wii("Skylanders SWAP Force"), &[]).unwrap();
@@ -409,7 +428,6 @@ mod tests {
     fn a_skylanders_game_with_the_portal_menu_gets_no_portal_warning() {
         assert_eq!(warning(&ps3_game("BLES02055", "Skylanders Trap Team"), &lists()), None);
         assert_eq!(warning(&wii_u_game("Skylanders SuperChargers"), &lists()), None);
-        assert_eq!(warning(&wii_u_game("Skylanders Imaginators"), &[]), None);
         assert_eq!(warning(&ps3_game("BLES01689", "Skylanders Giants"), &[]), None);
         // Spyro's Adventure on the PS3 has the menu, and is warned of its
         // rating alone.

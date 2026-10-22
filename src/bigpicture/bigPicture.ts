@@ -1108,6 +1108,7 @@ function gamePage(titleId: string, section: Section): Screen {
             : "";
       if (note) notes.append(h("p", "bp-page-note", note));
       if (game.portal_note) notes.append(h("p", "bp-page-note", game.portal_note));
+      if (game.figures_note) notes.append(h("p", "bp-page-note", game.figures_note));
       const when = lastPlayed.get(titleId);
       if (when) notes.append(h("p", "bp-page-quiet", lastPlayedText(when)));
       const runs = h("div", "bp-page-runs");

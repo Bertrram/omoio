@@ -141,7 +141,7 @@ function sheet(dropped?: string[]): void {
     `;
     item.querySelector<HTMLElement>(".warn-item-name")!.textContent = warning.title;
     item.querySelector<HTMLElement>(".warn-item-console")!.textContent = warning.console_name;
-    for (const said of [warning.portal, warning.rating]) {
+    for (const said of [warning.portal, warning.rating, warning.figures]) {
       if (!said) continue;
       const line = document.createElement("div");
       line.className = "warn-item-p";
@@ -155,6 +155,16 @@ function sheet(dropped?: string[]): void {
       item.appendChild(better);
     }
     return item;
+  }
+
+  /// What a warning, or a list of them, is headed with: a game Omoio can't
+  /// play yet, one that may not run well, or, for Imaginators on the Wii U,
+  /// only what its made figures need.
+  function kicker(warnings: ImportWarning[]): string {
+    if (warnings.every((warning) => warning.portal)) return "Not supported in Omoio yet";
+    if (warnings.some((warning) => warning.rating)) return "May not run well";
+    if (warnings.some((warning) => warning.portal)) return "Not supported in Omoio yet";
+    return "Good to know";
   }
 
   /// Asks before a game that may not run well, or a Skylanders game the
@@ -176,13 +186,11 @@ function sheet(dropped?: string[]): void {
         <button class="btn solid" id="warn-import">Import anyway</button>
       </div>
     `;
-    sheet.querySelector<HTMLElement>(".warn-kicker")!.textContent = warning.portal
-      ? "Not supported in Omoio yet"
-      : "May not run well";
+    sheet.querySelector<HTMLElement>(".warn-kicker")!.textContent = kicker([warning]);
     sheet.querySelector<HTMLElement>("#warn-title")!.textContent = warning.title;
     sheet.querySelector<HTMLElement>(".warn-console")!.textContent = warning.console_name;
     const said = sheet.querySelector<HTMLElement>("#warn-said")!;
-    for (const words of [warning.portal, warning.rating]) {
+    for (const words of [warning.portal, warning.rating, warning.figures]) {
       if (!words) continue;
       const line = document.createElement("div");
       line.className = "sheet-p warn-rating";
@@ -228,9 +236,7 @@ function sheet(dropped?: string[]): void {
       </div>
     `;
     sheet.querySelector<HTMLElement>(".sheet-h")!.textContent = heading;
-    sheet.querySelector<HTMLElement>(".warn-list-h")!.textContent = warnings.every((warning) => warning.portal)
-      ? "Not supported in Omoio yet"
-      : "May not run well";
+    sheet.querySelector<HTMLElement>(".warn-list-h")!.textContent = kicker(warnings);
     const said = sheet.querySelector<HTMLElement>(".sheet-p");
     if (said) said.textContent = lines.join(" ");
     const list = sheet.querySelector<HTMLElement>(".warn-list")!;

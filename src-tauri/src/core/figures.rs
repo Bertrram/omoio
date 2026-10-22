@@ -159,6 +159,30 @@ pub fn portal_menu_note(console: Console, title: &str) -> Option<String> {
     })
 }
 
+/// What Imaginators' page and its import warning say about Senseis and
+/// Creation Crystals an emulator made. The game checks a factory signature on
+/// them that no emulator's figure maker writes (Cemu's
+/// `SkylanderUSB::CreateSkylander`, Skylander.cpp lines 857 to 898, v2.6;
+/// RPCS3's rpcs3qt/skylander_dialog.cpp lines 608 to 627) and calls one
+/// without it broken (Cemu issue 1964, RPCS3 issue 10713). On the Wii U,
+/// Cemu's Signature Patch turns the check off and Omoio switches it on; on
+/// the PS3 nothing does. Said before anyone imports the game (Bertram, 22
+/// October 2026, after players found their Senseis "corrupted").
+pub fn made_figures_note(console: Console, title: &str) -> Option<&'static str> {
+    if game_from_title(title) != Some(Game::Imaginators) {
+        return None;
+    }
+    match console {
+        Console::Ps3 => Some(
+            "Senseis and Creation Crystals made in an emulator don't work in the PS3 version. The game checks for a factory signature only real figures have.",
+        ),
+        Console::WiiU => Some(
+            "Senseis and Creation Crystals made in an emulator work only while the Signature Patch is on. Omoio switches it on, and you'll find it under Community packs.",
+        ),
+        Console::Wii | Console::GameCube => None,
+    }
+}
+
 /// The game a figure id came out with. All eight sidekicks came out with
 /// Giants, whose Collection screen shows them; Spyro's Adventure has no
 /// pictures of them and doesn't take them. Four share ids with the minis of
