@@ -49,7 +49,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     HWND_MESSAGE, HWND_TOPMOST, LWA_ALPHA, MA_NOACTIVATE, MSG, RI_KEY_BREAK, RI_KEY_E0, RI_KEY_E1,
     RI_MOUSE_BUTTON_1_DOWN, RI_MOUSE_BUTTON_1_UP, RI_MOUSE_BUTTON_2_DOWN, RI_MOUSE_BUTTON_2_UP, RI_MOUSE_BUTTON_3_DOWN,
     RI_MOUSE_BUTTON_3_UP, RI_MOUSE_BUTTON_4_DOWN, RI_MOUSE_BUTTON_4_UP, RI_MOUSE_BUTTON_5_DOWN, RI_MOUSE_BUTTON_5_UP,
-    RI_MOUSE_WHEEL, SM_CXSCREEN, SM_CXVIRTUALSCREEN, SM_CYSCREEN, SM_CYVIRTUALSCREEN, SWP_ASYNCWINDOWPOS,
+    RI_MOUSE_WHEEL, SM_CXSCREEN, SM_CXVIRTUALSCREEN, SM_CYSCREEN, SM_CYVIRTUALSCREEN,
     SWP_HIDEWINDOW, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, WINDOW_EX_STYLE,
     WINDOW_STYLE, WM_INPUT, WM_MOUSEACTIVATE, WM_QUIT, WM_SETCURSOR, WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE,
     WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
@@ -267,9 +267,12 @@ fn make_rest() -> Option<HWND> {
 /// Shows the resting window around the pixel at `at` and says whether it is
 /// the window there now, or hides it for `None`. Three pixels square, so a
 /// cursor rounded a pixel off still rests on it. Called from another thread,
-/// so Windows is asked not to wait for this one (`SWP_ASYNCWINDOWPOS`,
-/// "SetWindowPos function"): a window shown that way may be there only by
-/// the next call. False while the reader isn't running.
+/// and Windows waits for the reader's thread to place the window, which it
+/// does straight away since that thread does nothing but wait for messages.
+/// So the answer is true on the same call: asked not to wait
+/// (`SWP_ASYNCWINDOWPOS`), the window was in place only by the next look,
+/// and until then a click still reached Cemu as a tap. False while the
+/// reader isn't running.
 pub fn rest_at(at: Option<POINT>) -> bool {
     let window = REST.load(Ordering::Relaxed);
     if window == 0 {
@@ -289,7 +292,7 @@ pub fn rest_at(at: Option<POINT>) -> bool {
                     at.y - 1,
                     3,
                     3,
-                    SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_ASYNCWINDOWPOS,
+                    SWP_NOACTIVATE | SWP_SHOWWINDOW,
                 )
             };
             let there = unsafe { WindowFromPoint(at) };
@@ -298,7 +301,7 @@ pub fn rest_at(at: Option<POINT>) -> bool {
         None => {
             if RESTING_SHOWN.swap(false, Ordering::Relaxed) {
                 let flags = SWP_HIDEWINDOW | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE;
-                let _ = unsafe { SetWindowPos(window, None, 0, 0, 0, 0, flags | SWP_ASYNCWINDOWPOS) };
+                let _ = unsafe { SetWindowPos(window, None, 0, 0, 0, 0, flags) };
             }
             false
         }

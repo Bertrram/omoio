@@ -64,7 +64,7 @@ pub fn watch(app: AppHandle, pid: u32) {
             std::thread::sleep(LOOK_EVERY);
             let session = app.state::<Session>();
             if session.pid() != Some(pid) {
-                crate::dsu::rest(None);
+                crate::dsu::rest(pid, None);
                 if holding {
                     let_go();
                 }
@@ -84,7 +84,7 @@ pub fn watch(app: AppHandle, pid: u32) {
             // On that pad the cursor rests on one pixel of Omoio's instead,
             // where a click can't reach Cemu; for every other player there
             // is no resting place and nothing changes.
-            let rest = crate::dsu::rest(game.map(|(_, rect)| rect));
+            let rest = crate::dsu::rest(pid, game.map(|(_, rect)| rect));
             match game {
                 Some((game_window, rect)) => {
                     // Again at every look: the window moves and changes size

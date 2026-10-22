@@ -44,6 +44,35 @@ fn exe_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(install_dir(app)?.join("Cemu.exe"))
 }
 
+fn start(app: &AppHandle, game: &Game) -> Result<u32, String> {
+    let exe = exe_path(app)?;
+    if !exe.is_file() {
+        return Err("Install Cemu from the Emulators screen first, then you can play.".to_string());
+    }
+    if !game.path.exists() {
+        return Err("This game isn't where it was. Reconnect the drive it's on.".to_string());
+    }
+    // Known by name as well as by id: a disc image's id is known only once
+    // Cemu has run it, and a game's first start is when it needs this.
+    let pro = crate::core::figures::game_from_title(&game.title) == Some(crate::core::figures::Game::TrapTeam)
+        || title_id_for(app, game).is_some_and(|id| controllers::PRO_FIRST.contains(&id.as_str()));
+    let _ = controllers::first_player(app, pro);
+    // The game's own folder or .wua, so Cemu reads its meta and starts it
+    // as a proper title rather than in the standalone mode it keeps for
+    // loose programs. Given a .wua, Cemu starts the title `game_in_wua`
+    // picks (checked with Trap Team, 6 October 2026). Not `-f`: Omoio places the picture itself, in its window
+    // or across the screen, the same as it does for RPCS3.
+    let child = command(&exe)
+        .arg("-g")
+        .arg(&game.path)
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    let pid = child.id();
+    crate::dsu::follow(pid);
+    start_errors::watch(child, game.path.to_string_lossy().into_owned());
+    Ok(pid)
+}
+
 pub fn detect_version(app: &AppHandle) -> Option<String> {
     let dir = install_dir(app).ok()?;
     if !dir.join("Cemu.exe").is_file() {
@@ -1189,32 +1218,14 @@ impl super::EmulatorBackend for Cemu {
     }
 
     fn launch(&self, app: &AppHandle, game: &Game) -> Result<u32, String> {
-        let exe = exe_path(app)?;
-        if !exe.is_file() {
-            return Err("Install Cemu from the Emulators screen first, then you can play.".to_string());
+        let started = start(app, game);
+        if started.is_err() {
+            // The pad `prepare` served was for this start. Left alone, it
+            // would wait a minute for a Cemu that never comes (dsu.rs,
+            // `START_WITHIN`).
+            crate::dsu::stop();
         }
-        if !game.path.exists() {
-            return Err("This game isn't where it was. Reconnect the drive it's on.".to_string());
-        }
-        // Known by name as well as by id: a disc image's id is known only once
-        // Cemu has run it, and a game's first start is when it needs this.
-        let pro = crate::core::figures::game_from_title(&game.title) == Some(crate::core::figures::Game::TrapTeam)
-            || title_id_for(app, game).is_some_and(|id| controllers::PRO_FIRST.contains(&id.as_str()));
-        let _ = controllers::first_player(app, pro);
-        // The game's own folder or .wua, so Cemu reads its meta and starts it
-        // as a proper title rather than in the standalone mode it keeps for
-        // loose programs. Given a .wua, Cemu starts the title `game_in_wua`
-        // picks (checked with Trap Team, 6 October 2026). Not `-f`: Omoio places the picture itself, in its window
-        // or across the screen, the same as it does for RPCS3.
-        let child = command(&exe)
-            .arg("-g")
-            .arg(&game.path)
-            .spawn()
-            .map_err(|e| e.to_string())?;
-        let pid = child.id();
-        crate::dsu::follow(pid);
-        start_errors::watch(child, game.path.to_string_lossy().into_owned());
-        Ok(pid)
+        started
     }
 
     fn detect_version(&self, app: &AppHandle) -> Option<String> {

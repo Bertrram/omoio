@@ -260,6 +260,7 @@ pub fn start(player: &crate::core::pad_layout::Player, aim: Aim) -> Result<(), S
     RESTING.store(false, Ordering::Relaxed);
     let stop = Arc::new(AtomicBool::new(false));
     let pad = keyboard_pad::Pad::new(player, aim);
+    CLICKS.store(pad.clicks(), Ordering::Relaxed);
     let stopping = stop.clone();
     let thread = std::thread::spawn(move || {
         serve(&socket, pad, &stopping);
@@ -290,6 +291,10 @@ pub fn hear(in_front: bool) {
 /// Whether the cursor rests on Omoio's resting window (`rest`).
 static RESTING: AtomicBool = AtomicBool::new(false);
 
+/// Whether the player's left or right mouse button is a button in the
+/// game (`keyboard_pad::Pad::clicks`), for `rest`.
+static CLICKS: AtomicBool = AtomicBool::new(false);
+
 /// Where the cursor is kept while the game is in front: one pixel in the
 /// middle of the game, on a window of Omoio's, rather than anywhere in the
 /// game's window, or `None` to keep it in the window as before.
@@ -314,21 +319,36 @@ static RESTING: AtomicBool = AtomicBool::new(false);
 /// which takes the clicks without taking the front from the game and shows
 /// no cursor, so the cursor is hidden over the game as well. Only once
 /// Windows says that window is the one at that pixel, and only once no
-/// button is held: Cemu never captures the mouse (no `CaptureMouse` in its
-/// src/gui at v2.6), so a button's going up goes "to the window beneath
-/// the cursor" ("WM_LBUTTONUP message", Microsoft Learn, read 21 October
-/// 2026), and one that went down in Cemu's window and up on Omoio's would
-/// keep a finger on the screen. The middle, since a pixel at the screen's edge could bring up
-/// a taskbar that hides itself.
-pub fn rest(game: Option<RECT>) -> Option<RECT> {
+/// button is held, the window isn't even shown before: Cemu never captures
+/// the mouse (no `CaptureMouse` in its src/gui at v2.6), so a button's
+/// going up goes "to the window beneath the cursor" ("WM_LBUTTONUP
+/// message", Microsoft Learn, read 21 October 2026), and one that went down
+/// in Cemu's window and up on Omoio's would keep a finger on the screen.
+/// The middle, since a pixel at the screen's edge could bring up a taskbar
+/// that hides itself.
+///
+/// Only while a click is a button in the game. A player who has taken the
+/// mouse's buttons off their layout has them for the GamePad's screen, as
+/// in Cemu, for a game that needs a touch; the cursor then stays in the
+/// game's window as for every other player. And only in `pid`, the game the
+/// pad plays to (`follow`): a pad still served after a Cemu start that
+/// failed must never catch the mouse in a game on another emulator.
+pub fn rest(pid: u32, game: Option<RECT>) -> Option<RECT> {
+    let game = game
+        .filter(|_| CLICKS.load(Ordering::Relaxed))
+        .filter(|_| pid != 0 && GAME.load(Ordering::Relaxed) == pid);
     let Some(game) = game else {
         raw_input::rest_at(None);
         RESTING.store(false, Ordering::Relaxed);
         return None;
     };
+    if !may_rest(RESTING.load(Ordering::Relaxed), raw_input::buttons(), true) {
+        raw_input::rest_at(None);
+        RESTING.store(false, Ordering::Relaxed);
+        return None;
+    }
     let at = middle(&game);
-    let ours = raw_input::rest_at(Some(at));
-    let resting = may_rest(RESTING.load(Ordering::Relaxed), raw_input::buttons(), ours);
+    let resting = raw_input::rest_at(Some(at));
     RESTING.store(resting, Ordering::Relaxed);
     resting.then(|| RECT { left: at.x, top: at.y, right: at.x + 1, bottom: at.y + 1 })
 }

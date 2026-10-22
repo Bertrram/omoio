@@ -305,6 +305,12 @@ impl Pad {
         }
     }
 
+    /// Whether the mouse's left or right button is a button in the game,
+    /// the two Cemu also takes as a touch on the GamePad's screen.
+    pub fn clicks(&self) -> bool {
+        self.presses.iter().any(|(_, input)| matches!(input, Input::Mouse(0 | 1)))
+    }
+
     /// The pad after `dt` seconds more of `input`. Closed, while the game
     /// isn't the window in front, it is the pad at rest, and whatever is
     /// held as it opens again waits to be let go.
@@ -473,6 +479,17 @@ mod tests {
         assert_eq!(state.sticks[..2], [0, 0]);
         let state = pad.step(&holding(&["KeyA", "KeyD"]), TICK, true);
         assert_eq!(state.sticks[0], 128, "both ways at once is neither");
+    }
+
+    #[test]
+    fn a_click_plays_unless_the_mouse_buttons_are_taken_off() {
+        assert!(Pad::new(&keyboard(), Aim::Layout).clicks());
+        let keys_only = BTreeMap::from([
+            ("West".to_string(), "KeyJ".to_string()),
+            ("North".to_string(), "KeyK".to_string()),
+        ]);
+        let player = Player::with_buttons(Device::keyboard(), keys_only);
+        assert!(!Pad::new(&player, Aim::Layout).clicks(), "the middle button alone is no touch in Cemu");
     }
 
     #[test]
