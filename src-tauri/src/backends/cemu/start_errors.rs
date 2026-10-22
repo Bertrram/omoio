@@ -20,7 +20,7 @@ use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::UI::Accessibility::UIA_TextControlTypeId;
-use windows::Win32::UI::WindowsAndMessaging::{PostMessageW, IDYES, WM_USER};
+use windows::Win32::UI::WindowsAndMessaging::{PostMessageW, IDNO, WM_USER};
 
 /// How long after Cemu starts its messages are looked for. Cemu refuses a
 /// game as it starts (`FileLoad`, posted from `MainWindow`'s constructor,
@@ -60,21 +60,23 @@ const UNREAD: &str = "Cemu couldn't start the game.";
 /// (`LatteShaderCache_handleDeprecatedCacheFiles`, `LatteShaderCache.cpp`
 /// lines 906 to 928, called at line 366, Cemu v2.6). Cemu waits for the
 /// answer before the game goes on, and its window is off the screen, so
-/// nobody could give one and the start hung. Omoio gives Cemu's own
-/// recommended answer, Yes, labelled "Delete outdated cache file
-/// [recommended]": the old file is one Cemu "will no longer" use (Cemu's
-/// words in the question). Known by its caption in English, the language
-/// Omoio starts Cemu in (`ENGLISH` in mod.rs), or in any other language by
-/// the version its words name: every translation Cemu 2.6 ships that has
-/// the question keeps "1.25.0" (resources/<language>/cemu.mo, read 21
-/// October 2026), and no other message of Cemu's names it.
+/// nobody could give one and the start hung. Omoio answers No, labelled
+/// "Keep outdated cache file" (line 921): Yes, which Cemu recommends,
+/// deletes the old files (lines 923 to 927), and they are the player's.
+/// Either answer lets the game go on, and the question doesn't come back,
+/// since Cemu then makes the newer cache it looks for (lines 369 to 371).
+/// Known by its caption in English, the language Omoio starts Cemu in
+/// (`ENGLISH` in mod.rs), or in any other language by the version its words
+/// name: every translation Cemu 2.6 ships that has the question keeps
+/// "1.25.0" (resources/<language>/cemu.mo, read 21 October 2026), and no
+/// other message of Cemu's names it.
 const CACHE_QUESTION: &str = "Outdated shader cache";
 const CACHE_VERSION: &str = "1.25.0";
-const CACHE_ANSWER: &str = "Delete outdated cache file";
+const CACHE_ANSWER: &str = "Keep outdated cache file";
 
 /// Clicks a task dialog's button by its id ("TDM_CLICK_BUTTON message",
 /// Microsoft Learn, read 21 October 2026; `WM_USER + 102` in CommCtrl.h).
-/// wxWidgets gives a question's Yes button the id IDYES even under a label
+/// wxWidgets gives a question's No button the id IDNO even under a label
 /// of Cemu's own (`AddTaskDialogButton`, `msgdlg.cpp` lines 761 to 783,
 /// wxWidgets 3.2.5). Only a number travels, so it works across processes
 /// and with the dialog off the screen; the buttons' own control ids are 0,
@@ -201,7 +203,7 @@ pub fn watch(mut cemu: Child, game: String) {
                 }
                 seen.push(message.0 as isize);
                 out_of_sight(message);
-                let _ = unsafe { PostMessageW(Some(message), TDM_CLICK_BUTTON, WPARAM(IDYES.0 as usize), LPARAM(0)) };
+                let _ = unsafe { PostMessageW(Some(message), TDM_CLICK_BUTTON, WPARAM(IDNO.0 as usize), LPARAM(0)) };
                 heard().push(Heard {
                     pid,
                     at: Instant::now(),
@@ -569,7 +571,7 @@ mod tests {
         assert!(take(900_003).is_none(), "even when Cemu ends straight after");
         assert_eq!(
             notes(900_003),
-            ["Omoio answered a question from Cemu with \"Delete outdated cache file\": Cemu detected that the cache"]
+            ["Omoio answered a question from Cemu with \"Keep outdated cache file\": Cemu detected that the cache"]
         );
     }
 
