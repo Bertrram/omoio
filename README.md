@@ -26,10 +26,14 @@ issue.
   whole drive at once.
 - Games run inside Omoio's window, fullscreen with F11, and you never see the
   emulator.
-- RPCS3, Cemu and Dolphin installed for you. RPCS3 is kept up to date, and Cemu
-  and Dolphin are updated to the newest version Omoio has been tested with.
+- RPCS3, Cemu and Dolphin installed for you. RPCS3 is kept up to date, and
+  Dolphin is updated to the newest version Omoio has been tested with. Cemu is
+  Omoio's own build of Cemu 2.6, which adds a portal server for the Skylanders
+  portal menu.
 - One controller layout for every emulator, set by pressing the buttons, for up
   to four players.
+- Keyboard and mouse for any player, on every system. W A S D move, the mouse
+  buttons attack and the mouse aims, and every key can be changed.
 - A Skylanders portal menu that puts figures, traps, vehicles and crystals on
   the portal from your controller, in Spyro's Adventure, Giants, SWAP Force and
   Trap Team on PS3, in SWAP Force, Trap Team, SuperChargers and Imaginators on
@@ -84,8 +88,9 @@ game instead, and these games have it so far:
 - Skylanders SuperChargers on Wii U, through Cemu
 - Skylanders Imaginators on Wii U, through Cemu
 
-During the game, press your controller's home button (Guide, PS or Home) and
-the menu opens. You can pick another button in the game's panel. Choose a
+During the game, press your controller's home button (Guide, PS or Home), or
+Insert or Tab on the keyboard, and the menu opens. You can pick another button
+in the game's panel. Choose a
 character and it goes on the portal, and the same menu takes it off again. The
 first time, the emulator's own figure maker makes the figure, and Omoio saves it
 so the figure keeps what it has earned. Giants and Trap Masters come first in
@@ -95,6 +100,13 @@ SuperChargers, Senseis and Minis carry a mark, and Giants show the game's own
 Giant badge once the pictures are read. In
 SWAP Force, swappers can be mixed: pick a top, then a bottom, and each one shows
 how it moves.
+
+On PS3 and Wii U the menu talks to the emulator's own portal server, so a
+figure goes on in a moment and no emulator window opens for it. On PS3 that's
+RPCS3's server, in RPCS3 builds from 10 October 2026 on. On Wii U it's the
+server in Omoio's build of Cemu. Before a figure goes on, Omoio keeps a copy of
+its file in a Backups folder inside your figures folder, so a figure a game
+later calls broken can be put back as it was.
 
 In Spyro's Adventure on Wii, the menu works Dolphin's own Skylanders Manager out
 of sight: it puts figures on, takes them off and makes new ones. A figure made
@@ -131,7 +143,9 @@ Knight or a Sorcerer is one look away, and each Sensei says which realms it
 opens and what it teaches. Imaginators checks a factory signature on its own
 figures that a figure made by an emulator doesn't have, so Omoio turns on
 Cemu's Signature Patch, a community pack that takes that check away. It shows
-in the game's Community packs, where you can turn it off. Figures, traps,
+in the game's Community packs, where you can turn it off. On PS3 nothing takes
+that check away, so Senseis and Creation Crystals made in an emulator don't work
+there, and Omoio says so before you import Imaginators. Figures, traps,
 items, vehicles and trophies from the earlier games work too, each saying what
 it does in this game.
 
@@ -205,10 +219,13 @@ decrypted, and a PS4 game you bought is locked to Sony's keys.
 <summary>Do I need to install RPCS3, Cemu or Dolphin first?</summary>
 <br>
 
-No. Omoio downloads their official builds, on the Emulators screen or when it
-first starts. It keeps RPCS3 up to date, and updates Cemu and Dolphin to the
-newest version Omoio has been tested with, so a new release waits until Omoio
-has been checked against it, and your controllers keep working. Omoio checks
+No. Omoio downloads them on the Emulators screen or when it first starts:
+RPCS3's and Dolphin's official builds, and for Cemu, Omoio's own build of Cemu
+2.6, which is Cemu 2.6 with a portal server added
+([source](https://github.com/Bertrram/Cemu/tree/omoio-portal-ipc)). It keeps
+RPCS3 up to date, and updates Cemu and Dolphin to the newest version Omoio has
+been tested with, so a new release waits until Omoio has been checked against
+it, and your controllers keep working. Omoio checks
 Dolphin's download before it installs it, and keeps its Dolphin in a folder of
 its own, apart from any Dolphin you already have. It runs them as separate
 programs, and you never have to open any of them.
@@ -279,6 +296,14 @@ Nunchuk's stick, and the right stick moves the pointer. A and B are the bottom a
 buttons, with B on the right trigger too. The Nunchuk's Z is the left button and
 the left trigger, C is the top button, and the right shoulder shakes the remote.
 A GameCube game uses Dolphin's own layout for a gamepad.
+
+Any player can be set to Keyboard and mouse instead. W A S D move, Space jumps,
+the left and right mouse buttons (or J and K) attack, E confirms, Q and R are
+the shoulders, F and G the triggers, and the mouse turns the camera or aims: the
+right stick on PS3, the pointer on Wii, and on Wii U a stick or the GamePad's
+tilt, chosen in the game's emulator settings. Click a button on the Controller
+screen and press any key to change it. While you play, the cursor is hidden and
+stays in the game, and a pad plugged in goes to the next player.
 
 ![The Controller screen, with an Xbox pad and what each button does on PS3, Wii U, Wii and GameCube](design/screenshots/controller.png)
 
@@ -376,8 +401,11 @@ dumps of games you own. It doesn't crack anything: Wii U disc images need your
 own keys file, and Cemu does the decrypting, as Dolphin does for Wii discs. PS3 firmware comes from Sony's page,
 downloaded by you. Covers come only from RAWG or your own games and saves, and the
 Skylanders pictures only from your own copy of the game. Omoio has no connection with Activision, who
-publish Skylanders. RPCS3, Cemu and Dolphin are separate projects, run as
-their official builds, and all credit for the emulation goes to them. The
+publish Skylanders. RPCS3, Cemu and Dolphin are separate projects, and all
+credit for the emulation goes to them. RPCS3 and Dolphin run as their official
+builds. Cemu runs as Omoio's build of Cemu 2.6, which only adds a portal server;
+it is under Cemu's licence, the MPL 2.0, with its source on
+[GitHub](https://github.com/Bertrram/Cemu/tree/omoio-portal-ipc). The
 Emulators screen shows each emulator's own icon, unchanged, under its project's
 licence; [the notice beside them](src/icons/emulators/NOTICE.md) lists which.
 
