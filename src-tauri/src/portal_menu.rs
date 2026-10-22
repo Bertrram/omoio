@@ -8,6 +8,7 @@
 //! maker makes into the same folder. Omoio never writes figure data itself;
 //! a Trap Team trap is read, for the villain it holds, and a file the user
 //! brought only as far as its plain first blocks, to tell a Creation Crystal.
+//! Before a figure goes on, a copy of its file is kept aside (`back_up`).
 
 use crate::backends::EmulatorBackend;
 use crate::core::console::Console;
@@ -442,6 +443,85 @@ pub fn add(app: &AppHandle, paths: &[String]) -> Result<usize, String> {
     Ok(added)
 }
 
+/// How many copies of one figure are kept, the newest. A copy is 1 KB.
+const BACKUPS_KEPT: usize = 20;
+
+/// Where the copies are kept, inside the figures folder so a player who
+/// opens it from Settings finds them: a folder for each figure by its file
+/// name, and in it the file as it was each time it went on, when it had
+/// changed since, named for the second it was taken, as save backups are
+/// (saves.rs).
+fn backups(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(folder(app)?.join("Backups"))
+}
+
+/// Keeps a copy of a figure's file before it goes on the portal, so a
+/// figure the game later calls broken can be put back as it was. While a
+/// figure is on, its emulator writes each block the game sends straight into
+/// the file (Cemu's `SkylanderUSB::WriteBlock` and `Skylander::Save`,
+/// Skylander.cpp lines 919 to 939 and 1001 to 1008, v2.6; RPCS3's
+/// `sky_portal::write_block` and `skylander::save`, Emu/Io/Skylander.cpp
+/// lines 35 to 47 and 144 to 163, master 599ab4f; read 22 October 2026), so
+/// a write cut off by the figure coming off or the emulator closing stays
+/// as far as the game got. The copy is the file's bytes as they are; nothing
+/// in them is decrypted or changed. A figure that can't be copied still goes
+/// on.
+pub fn back_up(app: &AppHandle, figure: &Path) {
+    let taken = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs());
+    if let Ok(backups) = backups(app) {
+        let _ = back_up_into(figure, &backups, taken);
+    }
+}
+
+/// Copies `figure` into its folder among `backups`, unless the newest copy
+/// there already holds the same bytes, and lets the oldest copies go past
+/// `BACKUPS_KEPT`. Returns the copy made, if one was.
+fn back_up_into(figure: &Path, backups: &Path, taken: u64) -> std::io::Result<Option<PathBuf>> {
+    let (Some(name), Some(extension)) = (figure.file_name(), figure.extension()) else {
+        return Ok(None);
+    };
+    let bytes = std::fs::read(figure)?;
+    let kept = backups.join(name);
+    let copies = copies_in(&kept);
+    if copies.last().is_some_and(|newest| std::fs::read(newest).is_ok_and(|held| held == bytes)) {
+        return Ok(None);
+    }
+    std::fs::create_dir_all(&kept)?;
+    // Two in the same second, as a figure put on, taken off and put on
+    // again can make, would share a name and the second would replace the
+    // first.
+    let mut second = taken;
+    let mut copy = kept.join(second.to_string()).with_extension(extension);
+    while copy.exists() {
+        second += 1;
+        copy = kept.join(second.to_string()).with_extension(extension);
+    }
+    std::fs::write(&copy, &bytes)?;
+    let copies = copies_in(&kept);
+    for old in &copies[..copies.len().saturating_sub(BACKUPS_KEPT)] {
+        let _ = std::fs::remove_file(old);
+    }
+    Ok(Some(copy))
+}
+
+/// The copies kept of one figure, oldest first, by the second in each name.
+fn copies_in(kept: &Path) -> Vec<PathBuf> {
+    let mut copies: Vec<(u64, PathBuf)> = std::fs::read_dir(kept)
+        .map(|entries| {
+            entries
+                .flatten()
+                .map(|entry| entry.path())
+                .filter(|path| path.is_file())
+                .filter_map(|path| Some((path.file_stem()?.to_str()?.parse().ok()?, path)))
+                .collect()
+        })
+        .unwrap_or_default();
+    copies.sort();
+    copies.into_iter().map(|(_, path)| path).collect()
+}
+
 /// The characters an emulator's figure maker offered, kept with the
 /// emulator's version so a newer emulator is asked again.
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -813,5 +893,89 @@ mod tests {
         assert_eq!(crystal_in(&broken), None);
         assert_eq!(crystal_in(&made_figure(680, 0x5208)[..512]), None);
         assert_eq!(crystal_in(&[made_figure(680, 0x5208), vec![0]].concat()), None);
+    }
+
+    /// A folder of its own for one test, emptied first.
+    fn scratch(name: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!("omoio-figure-backups-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    /// King Pen as the game might have left him, `mark` standing in for
+    /// what it wrote.
+    fn played(mark: u8) -> Vec<u8> {
+        let mut figure = made_figure(601, 0x5000);
+        figure[0x80] = mark;
+        figure
+    }
+
+    #[test]
+    fn a_figure_is_copied_as_it_is_before_it_goes_on() {
+        let root = scratch("copied");
+        let figure = root.join("King Pen.sky");
+        let backups = root.join("Backups");
+        std::fs::write(&figure, played(1)).unwrap();
+        let copy = back_up_into(&figure, &backups, 1_000).unwrap().unwrap();
+        assert_eq!(copy, backups.join("King Pen.sky").join("1000.sky"));
+        assert_eq!(std::fs::read(&copy).unwrap(), played(1));
+        assert_eq!(std::fs::read(&figure).unwrap(), played(1), "the figure itself is left as it was");
+        // On again, unchanged: nothing new.
+        assert_eq!(back_up_into(&figure, &backups, 2_000).unwrap(), None);
+        // Changed by the game since: a new copy beside the old one.
+        std::fs::write(&figure, played(2)).unwrap();
+        let newer = back_up_into(&figure, &backups, 3_000).unwrap().unwrap();
+        assert_eq!(std::fs::read(&newer).unwrap(), played(2));
+        assert_eq!(copies_in(&backups.join("King Pen.sky")), [copy, newer]);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn copies_taken_in_the_same_second_each_keep_their_own() {
+        let root = scratch("second");
+        let figure = root.join("King Pen.sky");
+        let backups = root.join("Backups");
+        std::fs::write(&figure, played(1)).unwrap();
+        back_up_into(&figure, &backups, 500).unwrap();
+        std::fs::write(&figure, played(2)).unwrap();
+        let second = back_up_into(&figure, &backups, 500).unwrap().unwrap();
+        assert_eq!(second, backups.join("King Pen.sky").join("501.sky"));
+        assert_eq!(std::fs::read(backups.join("King Pen.sky").join("500.sky")).unwrap(), played(1));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn only_the_newest_copies_are_kept() {
+        let root = scratch("newest");
+        let figure = root.join("King Pen.sky");
+        let backups = root.join("Backups");
+        let made = BACKUPS_KEPT as u64 + 3;
+        // From 90, so the names go from two digits to three and are told
+        // apart by number rather than as text.
+        for n in 0..made {
+            std::fs::write(&figure, played(n as u8)).unwrap();
+            back_up_into(&figure, &backups, 90 + n).unwrap();
+        }
+        let copies = copies_in(&backups.join("King Pen.sky"));
+        assert_eq!(copies.len(), BACKUPS_KEPT);
+        assert_eq!(copies[0], backups.join("King Pen.sky").join("93.sky"));
+        assert_eq!(std::fs::read(&copies[BACKUPS_KEPT - 1]).unwrap(), played(made as u8 - 1));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn each_figure_file_has_copies_of_its_own() {
+        let root = scratch("own");
+        let backups = root.join("Backups");
+        for name in ["King Pen.sky", "King Pen.bin", "King Pen 2.sky"] {
+            std::fs::write(root.join(name), played(7)).unwrap();
+            assert!(back_up_into(&root.join(name), &backups, 10).unwrap().is_some(), "{name}");
+        }
+        assert_eq!(copies_in(&backups.join("King Pen.bin")), [backups.join("King Pen.bin").join("10.bin")]);
+        // A figure that isn't there anymore is left to the emulator to report.
+        assert!(back_up_into(&root.join("Gone.sky"), &backups, 10).is_err());
+        assert!(!backups.join("Gone.sky").exists());
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

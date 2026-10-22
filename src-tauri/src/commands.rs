@@ -1784,11 +1784,13 @@ pub async fn portal_figures(app: AppHandle) -> Result<Vec<String>, String> {
     names
 }
 
-/// `slot` counts from 0. A figure that went on is remembered as used, so the
+/// `slot` counts from 0. A copy of the figure is kept first, before the
+/// emulator opens it. A figure that went on is remembered as used, so the
 /// menu lists it first next time.
 #[tauri::command]
 pub async fn portal_load(app: AppHandle, slot: usize, figure: String) -> Result<Vec<String>, String> {
     let (backend, pid) = running_emulator(&app)?;
+    crate::portal_menu::back_up(&app, Path::new(&figure));
     let path = figure.clone();
     let names = tauri::async_runtime::spawn_blocking(move || backend.portal_load(pid, slot, Path::new(&path)))
         .await;
