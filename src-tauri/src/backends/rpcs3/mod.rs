@@ -124,7 +124,7 @@ fn copies(exe: &Path) -> (sysinfo::System, Vec<sysinfo::Pid>) {
     let wanted = std::fs::canonicalize(exe).ok();
     let same = |own: &Path| {
         own.as_os_str().eq_ignore_ascii_case(exe.as_os_str())
-            || (own.file_name() == exe.file_name()
+            || (own.file_name().zip(exe.file_name()).is_some_and(|(own, exe)| own.eq_ignore_ascii_case(exe))
                 && wanted.is_some()
                 && std::fs::canonicalize(own).ok() == wanted)
     };
