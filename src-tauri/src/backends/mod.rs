@@ -6,6 +6,7 @@
 
 pub mod cemu;
 pub mod dolphin;
+pub mod portal_ipc;
 pub mod qt;
 pub mod rpcs3;
 

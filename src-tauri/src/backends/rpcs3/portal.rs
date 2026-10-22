@@ -24,7 +24,7 @@
 //! server can't. Anything the server turns down or doesn't answer goes
 //! through the manager as before.
 
-use super::portal_ipc::{Failed, Server, Slot};
+use super::portal_ipc::{self, Failed, Server, Slot};
 use crate::backends::qt::{
     self, all_windows, arrives, class, gone, hide, key, name, open_menus, out_of_sight, process_of, showing, soon,
     title, value, visible, Automation as Qt, WAIT,
@@ -123,7 +123,7 @@ static NAMES: Mutex<Vec<Character>> = Mutex::new(Vec::new());
 /// figures it reports can be named. Otherwise the manager does the errand.
 fn server(pid: u32) -> Option<Server> {
     let answered = *ANSWERED.lock().unwrap_or_else(PoisonError::into_inner) == Some((pid, true));
-    (answered && !NAMES.lock().unwrap_or_else(PoisonError::into_inner).is_empty()).then(Server::ours)
+    (answered && !NAMES.lock().unwrap_or_else(PoisonError::into_inner).is_empty()).then(portal_ipc::ours)
 }
 
 /// Which way the portal of `pid` was filled, for the log kept of the game,
@@ -364,7 +364,7 @@ pub fn prepare(pid: u32) {
 fn answers_soon() -> bool {
     let until = std::time::Instant::now() + SERVER_WAIT;
     loop {
-        if Server::ours().status().is_ok() {
+        if portal_ipc::ours().status().is_ok() {
             return true;
         }
         if std::time::Instant::now() >= until {
