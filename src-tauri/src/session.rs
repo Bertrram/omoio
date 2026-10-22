@@ -599,10 +599,18 @@ fn learn_version(app: &AppHandle, title_id: &str, version: String) {
         return;
     };
     let file = data_dir.join("Omoio").join("library.json");
-    let mut library = crate::core::library::Library::load(&file);
-    if let Some(game) = library.get_mut(title_id).filter(|game| game.version.is_none()) {
-        game.version = Some(version);
-        let _ = library.save(&file);
+    use crate::core::library::Library;
+    let unknown = |library: &Library| {
+        library.games().iter().any(|game| game.title_id == title_id && game.version.is_none())
+    };
+    // Looked at first, so a game whose version is known costs no save.
+    if unknown(&Library::load(&file)) {
+        let _ = Library::edit(&file, |library| {
+            if let Some(game) = library.get_mut(title_id).filter(|game| game.version.is_none()) {
+                game.version = Some(version);
+            }
+            Ok(())
+        });
     }
 }
 

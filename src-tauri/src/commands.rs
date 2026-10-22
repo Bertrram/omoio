@@ -261,10 +261,10 @@ pub async fn import_archive(
             }
         };
 
-        let library_file = library_path(&app)?;
-        let mut library = Library::load(&library_file);
-        library.upsert(game.clone());
-        library.save(&library_file)?;
+        Library::edit(&library_path(&app)?, |library| {
+            library.upsert(game.clone());
+            Ok(())
+        })?;
         Ok(entry(&app, game))
     })
     .await
@@ -366,13 +366,13 @@ pub fn add_to_library(
     title_id: String,
     title: String,
 ) -> Result<(), String> {
-    let file = library_path(&app)?;
-    let mut library = Library::load(&file);
-    if library.games().iter().any(|g| g.title_id == title_id) {
-        return Err("That game is already in your library.".into());
-    }
-    library.upsert(crate::core::library::Game::not_set_up(console, title_id, title));
-    library.save(&file)
+    Library::edit(&library_path(&app)?, |library| {
+        if library.games().iter().any(|g| g.title_id == title_id) {
+            return Err("That game is already in your library.".into());
+        }
+        library.upsert(crate::core::library::Game::not_set_up(console, title_id, title));
+        Ok(())
+    })
 }
 
 #[derive(serde::Serialize)]
@@ -472,6 +472,7 @@ pub fn library_notice() -> Option<&'static str> {
         Kept::Restored => "Your game list was missing, so Omoio brought it back from the copy it kept.",
         Kept::Partly => "Omoio couldn't read part of your game list, so it kept a copy and loaded what it could.",
         Kept::Whole => "Omoio couldn't read your game list, so it kept a copy and started a new one.",
+        Kept::Unopened => "Omoio couldn't open your game list, so none of it shows for now. It's left as it was. Restart Omoio to see your games.",
     })
 }
 
@@ -557,10 +558,10 @@ pub async fn import_game(app: AppHandle, path: String) -> Result<GameEntry, Stri
             return Err(why);
         }
         let game = crate::backends::identify(Path::new(&path))?;
-        let library_file = library_path(&app)?;
-        let mut library = Library::load(&library_file);
-        library.upsert(game.clone());
-        library.save(&library_file)?;
+        Library::edit(&library_path(&app)?, |library| {
+            library.upsert(game.clone());
+            Ok(())
+        })?;
         Ok(entry(&app, game))
     })
     .await
@@ -782,7 +783,10 @@ pub fn reveal_folder(path: String) -> Result<(), String> {
 /// touched; this only forgets them.
 #[tauri::command]
 pub fn forget_all_games(app: AppHandle) -> Result<(), String> {
-    Library::default().save(&library_path(&app)?)
+    Library::edit(&library_path(&app)?, |library| {
+        library.forget_all();
+        Ok(())
+    })
 }
 
 #[tauri::command]
@@ -853,13 +857,11 @@ pub fn set_game_fullscreen(app: AppHandle, fullscreen: bool) {
 
 #[tauri::command]
 pub fn remove_game(app: AppHandle, title_id: String) -> Result<(), String> {
-    let library_file = library_path(&app)?;
-    let mut library = Library::load(&library_file);
     // Only the entry goes; the user's files are theirs and stay where they are.
-    if library.remove(&title_id) {
-        library.save(&library_file)?;
-    }
-    Ok(())
+    Library::edit(&library_path(&app)?, |library| {
+        library.remove(&title_id);
+        Ok(())
+    })
 }
 
 #[tauri::command]
@@ -1049,8 +1051,10 @@ pub async fn scan_folder(
             );
         });
 
+        // Read for what is already there, and changed only at the end, in
+        // one go, so imports made while a drive is scanned stay.
         let library_file = library_path(&app)?;
-        let mut library = Library::load(&library_file);
+        let library = Library::load(&library_file);
         let mut result = ScanResult {
             added: 0,
             already_there: 0,
@@ -1059,6 +1063,7 @@ pub async fn scan_folder(
             warnings: Vec::new(),
         };
         let mut added = Vec::new();
+        let mut found = Vec::new();
 
         let total = dumps.len();
         for (done, dump) in dumps.iter().enumerate() {
@@ -1068,7 +1073,7 @@ pub async fn scan_folder(
             }
             match crate::backends::identify(dump) {
                 Ok(game) => {
-                    if library.games().iter().any(|g| g.title_id == game.title_id) {
+                    if library.games().iter().chain(&found).any(|g| g.title_id == game.title_id) {
                         result.already_there += 1;
                     } else {
                         let _ = app.emit(
@@ -1081,7 +1086,7 @@ pub async fn scan_folder(
                             },
                         );
                         added.push(Imported::of(&game));
-                        library.upsert(game);
+                        found.push(game);
                         result.added += 1;
                     }
                 }
@@ -1092,7 +1097,14 @@ pub async fn scan_folder(
         }
 
         if result.added > 0 {
-            library.save(&library_file)?;
+            Library::edit(&library_file, |library| {
+                for game in found {
+                    if !library.games().iter().any(|g| g.title_id == game.title_id) {
+                        library.upsert(game);
+                    }
+                }
+                Ok(())
+            })?;
             let lists = compat_lists(&app);
             result.warnings = added.iter().filter_map(|game| import_warning::warning(game, &lists)).collect();
         }
@@ -1159,12 +1171,7 @@ pub async fn install_update(
         .unwrap_or_default();
     // Already there, so only the library's note needs catching up.
     if installed == update.version {
-        let mut library = Library::load(&file);
-        if let Some(game) = library.get_mut(&title_id) {
-            game.update_version = Some(installed);
-            library.save(&file)?;
-        }
-        return Ok(());
+        return note_update(&file, &title_id, installed);
     }
     let published = rpcs3::updates::available(&title_id).await?;
     let mut steps = rpcs3::updates::chain(&published, &installed, &update.version);
@@ -1211,14 +1218,19 @@ pub async fn install_update(
         })
         .await?;
         before += step.size;
-
-        let mut library = Library::load(&file);
-        if let Some(game) = library.get_mut(&title_id) {
-            game.update_version = Some(step.version.clone());
-            library.save(&file)?;
-        }
+        note_update(&file, &title_id, step.version.clone())?;
     }
     Ok(())
+}
+
+/// Notes in the library the update a game now runs.
+fn note_update(file: &Path, title_id: &str, version: String) -> Result<(), String> {
+    Library::edit(file, |library| {
+        if let Some(game) = library.get_mut(title_id) {
+            game.update_version = Some(version);
+        }
+        Ok(())
+    })
 }
 
 /// Whether the game has saved anything, and the copies kept of its saves.

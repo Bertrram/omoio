@@ -4,7 +4,10 @@
 
 use crate::core::console::Console;
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Mutex, PoisonError};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -70,7 +73,13 @@ pub struct Library {
     /// here never takes them from the build that can show them. On 8 October
     /// 2026 a build that didn't know Wii games yet emptied a whole library
     /// over one of these.
-    unknown: Vec<serde_json::Value>,
+    unknown: Vec<Value>,
+    /// Fields of a readable entry that this build doesn't know, such as one
+    /// a newer Omoio added, by title id. Written back with the entry.
+    fields: HashMap<String, Map<String, Value>>,
+    /// Whatever the file holds beside the list of games, written back as it
+    /// came, so a newer Omoio's file keeps what it added.
+    rest: Map<String, Value>,
     /// The file was there but couldn't be opened, as while something else
     /// has it locked. Saving would put a short list over the real one.
     unopened: bool,
@@ -89,6 +98,9 @@ pub enum Kept {
     /// Nothing in the file could be read. It was set aside and the list
     /// starts empty.
     Whole,
+    /// The file was there but couldn't be opened, so the list is empty for
+    /// now and nothing is saved over the file.
+    Unopened,
 }
 
 /// What the last load that kept something did, until the library screen
@@ -99,17 +111,34 @@ static NOTICE: Mutex<Option<Kept>> = Mutex::new(None);
 /// each set aside the same file.
 static LOADING: Mutex<()> = Mutex::new(());
 
+/// One change at a time, from loading the library to saving it (`edit`).
+static EDITING: Mutex<()> = Mutex::new(());
+
+/// Each write's own temporary file, so two writes at once never rename each
+/// other's half-written one.
+static WRITES: AtomicU32 = AtomicU32::new(0);
+
 /// The library as written, with the unknown entries after the rest.
 #[derive(Serialize)]
 struct Written<'a> {
     games: Vec<Entry<'a>>,
+    #[serde(flatten)]
+    rest: &'a Map<String, Value>,
 }
 
 #[derive(Serialize)]
 #[serde(untagged)]
 enum Entry<'a> {
-    Known(&'a Game),
-    Unknown(&'a serde_json::Value),
+    Known(Known<'a>),
+    Unknown(&'a Value),
+}
+
+#[derive(Serialize)]
+struct Known<'a> {
+    #[serde(flatten)]
+    game: &'a Game,
+    #[serde(flatten)]
+    fields: Option<&'a Map<String, Value>>,
 }
 
 impl Library {
@@ -133,7 +162,27 @@ impl Library {
     pub fn remove(&mut self, title_id: &str) -> bool {
         let before = self.games.len();
         self.games.retain(|g| g.title_id != title_id);
+        self.fields.remove(title_id);
         self.games.len() != before
+    }
+
+    /// Forgets every game, those this build can't read as well.
+    pub fn forget_all(&mut self) {
+        self.games.clear();
+        self.unknown.clear();
+        self.fields.clear();
+    }
+
+    /// Loads the library at `path`, lets `change` change it and saves it,
+    /// with no other change of Omoio's in between. With each change loading
+    /// and saving on its own, a folder scan that kept its copy for a whole
+    /// drive saved over every import, removal and version learned meanwhile.
+    pub fn edit<T>(path: &Path, change: impl FnOnce(&mut Library) -> Result<T, String>) -> Result<T, String> {
+        let _turn = EDITING.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut library = Self::load(path);
+        let done = change(&mut library)?;
+        library.save(path)?;
+        Ok(done)
     }
 
     /// A library we cannot read is kept aside rather than overwritten, what
@@ -156,7 +205,7 @@ impl Library {
         let bytes = match std::fs::read(path) {
             Ok(bytes) => bytes,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return restore(path),
-            Err(_) => return (Self { unopened: true, ..Self::default() }, None),
+            Err(_) => return (Self { unopened: true, ..Self::default() }, Some(Kept::Unopened)),
         };
         match parse(&bytes) {
             Some(library) if library.unknown.is_empty() => (library, None),
@@ -172,7 +221,7 @@ impl Library {
             // Left in place, the next save would write over it.
             None => match std::fs::rename(path, aside(path)) {
                 Ok(()) => (Self::default(), Some(Kept::Whole)),
-                Err(_) => (Self { unopened: true, ..Self::default() }, None),
+                Err(_) => (Self { unopened: true, ..Self::default() }, Some(Kept::Unopened)),
             },
         }
     }
@@ -180,17 +229,18 @@ impl Library {
     /// Written to a temporary file and renamed over the original, so losing
     /// power mid-write leaves the previous library intact rather than a
     /// half-written one.
-    pub fn save(&self, path: &Path) -> Result<(), String> {
+    fn save(&self, path: &Path) -> Result<(), String> {
         if self.unopened {
             return Err("Omoio couldn't open your game list, so it left it as it was. Try again in a moment.".to_string());
         }
-        let games = self
-            .games
-            .iter()
-            .map(Entry::Known)
-            .chain(self.unknown.iter().map(Entry::Unknown))
-            .collect();
-        let text = serde_json::to_string_pretty(&Written { games }).map_err(|e| e.to_string())?;
+        let known = self.games.iter().map(|game| {
+            Entry::Known(Known {
+                game,
+                fields: self.fields.get(&game.title_id),
+            })
+        });
+        let games = known.chain(self.unknown.iter().map(Entry::Unknown)).collect();
+        let text = serde_json::to_string_pretty(&Written { games, rest: &self.rest }).map_err(|e| e.to_string())?;
         write(path, text.as_bytes())
     }
 }
@@ -199,47 +249,74 @@ fn write(path: &Path, bytes: &[u8]) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    let temp = path.with_extension("json.writing");
-    std::fs::write(&temp, bytes).map_err(|e| e.to_string())?;
-    std::fs::rename(&temp, path).map_err(|e| e.to_string())
+    let number = WRITES.fetch_add(1, Ordering::Relaxed);
+    let temp = path.with_extension(format!("json.writing-{}-{number}", std::process::id()));
+    let written = std::fs::write(&temp, bytes).and_then(|()| std::fs::rename(&temp, path));
+    if written.is_err() {
+        let _ = std::fs::remove_file(&temp);
+    }
+    written.map_err(|e| e.to_string())
 }
 
 /// Read entry by entry, so an entry this build doesn't know costs only that
 /// entry. `None` when the file isn't a library at all.
 fn parse(bytes: &[u8]) -> Option<Library> {
-    let value: serde_json::Value = serde_json::from_slice(bytes).ok()?;
-    let mut library = Library::default();
-    let entries = match value.as_object()?.get("games") {
-        None => return Some(library),
-        Some(serde_json::Value::Array(entries)) => entries,
+    let Value::Object(mut rest) = serde_json::from_slice(bytes).ok()? else {
+        return None;
+    };
+    let entries = match rest.remove("games") {
+        None => Vec::new(),
+        Some(Value::Array(entries)) => entries,
         Some(_) => return None,
     };
+    let mut library = Library { rest, ..Library::default() };
     for entry in entries {
-        match serde_json::from_value(entry.clone()) {
-            Ok(game) => library.games.push(game),
-            Err(_) => library.unknown.push(entry.clone()),
+        match serde_json::from_value::<Game>(entry.clone()) {
+            Ok(game) => {
+                let fields = fields_unknown(&game, entry);
+                if !fields.is_empty() {
+                    library.fields.insert(game.title_id.clone(), fields);
+                }
+                library.games.push(game);
+            }
+            Err(_) => library.unknown.push(entry),
         }
     }
     Some(library)
 }
 
+/// The fields of `entry` that `game`, read from it, doesn't hold.
+fn fields_unknown(game: &Game, entry: Value) -> Map<String, Value> {
+    let (Value::Object(mut fields), Ok(Value::Object(known))) = (entry, serde_json::to_value(game)) else {
+        return Map::new();
+    };
+    fields.retain(|name, _| !known.contains_key(name));
+    fields
+}
+
 /// With the file gone, the copy set aside last is taken back if it reads now,
 /// as when the build that couldn't read it has been replaced by one that can.
-/// The copy stays as it is.
+/// Once only: the copy is then named `.restored` rather than `.unreadable`,
+/// with what it holds unchanged, so a list deleted on purpose after that
+/// stays deleted.
 fn restore(path: &Path) -> (Library, Option<Kept>) {
     let newest = copies(path)
         .into_iter()
         .max_by_key(|copy| std::fs::metadata(copy).and_then(|m| m.modified()).ok());
-    let Some((library, bytes)) = newest.and_then(|copy| {
-        let bytes = std::fs::read(copy).ok()?;
-        parse(&bytes).map(|library| (library, bytes))
+    let Some((library, bytes, copy)) = newest.and_then(|copy| {
+        let bytes = std::fs::read(&copy).ok()?;
+        parse(&bytes).map(|library| (library, bytes, copy))
     }) else {
         return (Library::default(), None);
     };
     if library.games.is_empty() && library.unknown.is_empty() {
         return (Library::default(), None);
     }
-    let _ = write(path, &bytes);
+    if write(path, &bytes).is_ok() {
+        if let Some(name) = copy.file_name().map(|n| n.to_string_lossy().replacen(".unreadable", ".restored", 1)) {
+            let _ = std::fs::rename(&copy, copy.with_file_name(name));
+        }
+    }
     (library, Some(Kept::Restored))
 }
 
@@ -262,7 +339,7 @@ fn copies(path: &Path) -> Vec<PathBuf> {
 }
 
 /// Whether a copy already holds every one of these entries.
-fn holds(copy: &Path, unknown: &[serde_json::Value]) -> bool {
+fn holds(copy: &Path, unknown: &[Value]) -> bool {
     let Some(kept) = std::fs::read(copy).ok().and_then(|bytes| parse(&bytes)) else {
         return false;
     };
@@ -451,12 +528,85 @@ mod tests {
         assert_eq!(kept, Some(Kept::Restored));
         assert_eq!(library.games().len(), 2);
         assert_eq!(std::fs::read_to_string(&path).unwrap(), TWO_GAMES);
-        assert_eq!(std::fs::read_to_string(&copy).unwrap(), TWO_GAMES, "the copy stays as it was");
+        let restored = folder.join("library.json.restored");
+        assert_eq!(std::fs::read_to_string(&restored).unwrap(), TWO_GAMES, "the copy stays, renamed");
+        assert!(copies_in(&folder).is_empty());
 
         // Back in place, it is an ordinary library again.
         let (again, kept) = Library::load_keeping(&path);
         assert_eq!(kept, None);
         assert_eq!(again.games(), library.games());
+
+        // Deleted on purpose after that, it stays deleted.
+        std::fs::remove_file(&path).unwrap();
+        let (gone, kept) = Library::load_keeping(&path);
+        assert_eq!(kept, None);
+        assert!(gone.games().is_empty());
+        assert!(!path.exists());
+
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    /// What a newer Omoio adds, to an entry or beside the list, is written
+    /// back as it came by a build that doesn't know it.
+    #[test]
+    fn what_a_newer_omoio_added_is_kept() {
+        let folder = temp_folder("newer");
+        let path = folder.join("library.json");
+        std::fs::write(
+            &path,
+            r#"{"games":[
+                {"console":"ps3","title_id":"BCES00850","title":"LittleBigPlanet 2","version":"01.00","path":"D:\\games\\lbp2","size_bytes":1,"played_minutes":90},
+                {"console":"ps3","title_id":"BCES00141","title":"LittleBigPlanet","version":"01.00","path":"D:\\games\\lbp","size_bytes":2,"favourite":true}
+            ],"collections":[{"name":"Mine","games":["BCES00850"]}]}"#,
+        )
+        .unwrap();
+
+        Library::edit(&path, |library| {
+            library.upsert(game("BCES00850", "LittleBigPlanet 2"));
+            library.remove("BCES00141");
+            library.upsert(game("BCUS98148", "LittleBigPlanet 3"));
+            Ok(())
+        })
+        .unwrap();
+
+        let saved: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(saved["collections"], serde_json::json!([{"name":"Mine","games":["BCES00850"]}]));
+        let games = saved["games"].as_array().unwrap();
+        assert_eq!(games.len(), 2);
+        assert_eq!(games[0]["title_id"], "BCES00850");
+        assert_eq!(games[0]["played_minutes"], 90, "kept through a re-import");
+        assert_eq!(games[1]["title_id"], "BCUS98148");
+        assert!(games[1].get("favourite").is_none(), "gone with the game it was on");
+        assert_eq!(Library::load_keeping(&path).1, None);
+
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    /// Two changes at once both land, rather than the later save putting
+    /// back the list from before the other.
+    #[test]
+    fn changes_at_once_both_stay() {
+        let folder = temp_folder("at-once");
+        let path = folder.join("library.json");
+        let threads: Vec<_> = (0..8)
+            .map(|n| {
+                let path = path.clone();
+                std::thread::spawn(move || {
+                    Library::edit(&path, |library| {
+                        std::thread::sleep(std::time::Duration::from_millis(5));
+                        library.upsert(game(&format!("BCES0000{n}"), "A game"));
+                        Ok(())
+                    })
+                })
+            })
+            .collect();
+        for thread in threads {
+            thread.join().unwrap().unwrap();
+        }
+        assert_eq!(Library::load(&path).games().len(), 8);
+        let left: Vec<_> = std::fs::read_dir(&folder).unwrap().flatten().map(|entry| entry.file_name()).collect();
+        assert_eq!(left, ["library.json"], "no temporary file left behind");
 
         let _ = std::fs::remove_dir_all(&folder);
     }
@@ -568,9 +718,14 @@ mod tests {
         std::fs::create_dir_all(&path).unwrap();
 
         let (mut library, kept) = Library::load_keeping(&path);
-        assert_eq!(kept, None);
+        assert_eq!(kept, Some(Kept::Unopened));
         library.upsert(game("BCES00141", "LittleBigPlanet"));
         assert!(library.save(&path).is_err());
+        let edited = Library::edit(&path, |library| {
+            library.upsert(game("BCES00141", "LittleBigPlanet"));
+            Ok(())
+        });
+        assert!(edited.is_err());
         assert!(path.is_dir());
         assert!(copies_in(&folder).is_empty());
 
