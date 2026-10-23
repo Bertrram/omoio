@@ -46,7 +46,7 @@ Omoio is in early development and runs on 64-bit Windows only. It is not an emul
 - Support email: hello@omoio.app
 - [Discord server](https://discord.gg/ghnAm5CbdP)
 - [The Omoio video](https://www.youtube.com/watch?v=0TUUBSyC67I)
-- [Setup guide video, 4 minutes](https://www.youtube.com/watch?v=ioL5LjZmEXs)
+- [Setup guide video, 4 and a half minutes](https://www.youtube.com/watch?v=ZOjGMjNL6Dg)
 - [YouTube channel](https://www.youtube.com/@OmoioApp)
 - [TikTok](https://www.tiktok.com/@omoioapp)
 - [Instagram](https://www.instagram.com/omoioapp)
