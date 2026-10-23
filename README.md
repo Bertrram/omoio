@@ -5,7 +5,7 @@
 <p align="center">Your PS3, Wii U, Wii and GameCube games in one library. Press Play and Omoio sets up the emulator for you.</p>
 <p align="center"><a href="https://omoio.app">omoio.app</a> · <a href="https://ko-fi.com/omoio">Support on Ko-fi</a></p>
 
-[![The Omoio video on YouTube, 1 minute 10 seconds](design/screenshots/video.jpg)](https://youtu.be/wWmthRdoImE)
+[![The Omoio video on YouTube, 1 minute 14 seconds](design/screenshots/video.jpg)](https://youtu.be/0TUUBSyC67I)
 
 ![The library with 17 games, and the panel for Skylanders Giants open](design/screenshots/library.png)
 <sub>Covers in these pictures come from [RAWG](https://rawg.io).</sub>
