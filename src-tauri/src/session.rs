@@ -517,6 +517,22 @@ enum Front {
     Other,
 }
 
+impl Front {
+    /// Who it is, for a note in the session's log. Another program is
+    /// never named: its window's title is the player's business.
+    fn who(self) -> &'static str {
+        match self {
+            Self::Game => "the game",
+            Self::Nobody => "no window",
+            Self::OmoioMain => "Omoio's window",
+            Self::OmoioOther => "the portal menu or another of Omoio's windows",
+            Self::Emulator => "one of the emulator's own windows",
+            Self::EmulatorDialog => "a window the emulator put up over its own",
+            Self::Other => "another program",
+        }
+    }
+}
+
 /// What to do about it.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Step {
@@ -646,7 +662,16 @@ fn keep_front(app: &AppHandle, game: isize, pid: u32, turn: u64) {
         .map(|hwnd| hwnd.0 as isize)
         .unwrap_or(0);
     let until = std::time::Instant::now() + KEEP_WATCH;
-    let (mut takes, mut nobody_before) = (0, false);
+    let (mut takes, mut nobody_before, mut last) = (0, false, Front::Game);
+    // A game left without the front doesn't hear the pad (Dolphin's and
+    // RPCS3's), so where the front stayed is written down for the log a
+    // player sends (reports of a pad that stopped, October 2026).
+    let left_with = |front: Front| {
+        if front != Front::Game {
+            app.state::<Session>()
+                .note(&format!("handed the game the front, and {} had it when Omoio let go", front.who()));
+        }
+    };
     while std::time::Instant::now() < until {
         std::thread::sleep(LOOK_EVERY);
         let session = app.state::<Session>();
@@ -659,10 +684,11 @@ fn keep_front(app: &AppHandle, game: isize, pid: u32, turn: u64) {
             return;
         }
         let front = front_now(game, pid, main);
+        last = front;
         match next_step(front, covers_screen(&session), nobody_before) {
             Step::Wait => {}
-            Step::Stop => return,
-            Step::Take if takes == TAKES => return,
+            Step::Stop => return left_with(front),
+            Step::Take if takes == TAKES => return left_with(front),
             Step::Take => {
                 takes += 1;
                 overlay::bring_to_front(game);
@@ -670,6 +696,7 @@ fn keep_front(app: &AppHandle, game: isize, pid: u32, turn: u64) {
         }
         nobody_before = front == Front::Nobody;
     }
+    left_with(last);
 }
 
 /// Omoio's own window came to the front. Over a game that fills the screen,
