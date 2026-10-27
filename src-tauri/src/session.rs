@@ -374,7 +374,9 @@ pub fn quiet_game(app: &AppHandle) {
         if !over && crate::backends::cemu::portal::making() {
             return;
         }
-        if portal {
+        // Over a game the menu isn't offered in, the window shows only why,
+        // so the emulator's portal window stays shut.
+        if portal && crate::portal_menu::note(&app).is_none() {
             backend.ready_portal(pid);
             // Cemu reads keys in whichever of its windows is active
             // (`CemuApp::FilterEvent`, CemuApp.cpp lines 389 to 409, v2.6),

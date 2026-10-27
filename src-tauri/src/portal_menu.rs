@@ -727,6 +727,18 @@ pub fn take_front(app: &AppHandle) {
     }
 }
 
+/// What the menu shows instead of itself over a Skylanders game it isn't
+/// offered in: the game page's own line (`figures::menu_note`). Its key and
+/// its pad button open it there too, and it closes as the menu does, but
+/// nothing is read from the portal or put on it, and the emulator's portal
+/// window isn't opened (`session::quiet_game`). `None` where the menu works,
+/// and while nothing runs.
+pub fn note(app: &AppHandle) -> Option<String> {
+    let playing = app.state::<Session>().playing()?;
+    let backend = crate::backends::for_console(playing.console)?;
+    figures::menu_note(backend.features(), playing.console, &playing.title)
+}
+
 /// Opens the menu from the Portal button over the running game, for a
 /// player whose pad Omoio can't read. Only in a game the menu works in, as
 /// the button shows only there. The window is made on the main thread, as
@@ -770,8 +782,9 @@ pub fn set_button(app: &AppHandle, place: &str) -> Result<(), String> {
 
 /// While a Skylanders game runs, the chosen button on any pad opens or
 /// closes the menu, and so does the menu key while Omoio or the game is in
-/// front. Read twenty times a second, since a press lasts about a tenth of
-/// one, and the choice is read again every two seconds so one made while
+/// front. In one the menu isn't offered in, the same window shows only why
+/// (`note`). Read twenty times a second, since a press lasts about a tenth
+/// of one, and the choice is read again every two seconds so one made while
 /// playing counts. It ends with the game and takes the menu with it.
 pub fn watch(app: AppHandle, pid: u32) {
     std::thread::spawn(move || {

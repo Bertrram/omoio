@@ -1992,6 +1992,22 @@ body {
   font-weight: 700;
 }
 
+/* ---- a game the menu isn't offered in ---- */
+
+/* Only the line the game's page shows and how to close, so the panel is no
+   bigger than that. */
+.portal-panel.portal-unavailable {
+  width: min(760px, 90vw);
+  height: auto;
+}
+
+.portal-unavailable-note {
+  margin: 0;
+  padding: 4px 28px 30px;
+  font-size: 22px;
+  line-height: 1.45;
+}
+
 /* ---- loading ---- */
 
 /* What the window shows the moment it opens the first time, while the menu

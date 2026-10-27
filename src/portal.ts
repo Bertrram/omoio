@@ -18,6 +18,7 @@ import {
   portalGame,
   portalMadeFigures,
   portalMenuFamily,
+  portalMenuNote,
   refreshCommunity,
   villains as listVillains,
   type BattleClass,
@@ -375,6 +376,10 @@ let chip = 0;
 /// Whether the menu has been filled once. Until then the page keeps the
 /// "Loading the portal" it was written with.
 let ready = false;
+/// Over a Skylanders game the menu isn't offered in, the line the game's
+/// page says it with, shown in place of the menu (portal_menu::note in
+/// src-tauri/src/portal_menu.rs). `null` where the menu works.
+let unavailable: string | null = null;
 /// The top half picked for a swapper, while waiting for its bottom.
 let pickedTop: { name: string; top: Offer } | null = null;
 /// Whether the running game takes the figures the emulator makes: in
@@ -2078,6 +2083,12 @@ function renderFoot(): HTMLElement {
   }
   const closing = !gettingPacks && !pickedTop;
   hints.push(["East", gettingPacks ? "Stop" : pickedTop ? "Back" : "Close"]);
+  foot.append(hintRow(hints, closing));
+  return foot;
+}
+
+/// The buttons and what each does. With `closing`, East closes the menu.
+function hintRow(hints: [string, string][], closing: boolean): HTMLElement {
   const row = node("div", "portal-hints");
   for (const [input, words] of hints) {
     const hint = node("span", "portal-hint");
@@ -2090,14 +2101,27 @@ function renderFoot(): HTMLElement {
     hint.append(words);
     row.appendChild(hint);
   }
-  foot.append(row);
-  return foot;
+  return row;
+}
+
+/// Over a game the menu isn't offered in, only why, and how to close.
+function renderUnavailable(note: string) {
+  const panel = node("div", "portal-panel portal-unavailable");
+  panel.setAttribute("role", "dialog");
+  panel.setAttribute("aria-label", "Portal");
+  const head = node("div", "portal-head");
+  head.appendChild(node("div", "portal-title", "Portal"));
+  const foot = node("div", "portal-foot");
+  foot.appendChild(hintRow([["East", "Close"]], true));
+  panel.append(head, node("p", "portal-unavailable-note", note), foot);
+  root.replaceChildren(panel);
 }
 
 /// Draws the whole menu again, keeping where the grid and tabs were
 /// scrolled so moving doesn't make the list jump.
 function render() {
   if (!ready) return;
+  if (unavailable) return renderUnavailable(unavailable);
   settle();
   const scrolled = root.querySelector(".portal-body")?.scrollTop ?? 0;
   const tabsScrolled = root.querySelector(".portal-tabs")?.scrollLeft ?? 0;
@@ -2758,6 +2782,11 @@ async function readPads(): Promise<Set<string>> {
 }
 
 function press(input: string) {
+  // Over a game the menu isn't offered in, only closing does anything.
+  if (unavailable) {
+    if (input === "East") void closePortalMenu();
+    return;
+  }
   // Anything else pressed lets go of a figure being held to delete it.
   if (holding && input !== "North") stopHold();
   const move = MOVES[input];
@@ -2938,6 +2967,15 @@ async function show() {
   notify(working);
   try {
     family = (await portalMenuFamily()) as PadFamily;
+    // Nothing is asked of the portal over a game the menu isn't offered in.
+    unavailable = await portalMenuNote().catch(() => null);
+    if (unavailable) {
+      held = await readPads();
+      shown = true;
+      ready = true;
+      render();
+      return;
+    }
     game = await portalGame().catch(() => null);
     made = await portalMadeFigures().catch(() => null);
     held = await readPads();

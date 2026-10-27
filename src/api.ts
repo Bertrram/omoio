@@ -1016,6 +1016,13 @@ export function portalGame(): Promise<SkylandersGame | null> {
   return invoke("portal_game");
 }
 
+/// What the menu shows instead of itself over a Skylanders game it isn't
+/// offered in: "The portal menu doesn't work in this version yet. It works
+/// in the PS3 version." `null` where it works.
+export function portalMenuNote(): Promise<string | null> {
+  return invoke("portal_menu_note");
+}
+
 /// Whether the running game takes the figures its emulator makes. Imaginators
 /// checks a factory signature on its own figures, which a made one can't
 /// carry, and a community pack, named in `pack`, takes that check away.

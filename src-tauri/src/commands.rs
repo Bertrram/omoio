@@ -1866,6 +1866,13 @@ pub fn portal_menu_family() -> String {
     crate::portal_menu::family()
 }
 
+/// What the menu shows instead of itself over a Skylanders game it isn't
+/// offered in. `None` where it works.
+#[tauri::command]
+pub fn portal_menu_note(app: AppHandle) -> Option<String> {
+    crate::portal_menu::note(&app)
+}
+
 /// The Skylanders game running now, so the menu lays itself out for it.
 /// `None` when nothing runs or the title doesn't say which game it is.
 #[tauri::command]
