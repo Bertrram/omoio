@@ -55,7 +55,8 @@ impl std::fmt::Display for Error {
             Self::EncryptedBy3k3y => {
                 write!(
                     f,
-                    "This disc image is encrypted the way a 3k3y drive writes it, which Omoio doesn't take. \n                     Import a decrypted image or the game's folder."
+                    "This disc image is encrypted the way a 3k3y drive writes it, which Omoio doesn't take. \
+                     Import a decrypted image or the game's folder."
                 )
             }
         }
@@ -143,10 +144,12 @@ fn find_image(picked: &Path) -> Option<PathBuf> {
 
 /// Whether the key file RPCS3 decrypts an image with is beside it: the
 /// image's own name ending .dkey, or .key, in its folder (Loader/ISO.cpp,
-/// `iso_file_decryption::check_type`, RPCS3/rpcs3 c365ea7, read 27 October
-/// 2026). Only its name is looked at. Omoio never opens it: RPCS3 does any
-/// decrypting.
-fn has_key_file(image: &Path) -> bool {
+/// `iso_file_decryption::check_type`, lines 458 to 493, RPCS3/rpcs3
+/// c365ea7, read 27 October 2026). RPCS3 also looks in a redump folder in
+/// its own data folder, which Omoio doesn't: the key file that came with a
+/// dump is kept beside it. Only its name is looked at. Omoio never opens
+/// it: RPCS3 does any decrypting.
+pub(crate) fn has_key_file(image: &Path) -> bool {
     ["dkey", "key"].iter().any(|extension| image.with_extension(extension).is_file())
 }
 
@@ -219,8 +222,11 @@ pub fn identify(picked: &Path) -> Result<Game, Error> {
 /// A PS3 disc image, kept where it is, as Wii and Wii U images are. One
 /// whose game files are still encrypted is taken only with its key file
 /// beside it, since without one RPCS3 refuses to boot it (Emu/System.cpp,
-/// `check_disc_key`). Whether that key is the right one only RPCS3 can say,
-/// by decrypting with it, which Omoio never does.
+/// `check_disc_key`, lines 1179 to 1197, RPCS3/rpcs3 c365ea7, read 27
+/// October 2026). A 3k3y image RPCS3 boots without one, by a key inside the
+/// image, but what Bertram allowed is an image with its key file (27
+/// October 2026), so Omoio doesn't take it. Whether a key file is the right
+/// one only RPCS3 can say, by decrypting with it, which Omoio never does.
 fn identify_image(image: &Path) -> Result<Game, Error> {
     let mut file = std::fs::File::open(image).map_err(|_| Error::UnreadableImage)?;
     if ps3_image::encrypted(&mut file) && !has_key_file(image) {

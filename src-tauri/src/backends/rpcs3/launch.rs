@@ -411,6 +411,22 @@ mod tests {
         let missing = "\u{b7}E 0:00:01.802354 SYS: The disc image 'E:/PS3/Spyro.iso' is encrypted and no matching decryption key was found in 'C:/rpcs3/data/redump/'";
         assert!(key_refusal(missing).is_some_and(|words| words.starts_with("This disc image is encrypted.")));
         assert_eq!(key_refusal("S SYS: Boot successful."), None);
+
+        // A key file is there, but RPCS3 couldn't read it.
+        let folder = std::env::temp_dir().join(format!("omoio-dkey-{}", std::process::id()));
+        std::fs::create_dir_all(&folder).unwrap();
+        let image = folder.join("Spyro.iso");
+        std::fs::write(&image, b"").unwrap();
+        std::fs::write(folder.join("Spyro.dkey"), b"").unwrap();
+        let unreadable = format!(
+            "\u{b7}E 0:00:01.802354 SYS: The disc image '{}' is encrypted and no matching decryption key was found in 'C:/rpcs3/data/redump/'",
+            image.display()
+        );
+        assert_eq!(
+            key_refusal(&unreadable),
+            Some("RPCS3 couldn't read the key file beside this disc image. Use the one that came with the dump.")
+        );
+        let _ = std::fs::remove_dir_all(&folder);
     }
 
     #[test]
@@ -551,15 +567,25 @@ pub fn refused_image(app: &AppHandle, since: std::time::SystemTime) -> Option<&'
     key_refusal(&this_run(&log, since))
 }
 
-/// The plain words for the two lines `check_disc_key` logs.
+/// The plain words for the two lines `check_disc_key` logs (Emu/System.cpp
+/// lines 1192 and 1197, RPCS3/rpcs3 c365ea7, read 27 October 2026). With a
+/// key file beside the image, the second means RPCS3 couldn't read that
+/// file: it takes only 16 bytes, or 32 hex digits (Loader/ISO.cpp,
+/// `iso_file_decryption::get_key`, lines 306 to 357).
 fn key_refusal(log: &str) -> Option<&'static str> {
+    const MISSING: &str = "' is encrypted and no matching decryption key was found";
     if log.contains("does not decrypt it: it belongs to another disc") {
         Some("RPCS3 couldn't read this disc image. The key file beside it is for another disc.")
-    } else if log.contains("is encrypted and no matching decryption key was found") {
-        Some(
-            "This disc image is encrypted. RPCS3 needs the key file that came with the dump, \
-             named like the image and ending .dkey, in the same folder.",
-        )
+    } else if let Some(at) = log.find(MISSING) {
+        let image = log[..at].rfind("The disc image '").map(|start| &log[start + "The disc image '".len()..at]);
+        if image.is_some_and(|image| crate::import::has_key_file(Path::new(image))) {
+            Some("RPCS3 couldn't read the key file beside this disc image. Use the one that came with the dump.")
+        } else {
+            Some(
+                "This disc image is encrypted. RPCS3 needs the key file that came with the dump, \
+                 named like the image and ending .dkey, in the same folder.",
+            )
+        }
     } else {
         None
     }

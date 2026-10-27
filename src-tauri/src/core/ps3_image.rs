@@ -1,6 +1,6 @@
 //! A PS3 disc image (.iso), told apart from any other ISO by the rules
-//! RPCS3 boots one by, so Omoio never imports an image RPCS3 then can't
-//! start, and read where it lies through its ISO 9660 file system
+//! RPCS3 boots one by, so Omoio doesn't import an image RPCS3 then refuses
+//! for its shape, and read where it lies through its ISO 9660 file system
 //! (core/iso9660.rs).
 //!
 //! RPCS3's rules, from Loader/ISO.cpp (RPCS3/rpcs3 c365ea7, the source of
@@ -10,8 +10,13 @@
 //! (`iso_file_decryption::init`), the regions alternating plain and
 //! encrypted; and a disc boots only with a PS3_DISC.SFB that begins ".SFB"
 //! and PS3_GAME's PARAM.SFO (Emu/System.cpp, `Emulator::Load` and
-//! `IsValidSfb`). The file system and PARAM.SFO lie in the first, plain
-//! region, as RPCS3 reads them before any key is set up (`iso_archive`).
+//! `IsValidSfb`). The file system lies in the first, plain region, as
+//! RPCS3 reads it before any key is set up (`iso_archive`, ISO.cpp lines
+//! 1328 to 1366). PARAM.SFO most likely lies in a plain region too, as two
+//! tools read it from encrypted images without a key (LibIRD, IRD.cs lines
+//! 650 to 680, Deterous/LibIRD 1f103eb; opticaldiscs-rs, gameid.rs lines
+//! 238 to 242, danifunker/opticaldiscs-rs 3e4f414). An image where it
+//! doesn't is refused as unreadable.
 //! An image with more than one region still needs its key when LIC.DAT or
 //! EBOOT.BIN doesn't begin as it does in the clear, "PS3LICDA" and "SCE"
 //! (`read_magic_blocks`, `is_any_block_encrypted`,
