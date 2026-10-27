@@ -38,6 +38,9 @@ struct Running {
     started: std::time::Instant,
     /// Set by Stop, so a session we ended is never reported as a crash.
     stopped_by_us: bool,
+    /// What Omoio did to the game's emulator or its windows on its own, with
+    /// when, for the log kept of the game.
+    notes: Vec<String>,
 }
 
 impl Session {
@@ -50,7 +53,18 @@ impl Session {
             hidden: false,
             started: std::time::Instant::now(),
             stopped_by_us: false,
+            notes: Vec::new(),
         });
+    }
+
+    /// Writes down something Omoio did on its own, with how far into the
+    /// game it was, so the log a player sends shows it beside the
+    /// emulator's own lines.
+    pub fn note(&self, what: &str) {
+        if let Some(running) = self.inner.lock().unwrap().as_mut() {
+            let at = running.started.elapsed().as_secs();
+            running.notes.push(format!("Omoio, {}:{:02} into the game: {what}", at / 60, at % 60));
+        }
     }
 
     pub fn is_hidden(&self) -> bool {
@@ -151,8 +165,8 @@ impl Session {
         }
     }
 
-    fn end(&self) -> Option<Playing> {
-        self.inner.lock().unwrap().take().map(|r| r.playing)
+    fn end(&self) -> Option<(Playing, Vec<String>)> {
+        self.inner.lock().unwrap().take().map(|r| (r.playing, r.notes))
     }
 
     /// Ends the game if one is running. An emulator that writes out what it
@@ -251,14 +265,16 @@ pub fn watch(app: AppHandle, pid: u32) {
                     .started_at()
                     .map(|s| s.elapsed().as_secs())
                     .unwrap_or(0);
-                let playing = session.end();
-                if let Some(playing) = playing {
+                let ended = session.end();
+                if let Some((playing, mut notes)) = ended {
                     // Cemu says why it won't start a game only in a message,
                     // which Omoio read and closed (backends::cemu::start_errors).
                     let refused = crate::backends::cemu::start_errors::take(pid);
-                    let notes = crate::backends::for_console(playing.console)
-                        .map(|backend| backend.session_notes(pid))
-                        .unwrap_or_default();
+                    notes.extend(
+                        crate::backends::for_console(playing.console)
+                            .map(|backend| backend.session_notes(pid))
+                            .unwrap_or_default(),
+                    );
                     keep_session_log(&app, &playing, seconds, stopped_by_us, refused.as_ref(), &notes);
                     if let Some(refused) = refused {
                         let _ = app.emit("game-refused", refused.shown);
@@ -313,6 +329,7 @@ pub fn watch(app: AppHandle, pid: u32) {
                 if !attached && !refused && looks % 5 == 0 {
                     if let Some(why) = backend.and_then(|backend| backend.refused_start(&app, since)) {
                         refused = true;
+                        session.note(&format!("stopped the emulator, which said it won't start the game: {why}"));
                         let _ = app.emit("game-refused", why);
                         session.stop();
                     }
