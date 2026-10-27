@@ -149,7 +149,7 @@ export async function renderSettings(): Promise<View> {
     toggle(settings.start_in_big_picture, (next) => setStartInBigPicture(next))
   );
 
-  const games = row("Games folder", "Where archives are unpacked. Games imported as folders stay where they are.");
+  const games = row("Games folder", "Where archives are unpacked. Games imported as folders or disc images stay where they are.");
   const folderValue = value(places.games_folder ?? "Not chosen yet");
   folderValue.classList.add("path");
   games.right.append(

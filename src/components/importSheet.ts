@@ -20,10 +20,10 @@ import {
 } from "../api";
 import { store } from "../state";
 
-/// Disc images, which are played where they are: the Wii U's, which Cemu
-/// reads with the user's keys, and the Wii's and GameCube's, which Dolphin
-/// reads (backends/dolphin/disc.rs). A .bin picked here is one only when its
-/// header says so.
+/// Disc images, which are played where they are: the PS3's, which RPCS3
+/// boots, the Wii U's, which Cemu reads with the user's keys, and the Wii's
+/// and GameCube's, which Dolphin reads (backends/dolphin/disc.rs). A .bin
+/// picked here is one only when its header says so.
 const DISC_IMAGES = ["wud", "wux", "iso", "gcm", "wbfs", "rvz", "wia", "gcz", "ciso", "tgc", "bin"];
 
 function formatGB(bytes: number): string {
@@ -82,7 +82,7 @@ function sheet(dropped?: string[]): void {
     busy = false;
     sheet.innerHTML = `
       <div class="sheet-h">Import a game</div>
-      <div class="sheet-p">Point Omoio at a folder you've already unpacked, a .7z or .zip archive, a Wii&nbsp;U .wua, or a Wii&nbsp;U, Wii or GameCube disc image.</div>
+      <div class="sheet-p">Point Omoio at a folder you've already unpacked, a .7z or .zip archive, a Wii&nbsp;U .wua, or a PS3, Wii&nbsp;U, Wii or GameCube disc image.</div>
       ${note ? `<div class="notice" style="margin-top:16px">${note}</div>` : ""}
       <div class="sheet-actions">
         <button class="btn ghost" id="pick-folder">Choose a folder</button>

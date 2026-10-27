@@ -157,7 +157,7 @@ file is read as it is. A Wii U or Wii disc image can't be read as it is, so
 Omoio asks first, then has the emulator make a temporary copy, reads the
 pictures from it and deletes it again: Cemu makes it for a Wii U game, and
 Dolphin's own DolphinTool for a Wii game. Omoio never decrypts anything itself.
-It says how much room the copy needs for the few minutes it takes. For a PS3 game it reads the game's folder. A small
+It says how much room the copy needs for the few minutes it takes. For a PS3 game it reads the game's folder, and a disc image doesn't give pictures yet. A small
 separate program, [omoio-portraits](https://github.com/Bertrram/omoio-portraits), does the reading.
 Omoio downloads it only when you ask and checks it before it runs. The pictures
 stay on your computer, and the screenshots above show them as they look once
@@ -248,6 +248,18 @@ info, then Run anyway.
 
 From Sony. Omoio opens Sony's official firmware page, you download the file, and
 Omoio installs the one you pick. It never fetches firmware by itself.
+
+</details>
+
+<details>
+<summary>What do PS3 games need?</summary>
+<br>
+
+A disc game's folder with PS3_GAME inside, or an installed game's folder. A
+.zip or .7z of one works too, and so does a disc image (.iso), which Omoio
+plays where it is. An encrypted image needs the .dkey file that came with the
+dump, named like the image and in the same folder. RPCS3 reads the key, and
+Omoio never supplies one.
 
 </details>
 
@@ -398,7 +410,8 @@ lot.
 
 Omoio doesn't come with games and won't help you find any, so bring your own
 dumps of games you own. It doesn't crack anything: Wii U disc images need your
-own keys file, and Cemu does the decrypting, as Dolphin does for Wii discs. PS3 firmware comes from Sony's page,
+own keys file, and Cemu does the decrypting, as Dolphin does for Wii discs and RPCS3 for
+an encrypted PS3 disc image with the .dkey that came with it. PS3 firmware comes from Sony's page,
 downloaded by you. Covers come only from RAWG or your own games and saves, and the
 Skylanders pictures only from your own copy of the game. Omoio has no connection with Activision, who
 publish Skylanders. RPCS3, Cemu and Dolphin are separate projects, and all
