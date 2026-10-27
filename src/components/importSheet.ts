@@ -132,7 +132,8 @@ function sheet(dropped?: string[]): void {
 
   /// One game's warning, filled in by text so a game's own name never goes
   /// through innerHTML. A Skylanders game the portal menu doesn't work in
-  /// says that first, then how its emulator rates it, if that is said.
+  /// says that first, then how its emulator rates it and any problem it is
+  /// known to have, if those are said.
   function warningItem(warning: ImportWarning): HTMLElement {
     const item = document.createElement("li");
     item.className = "warn-item";
@@ -141,7 +142,7 @@ function sheet(dropped?: string[]): void {
     `;
     item.querySelector<HTMLElement>(".warn-item-name")!.textContent = warning.title;
     item.querySelector<HTMLElement>(".warn-item-console")!.textContent = warning.console_name;
-    for (const said of [warning.portal, warning.rating, warning.figures]) {
+    for (const said of [warning.portal, warning.rating, warning.problem, warning.figures]) {
       if (!said) continue;
       const line = document.createElement("div");
       line.className = "warn-item-p";
@@ -162,7 +163,7 @@ function sheet(dropped?: string[]): void {
   /// only what its made figures need.
   function kicker(warnings: ImportWarning[]): string {
     if (warnings.every((warning) => warning.portal)) return "Not supported in Omoio yet";
-    if (warnings.some((warning) => warning.rating)) return "May not run well";
+    if (warnings.some((warning) => warning.rating || warning.problem)) return "May not run well";
     if (warnings.some((warning) => warning.portal)) return "Not supported in Omoio yet";
     return "Good to know";
   }
@@ -190,7 +191,7 @@ function sheet(dropped?: string[]): void {
     sheet.querySelector<HTMLElement>("#warn-title")!.textContent = warning.title;
     sheet.querySelector<HTMLElement>(".warn-console")!.textContent = warning.console_name;
     const said = sheet.querySelector<HTMLElement>("#warn-said")!;
-    for (const words of [warning.portal, warning.rating, warning.figures]) {
+    for (const words of [warning.portal, warning.rating, warning.problem, warning.figures]) {
       if (!words) continue;
       const line = document.createElement("div");
       line.className = "sheet-p warn-rating";

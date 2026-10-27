@@ -8,12 +8,14 @@
 //!
 //! A Skylanders game the portal menu doesn't work in is warned about
 //! whatever its rating: without figures on the portal it can't really be
-//! played.
+//! played. So is a game with a known problem on its console (`problems`),
+//! which a rating doesn't name.
 
 use crate::core::catalogue::{fold, same_game, tone_rank, Entry, Status};
 use crate::core::console::Console;
 use crate::core::figures::{self, has_portal_menu, portal_menu_elsewhere, versions};
 use crate::core::library::Game;
+use crate::core::problems;
 use crate::core::tested::tested;
 use serde::Serialize;
 
@@ -146,6 +148,11 @@ pub struct Warning {
     /// end." Empty when it plays well, has been played in Omoio, or nobody
     /// has rated it, which only a portal warning leaves.
     pub rating: String,
+    /// A problem the game is known to have on this console, from its public
+    /// report: "In RPCS3 the picture can freeze at random while the sound
+    /// plays on. The Wii version runs better." Said after the rating. Empty
+    /// for a game with none.
+    pub problem: String,
     /// "The Wii U version is rated Playable in Cemu.", or "The Wii U version
     /// runs well in Omoio." for one on the tested list. With a portal
     /// warning, where the menu works instead: "The portal menu works in the
@@ -158,14 +165,16 @@ pub struct Warning {
 }
 
 /// The warning for a Skylanders game the portal menu doesn't work in, for
-/// Imaginators, whose made figures need saying, or for a game whose own
-/// emulator rates it below playing well. `None` when none of these: it
-/// plays well, has been played in Omoio, or nobody has rated it.
+/// Imaginators, whose made figures need saying, for a game with a known
+/// problem on its console, or for a game whose own emulator rates it below
+/// playing well. `None` when none of these: it plays well, has been played
+/// in Omoio, or nobody has rated it.
 pub fn warning(game: &Imported, lists: &[List]) -> Option<Warning> {
     let portal = portal_warning(game);
     let rated = rated(game, lists);
     let figures = figures::made_figures_note(game.console, &game.title).unwrap_or_default();
-    if portal.is_none() && rated.is_none() && figures.is_empty() {
+    let problem = problems::known(game.console, &game.title).map_or("", |known| known.says);
+    if portal.is_none() && rated.is_none() && figures.is_empty() && problem.is_empty() {
         return None;
     }
     let (rating, better) = rated.unwrap_or_default();
@@ -181,6 +190,7 @@ pub fn warning(game: &Imported, lists: &[List]) -> Option<Warning> {
         console_name: game.console.short(),
         portal,
         rating,
+        problem: problem.to_string(),
         better,
         figures: figures.to_string(),
     })
@@ -426,7 +436,7 @@ mod tests {
 
     #[test]
     fn a_skylanders_game_with_the_portal_menu_gets_no_portal_warning() {
-        assert_eq!(warning(&ps3_game("BLES02055", "Skylanders Trap Team"), &lists()), None);
+        assert_eq!(warning(&ps3_game("BLES02055", "Skylanders Trap Team"), &lists()).unwrap().portal, "");
         assert_eq!(warning(&wii_u_game("Skylanders SuperChargers"), &lists()), None);
         assert_eq!(warning(&ps3_game("BLES01689", "Skylanders Giants"), &[]), None);
         // Spyro's Adventure on the PS3 has the menu, and is warned of its
@@ -434,6 +444,43 @@ mod tests {
         let spyro = warning(&ps3_game("BLES01272", "Skylanders Spyro's Adventure"), &lists()).unwrap();
         assert_eq!(spyro.portal, "");
         assert!(spyro.rating.starts_with("RPCS3 rates it Ingame"));
+    }
+
+    /// Trap Team on the PS3 came off the tested list on 27 October 2026,
+    /// since it runs with drops and lag in RPCS3. Its portal menu stays.
+    #[test]
+    fn trap_team_on_the_ps3_is_warned_as_rpcs3_rates_it_and_names_the_wii_u_version() {
+        let trap_team = warning(&ps3_game("BLES02055", "Skylanders Trap Team"), &lists()).unwrap();
+        assert_eq!(trap_team.rating, "RPCS3 rates it Ingame: it starts, but you may hit problems before the end.");
+        assert_eq!(
+            trap_team.better,
+            "The Wii U version is rated Playable in Cemu, and the portal menu works in it."
+        );
+        assert!(has_portal_menu(Console::Ps3, "Skylanders Trap Team"));
+
+        // With the Wii U's list not rating it, the tested list speaks for it.
+        let lists = vec![
+            List::new(Console::Ps3, "RPCS3", vec![ps3("BLES02055", "Skylanders Trap Team", "Ingame")]),
+            List::new(Console::WiiU, "Cemu", vec![wii_u("Skylanders: Trap Team", "", &[])]),
+        ];
+        let unrated = warning(&ps3_game("BLES02055", "Skylanders Trap Team"), &lists).unwrap();
+        assert_eq!(unrated.better, "The Wii U version runs well in Omoio, and the portal menu works in it.");
+    }
+
+    /// RPCS3 issue 13844: Spyro's Adventure freezes at random on the PS3.
+    #[test]
+    fn a_known_problem_is_said_with_the_rest_of_the_warning() {
+        let freezes = "In RPCS3 the picture can freeze at random while the sound plays on. The Wii version runs better.";
+        let spyro = warning(&ps3_game("BLUS30779", "Skylanders Spyro's Adventure"), &lists()).unwrap();
+        assert!(spyro.rating.starts_with("RPCS3 rates it Ingame"));
+        assert_eq!(spyro.problem, freezes);
+        // Said with no list kept as well, where there is nothing else to say.
+        let unrated = warning(&ps3_game("BLUS30779", "Skylanders Spyro's Adventure"), &[]).unwrap();
+        assert_eq!((unrated.portal.as_str(), unrated.rating.as_str(), unrated.problem.as_str()), ("", "", freezes));
+        // The Wii's has none, and neither has any other game.
+        let wii = Imported { console: Console::Wii, title_id: "SSPP52".into(), title: "Skylanders Spyro's Adventure".into() };
+        assert_eq!(warning(&wii, &lists()), None);
+        assert_eq!(warning(&ps3_game("BLES02055", "Skylanders Trap Team"), &lists()).unwrap().problem, "");
     }
 
     #[test]
@@ -473,7 +520,6 @@ mod tests {
         assert_eq!(warning(&wii_u_game("Skylanders - Swap Force"), &lists()), None);
         assert_eq!(warning(&wii_u_game("Skylanders - Trap Team"), &lists()), None);
         assert_eq!(warning(&ps3_game("BLES01860", "Skylanders SWAP Force"), &lists()), None);
-        assert_eq!(warning(&ps3_game("BLES02055", "Skylanders Trap Team"), &lists()), None);
     }
 
     #[test]

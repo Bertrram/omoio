@@ -130,6 +130,10 @@ export interface ImportWarning {
   /// "RPCS3 rates it Ingame: it starts, but you may hit problems before the
   /// end." Empty when only the portal is warned about.
   rating: string;
+  /// A problem the game is known to have on this console: "In RPCS3 the
+  /// picture can freeze at random while the sound plays on. The Wii version
+  /// runs better." Empty for a game with none.
+  problem: string;
   /// "The Wii U version is rated Playable in Cemu.", or with a portal
   /// warning "The portal menu works in the Wii U version." Empty when there
   /// is no such version.

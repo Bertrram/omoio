@@ -36,13 +36,12 @@ pub const TESTED: &[Tested] = &[
         reason: "Tested by Bertram on 7 October 2026: swappers went on at once. RPCS3's list \
                  rates it Ingame from 2021.",
     },
-    Tested {
-        console: Console::Ps3,
-        title: "Skylanders Trap Team",
-        reason: "Tested by Bertram on 7 October 2026: figures and traps went on at once, and a \
-                 villain he trapped showed in the Villains tab. RPCS3's list rates it Ingame \
-                 from 2020.",
-    },
+    // Trap Team on the PS3 was here from 7 October 2026, when its figures and
+    // traps went on at once. It came off on 27 October: it is very unstable in
+    // RPCS3, where a player had drops and lag on a Ryzen 7 5800X and an RTX
+    // 4060 with a clean log and RPCS3's defaults (reported on Discord), while
+    // the Wii U version runs without problems (Bertram). So it is warned about
+    // as RPCS3's Ingame says, and the warning names the Wii U version.
     Tested {
         console: Console::WiiU,
         title: "Skylanders Imaginators",
