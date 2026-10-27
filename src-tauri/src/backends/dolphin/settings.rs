@@ -53,9 +53,31 @@ pub const EVERY_GAME: [(&str, &str, &str); 10] = [
     ("Interface", "UsePanicHandlers", "False"),
 ];
 
+/// GFX.ini's settings for every game, set before each one.
+///
+/// - Full screen is borderless, never exclusive (`BorderlessFullscreen`,
+///   Core/Config/GraphicsSettings.cpp lines 97 to 98). Omoio covers the
+///   screen with the game's window itself, in its full screen and in Big
+///   Picture, and Qt then takes the window for a full screen one by its
+///   size alone (`QWindowsWindow::handleWmSize` and `isFullScreen_sys`,
+///   qwindowswindow.cpp lines 2254 to 2263 and 2608 to 2618, Qt 6.8.3).
+///   Dolphin answers that with exclusive full screen on D3D11, its first
+///   choice on Windows (`Host::SetRenderFullscreen`, DolphinQt/Host.cpp
+///   lines 173 to 181; `ExclusiveFullscreenEnabled`, VideoCommon/
+///   VideoConfig.h lines 367 to 370), and from then on pauses the game to
+///   go in or out of that mode each time its window gains or loses the
+///   front (`Host::SetRenderFocus`, Host.cpp lines 137 to 147, pausing
+///   through `RunWithGPUThreadInactive`, lines 79 to 117), which the portal
+///   menu and Alt+Tab both make it do. Borderless, it neither pauses nor
+///   switches, and the picture is the same. Read in the source on 27 October
+///   2026 after players reported the game lagging after the menu and
+///   Dolphin closing on Alt+Tab; not yet tried.
+pub const EVERY_GAME_GRAPHICS: [(&str, &str, &str); 1] = [("Settings", "BorderlessFullscreen", "True")];
+
 /// Dolphin.ini, with what a game needs set: `EVERY_GAME`, and the Skylanders
 /// portal plugged in for a Skylanders game only, with Omoio's figures folder
-/// as the place Dolphin's own portal window looks for figures first.
+/// as the place Dolphin's own portal window looks for figures first. And
+/// GFX.ini with `EVERY_GAME_GRAPHICS`.
 pub fn prepare(config: &Path, skylanders: bool, figures: &Path) -> std::io::Result<()> {
     let figures = figures.to_string_lossy();
     let portal = if skylanders { "True" } else { "False" };
@@ -64,7 +86,8 @@ pub fn prepare(config: &Path, skylanders: bool, figures: &Path) -> std::io::Resu
     if skylanders {
         values.push(("General", "SkylandersCollectionPath", &figures));
     }
-    ini::update(&config.join("Dolphin.ini"), &values)
+    ini::update(&config.join("Dolphin.ini"), &values)?;
+    ini::update(&config.join("GFX.ini"), &EVERY_GAME_GRAPHICS)
 }
 
 /// What Omoio sets in `[Interface]` while a player is on the keyboard and
@@ -278,6 +301,18 @@ CursorVisibility = 1
         prepare(&dir, true, Path::new("C:\\Figures")).unwrap();
         let text = std::fs::read_to_string(dir.join("Dolphin.ini")).unwrap();
         assert_eq!(ini::get(&text, "Interface", "UsePanicHandlers").as_deref(), Some("False"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn full_screen_is_borderless_and_the_resolution_kept() {
+        let dir = std::env::temp_dir().join(format!("omoio-dolphin-borderless-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("GFX.ini"), "[Settings]\r\nInternalResolution = 3\r\n").unwrap();
+        prepare(&dir, true, Path::new("C:\\Figures")).unwrap();
+        let text = std::fs::read_to_string(dir.join("GFX.ini")).unwrap();
+        assert_eq!(ini::get(&text, "Settings", "BorderlessFullscreen").as_deref(), Some("True"));
+        assert_eq!(ini::get(&text, "Settings", "InternalResolution").as_deref(), Some("3"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
