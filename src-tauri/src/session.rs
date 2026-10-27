@@ -28,6 +28,14 @@ pub struct Session {
     inner: Mutex<Option<Running>>,
 }
 
+/// A session as it ended, for the log kept of it.
+struct Ended {
+    playing: Playing,
+    notes: Vec<String>,
+    seconds: u64,
+    stopped_by_us: bool,
+}
+
 struct Running {
     pid: u32,
     playing: Playing,
@@ -109,9 +117,14 @@ impl Session {
     /// The game's window and its emulator, while the window is on the
     /// screen.
     pub(crate) fn shown(&self) -> Option<(isize, u32)> {
-        let inner = self.inner.lock().unwrap();
-        let running = inner.as_ref().filter(|r| !r.hidden)?;
-        Some((running.window?, running.pid))
+        let (window, pid) = {
+            let inner = self.inner.lock().unwrap();
+            let running = inner.as_ref().filter(|r| !r.hidden)?;
+            (running.window?, running.pid)
+        };
+        // A window that has gone, while `watch` waits to see whether another
+        // comes (`GAME_GONE`), is given nothing: every hand-over to it fails.
+        overlay::exists(window).then_some((window, pid))
     }
 
     /// Puts the game picture back, and with `activate` gives it the keyboard.
@@ -127,14 +140,6 @@ impl Session {
         if let Some(window) = window {
             overlay::show(window, activate);
         }
-    }
-
-    fn started_at(&self) -> Option<std::time::Instant> {
-        self.inner.lock().unwrap().as_ref().map(|r| r.started)
-    }
-
-    fn was_stopped_by_us(&self) -> bool {
-        self.inner.lock().unwrap().as_ref().is_some_and(|r| r.stopped_by_us)
     }
 
     pub fn playing(&self) -> Option<Playing> {
@@ -165,8 +170,20 @@ impl Session {
         }
     }
 
-    fn end(&self) -> Option<(Playing, Vec<String>)> {
-        self.inner.lock().unwrap().take().map(|r| (r.playing, r.notes))
+    /// Ends the session of the game started as `pid`, and only that one,
+    /// under one lock: its watcher waits on tasklist between its look at the
+    /// pid and this, and a game started meanwhile keeps its own session.
+    fn end(&self, pid: u32) -> Option<Ended> {
+        let mut inner = self.inner.lock().unwrap();
+        if inner.as_ref().map(|r| r.pid) != Some(pid) {
+            return None;
+        }
+        inner.take().map(|r| Ended {
+            seconds: r.started.elapsed().as_secs(),
+            stopped_by_us: r.stopped_by_us,
+            playing: r.playing,
+            notes: r.notes,
+        })
     }
 
     /// Ends the game if one is running. An emulator that writes out what it
@@ -263,13 +280,7 @@ pub fn watch(app: AppHandle, pid: u32) {
 
             if !still_running(pid) {
                 // Read the log before anything else can overwrite it.
-                let stopped_by_us = session.was_stopped_by_us();
-                let seconds = session
-                    .started_at()
-                    .map(|s| s.elapsed().as_secs())
-                    .unwrap_or(0);
-                let ended = session.end();
-                if let Some((playing, mut notes)) = ended {
+                if let Some(Ended { playing, mut notes, seconds, stopped_by_us }) = session.end(pid) {
                     // Cemu says why it won't start a game only in a message,
                     // which Omoio read and closed (backends::cemu::start_errors).
                     let refused = crate::backends::cemu::start_errors::take(pid);
@@ -492,6 +503,13 @@ pub fn quiet_game(app: &AppHandle) {
 /// else is a program the player went to, which Omoio never takes the front
 /// from.
 pub(crate) fn front_is_ours(pid: u32) -> bool {
+    if overlay::front() != 0 {
+        return overlay::front_belongs_to(&[std::process::id(), pid]);
+    }
+    // Nobody is in front for a moment on the way to another program too, so
+    // nobody counts only when it is still nobody a look later, as
+    // `next_step` has it.
+    std::thread::sleep(LOOK_EVERY);
     overlay::front() == 0 || overlay::front_belongs_to(&[std::process::id(), pid])
 }
 

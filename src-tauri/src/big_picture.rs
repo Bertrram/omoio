@@ -82,7 +82,10 @@ pub fn resume(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         crate::session::place(&window, &session);
     }
-    session.show_game(true);
+    // Shown without taking the front, which the hand-over then gives the
+    // game only from Omoio, the emulator or nobody: a player who went to
+    // another program in the moment before keeps it.
+    session.show_game(false);
     crate::session::give_game_front(app);
     crate::session::quiet_game(app);
     tell(app);

@@ -1962,7 +1962,12 @@ pub async fn portal_made_figures(app: AppHandle) -> crate::core::community::Made
 /// windows count as Omoio's, since the one that keeps Cemu from hearing the
 /// pad can be in front for a moment.
 #[tauri::command]
-pub fn pads_held(app: AppHandle) -> Vec<&'static str> {
+pub fn pads_held(app: AppHandle, window: tauri::Window) -> Vec<&'static str> {
+    // The portal menu's page lives on hidden between opens, and one hidden
+    // before it heard so would otherwise act on presses made in the game.
+    if window.label() == "portal" && !crate::portal_menu::showing(&app) {
+        return Vec::new();
+    }
     let mut ours = vec![std::process::id()];
     ours.extend(app.state::<Session>().pid());
     if !crate::backends::rpcs3::overlay::front_belongs_to(&ours) {
