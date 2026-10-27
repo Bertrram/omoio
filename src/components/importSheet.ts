@@ -351,6 +351,9 @@ function sheet(dropped?: string[]): void {
           ? "1 game added."
           : `${result.added} games added.`,
       result.already_there > 0 ? `${result.already_there} already in your library.` : "",
+      result.encrypted === 0
+        ? ""
+        : `${result.encrypted === 1 ? "1 disc image was" : `${result.encrypted} disc images were`} left out: encrypted, and RPCS3 needs the key file that came with each dump beside it, named like the image and ending .dkey.`,
       result.cancelled ? "Stopped early." : "",
     ].filter(Boolean);
     if (result.warnings.length > 0) {
@@ -360,7 +363,7 @@ function sheet(dropped?: string[]): void {
     sheet.innerHTML = `
       <div class="sheet-h">${result.added > 0 ? "Games added" : "Nothing new"}</div>
       <div class="sheet-p">${
-        result.added === 0 && result.already_there === 0 && !result.cancelled
+        result.added === 0 && result.already_there === 0 && result.encrypted === 0 && !result.cancelled
           ? "No games were found in that folder."
           : lines.join(" ")
       }</div>
@@ -425,11 +428,17 @@ function sheet(dropped?: string[]): void {
   /// still leaves everything before it in the library. One game gets its
   /// warning before it is imported; several are not stopped for one by one,
   /// and what may not run well is said once at the end, as a scan does.
-  async function runDropped(paths: string[]) {
+  async function runDropped(dropped: string[]) {
     // Anything that is not an archive goes to the emulators to read, so a
     // file they cannot take gets their reason rather than a general one.
     const kindOf = async (path: string) =>
       (await droppedKind(path)) === "archive" ? ("archive" as const) : ("other" as const);
+    // A PS3 disc image's key file dropped with it is no game of its own: it
+    // only has to sit beside the image, which RPCS3 reads it from.
+    const keyFile = /\.(dkey|key)$/i;
+    const paths = dropped.length > 1 && dropped.some((path) => !keyFile.test(path))
+      ? dropped.filter((path) => !keyFile.test(path))
+      : dropped;
 
     if (paths.length === 1) {
       const kind = await kindOf(paths[0]);

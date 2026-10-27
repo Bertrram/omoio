@@ -341,6 +341,12 @@ impl Drop for Copying {
 /// temporary copy first, once `copy` says the user agreed to it, and the
 /// copy is deleted again whatever happens.
 pub async fn get(app: AppHandle, backend: &'static dyn EmulatorBackend, game: Game, copy: bool) -> Result<Got, String> {
+    // The reader takes a PS3 game's folder only, and is fetched for nothing
+    // when the game is a disc image (backends/rpcs3, `readable_copy`).
+    if game.console == crate::core::console::Console::Ps3 && crate::import::is_image(&game.path) {
+        return Err("Pictures can't be read from a PS3 disc image yet. A game imported as its folder gives them."
+            .to_string());
+    }
     let reader = reader(&app).await?;
     let folder = folder(&app, &game.title_id)?;
     tauri::async_runtime::spawn_blocking(move || {

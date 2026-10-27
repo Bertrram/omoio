@@ -24,7 +24,7 @@ fn eboot_path(root: &Path) -> Option<PathBuf> {
 /// installed update.
 fn games_list_line(title_id: &str, root: &Path) -> String {
     let mut path = root.to_string_lossy().replace('\\', "/");
-    if !path.ends_with('/') && !crate::import::is_image_name(root) {
+    if !path.ends_with('/') && !crate::import::is_image(root) {
         path.push('/');
     }
     // Windows forbids quotes and backslashes in names, so the quoted form needs
@@ -301,7 +301,7 @@ pub fn launch(app: &AppHandle, game: &Game) -> Result<u32, String> {
     // RPCS3 boots a disc image itself: it mounts it as the disc and starts
     // PS3_GAME's EBOOT.BIN from it (Emu/System.cpp, `Emulator::Load`,
     // RPCS3/rpcs3 c365ea7, read 27 October 2026).
-    let boot = if crate::import::is_image_name(&game.path) {
+    let boot = if crate::import::is_image(&game.path) {
         if !game.path.is_file() {
             return Err("This game isn't where it was. Reconnect the drive it's on.".to_string());
         }

@@ -23,6 +23,8 @@ pub enum Error {
     /// A disc image whose game files are still encrypted, with no key file
     /// beside it for RPCS3.
     EncryptedImage,
+    /// A disc image a 3k3y drive wrote encrypted, with no key file beside it.
+    EncryptedBy3k3y,
 }
 
 impl std::fmt::Display for Error {
@@ -48,6 +50,12 @@ impl std::fmt::Display for Error {
                     f,
                     "This disc image is encrypted. RPCS3 needs the key file that came with the dump, \
                      named like the image and ending .dkey, in the same folder."
+                )
+            }
+            Self::EncryptedBy3k3y => {
+                write!(
+                    f,
+                    "This disc image is encrypted the way a 3k3y drive writes it, which Omoio doesn't take. \n                     Import a decrypted image or the game's folder."
                 )
             }
         }
@@ -86,7 +94,7 @@ fn icon_path(root: &Path) -> Option<PathBuf> {
 /// The tile art of a dump or a disc image, read out of the image where it
 /// lies.
 pub fn icon(game: &Path) -> Option<Vec<u8>> {
-    if is_image_name(game) {
+    if is_image(game) {
         return ps3_image::icon(&mut std::fs::File::open(game).ok()?);
     }
     std::fs::read(icon_path(game)?).ok()
@@ -97,6 +105,13 @@ pub fn icon(game: &Path) -> Option<Vec<u8>> {
 /// known for one.
 pub fn is_image_name(path: &Path) -> bool {
     path.extension().is_some_and(|extension| extension.eq_ignore_ascii_case("iso"))
+}
+
+/// Whether a game's path is a disc image: named as one and not a folder, as
+/// a game's folder can be, say "Game.iso" unpacked from "Game.iso.7z". One on
+/// a drive that isn't plugged in is still told by its name.
+pub fn is_image(path: &Path) -> bool {
+    is_image_name(path) && !path.is_dir()
 }
 
 /// Whether a file is a PS3 disc image RPCS3 boots (core/ps3_image.rs). A
@@ -209,6 +224,10 @@ pub fn identify(picked: &Path) -> Result<Game, Error> {
 fn identify_image(image: &Path) -> Result<Game, Error> {
     let mut file = std::fs::File::open(image).map_err(|_| Error::UnreadableImage)?;
     if ps3_image::encrypted(&mut file) && !has_key_file(image) {
+        // A 3k3y dump came with no key file, so it isn't asked for one.
+        if ps3_image::encrypted_by_3k3y(&mut file) {
+            return Err(Error::EncryptedBy3k3y);
+        }
         return Err(Error::EncryptedImage);
     }
     let bytes = ps3_image::param_sfo(&mut file).ok_or(Error::UnreadableImage)?;
@@ -635,6 +654,27 @@ mod tests {
         std::fs::remove_file(dir.0.join("Spyro.key")).unwrap();
         dir.write("Other.dkey", b"another disc's");
         assert_eq!(identify(&image).unwrap_err(), Error::EncryptedImage, "named like another image");
+    }
+
+    #[test]
+    fn a_3k3y_image_is_refused_without_asking_for_a_key_file_it_never_had() {
+        let dir = TempDir::new("image-3k3y");
+        let mut bytes = spyro_image(b"\x9a\x13 scrambled");
+        bytes[0xF70..0xF80].copy_from_slice(b"Encrypted 3K BLD");
+        dir.write("Spyro.iso", &bytes);
+        let image = dir.0.join("Spyro.iso");
+        assert_eq!(identify(&image).unwrap_err(), Error::EncryptedBy3k3y);
+        // Its key file beside it serves as well, as RPCS3 tries that first.
+        dir.write("Spyro.dkey", b"never opened by Omoio");
+        assert!(identify(&image).is_ok());
+    }
+
+    #[test]
+    fn a_folder_named_like_an_image_is_still_a_folder() {
+        let dir = TempDir::new("image-folder");
+        assert!(is_image(Path::new("E:\\Unplugged\\Spyro.iso")), "told by its name when it isn't there");
+        std::fs::create_dir_all(dir.0.join("Game.iso")).unwrap();
+        assert!(!is_image(&dir.0.join("Game.iso")));
     }
 }
 

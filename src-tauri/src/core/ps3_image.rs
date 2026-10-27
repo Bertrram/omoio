@@ -54,6 +54,12 @@ pub fn is_ps3(image: &mut (impl Read + Seek)) -> bool {
         && iso9660::locate(image, &["PS3_GAME", "PARAM.SFO"]).is_some_and(|sfo| !sfo.directory)
 }
 
+/// Whether an ISO holds a PS3 game's files, PS3_DISC.SFB or PS3_GAME's
+/// PARAM.SFO, whether or not RPCS3 would boot it (`is_ps3`).
+pub fn has_ps3_files(image: &mut (impl Read + Seek)) -> bool {
+    iso9660::locate(image, &["PS3_DISC.SFB"]).is_some() || iso9660::locate(image, &["PS3_GAME", "PARAM.SFO"]).is_some()
+}
+
 /// Whether the game's files still need the disc's key to be read: an image
 /// with an encrypted region, and one of LIC.DAT and EBOOT.BIN in it that
 /// doesn't begin as it does in the clear. An image with neither needs none,
@@ -65,6 +71,14 @@ pub fn encrypted(image: &mut (impl Read + Seek)) -> bool {
                 .and_then(|file| iso9660::head(image, file, clear.len()))
                 .is_some_and(|start| start != *clear)
         })
+}
+
+/// Whether a 3k3y drive wrote the image encrypted, with the disc's key data
+/// inside it: "Encrypted 3K BLD" at 0xF70 (`iso_file_decryption::init`,
+/// Loader/ISO.cpp, RPCS3/rpcs3 c365ea7). Such a dump came with no key file.
+pub fn encrypted_by_3k3y(image: &mut (impl Read + Seek)) -> bool {
+    let mut mark = [0u8; 16];
+    image.seek(SeekFrom::Start(0xF70)).is_ok() && image.read_exact(&mut mark).is_ok() && &mark == b"Encrypted 3K BLD"
 }
 
 /// The game's PARAM.SFO.

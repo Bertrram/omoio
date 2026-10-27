@@ -263,18 +263,23 @@ pub async fn import_archive(
         let game = match crate::backends::identify(&dest) {
             Ok(game) => game,
             Err(e) => {
-                // Nothing importable came out, so don't leave it behind. The
-                // folder is Omoio's own, so several games in it were the
-                // archive's.
+                // Nothing importable came out, so don't leave it behind.
                 let _ = std::fs::remove_dir_all(&dest);
-                if e == crate::backends::SEVERAL_GAMES {
-                    return Err("This archive holds more than one game. Unpack it, then import them one at a \
-                                time or use Scan a folder for games."
-                        .to_string());
-                }
-                return Err(e.to_string());
+                return Err(for_an_archive(&e));
             }
         };
+        // A disc image in an archive can't be named before it is unpacked
+        // (`identify_packed` reads only small files), so a game already in
+        // the library is found only now, and the second copy goes.
+        let library = Library::load(&library_path(&app)?);
+        if library
+            .games()
+            .iter()
+            .any(|had| had.title_id == game.title_id && had.path.exists() && !had.path.starts_with(&dest))
+        {
+            let _ = std::fs::remove_dir_all(&dest);
+            return Err("That game is already in your library.".to_string());
+        }
 
         Library::edit(&library_path(&app)?, |library| {
             library.upsert(game.clone());
@@ -284,6 +289,25 @@ pub async fn import_archive(
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// What `identify` said of an archive's unpacked folder, said of the archive
+/// the player picked: the folder was Omoio's own, and is gone by now.
+fn for_an_archive(said: &str) -> String {
+    if said == crate::backends::SEVERAL_GAMES {
+        return "This archive holds more than one game, or a game with its update or add-ons. Unpack it, then \
+                import the game's own folder or use Scan a folder for games."
+            .to_string();
+    }
+    if said == crate::import::Error::EncryptedImage.to_string() {
+        return "This archive holds an encrypted disc image without its key file. Unpack it, keep the key file \
+                that came with the dump beside the image, named like it and ending .dkey, and import the image."
+            .to_string();
+    }
+    match said.strip_prefix("This folder holds") {
+        Some(rest) => format!("This archive holds{rest}"),
+        None => said.to_string(),
+    }
 }
 
 fn emit_import_progress(app: &AppHandle, stage: &str, bytes: u64, total: u64) {
@@ -1028,6 +1052,9 @@ pub struct ScanResult {
     pub added: usize,
     pub already_there: usize,
     pub not_games: usize,
+    /// PS3 disc images left out because they are encrypted and their key
+    /// file isn't beside them, which the player can put right.
+    pub encrypted: usize,
     pub cancelled: bool,
     /// The games added that may not run well, said once at the end rather
     /// than asked about one at a time across a whole drive.
@@ -1075,6 +1102,7 @@ pub async fn scan_folder(
             added: 0,
             already_there: 0,
             not_games: 0,
+            encrypted: 0,
             cancelled: false,
             warnings: Vec::new(),
         };
@@ -1106,6 +1134,7 @@ pub async fn scan_folder(
                         result.added += 1;
                     }
                 }
+                Err(why) if why == crate::import::Error::EncryptedImage.to_string() => result.encrypted += 1,
                 // A folder that is not a game, or is an update rather than a
                 // title, is not a failure worth stopping a whole drive for.
                 Err(_) => result.not_games += 1,

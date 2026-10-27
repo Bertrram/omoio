@@ -497,6 +497,12 @@ fn seen(path: &Path) -> Option<String> {
     let takes = consoles(all().iter().map(|backend| backend.console().short()));
     files.iter().find_map(|file| {
         let name = file.file_name()?.to_string_lossy().into_owned();
+        let extension = file.extension().map(|extension| extension.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
+        // A key or licence file is never opened: Omoio reads no key. A disc
+        // image's own key picked or dropped alone is told what it is for.
+        if KEY_FILES.contains(&extension.as_str()) {
+            return (!folder && matches!(extension.as_str(), "dkey" | "key")).then(|| KEY_FILE.to_string());
+        }
         let head = first_bytes(file, crate::core::picked::HEAD)?;
         if crate::core::picked::other_archive(&name, &head) {
             return Some(if folder {
@@ -505,8 +511,11 @@ fn seen(path: &Path) -> Option<String> {
                 OTHER_ARCHIVE.to_string()
             });
         }
+        if extension == "iso" && crate::core::ps3_image::has_ps3_files(&mut std::fs::File::open(file).ok()?) {
+            return Some(NO_DISC_HEADER.to_string());
+        }
         let console = crate::core::picked::other_console(&name, &head).or_else(|| {
-            if !file.extension().is_some_and(|extension| extension.eq_ignore_ascii_case("iso")) {
+            if extension != "iso" {
                 return None;
             }
             crate::core::picked::console_in_image(&mut std::fs::File::open(file).ok()?)
@@ -515,6 +524,18 @@ fn seen(path: &Path) -> Option<String> {
         Some(format!("{what} a game for the {console}. Omoio plays {takes} games."))
     })
 }
+
+/// Files that hold a key or a licence, which Omoio never opens.
+const KEY_FILES: [&str; 5] = ["dkey", "key", "rap", "ird", "edat"];
+
+const KEY_FILE: &str = "This is a disc image's key file, not a game. Keep it beside its image, named like it, \
+                        and import the image.";
+
+/// A PS3 disc image with the game's files and no PS3 disc header, as an ISO
+/// a PC tool makes of the game's folder has: RPCS3 starts a PS3 image only
+/// with that header (core/ps3_image.rs).
+const NO_DISC_HEADER: &str = "This PS3 disc image is missing the disc header RPCS3 needs, so RPCS3 can't start \
+                              it. Import the game's folder instead.";
 
 /// Up to `count` bytes from the start of a file.
 pub(crate) fn first_bytes(file: &Path, count: usize) -> Option<Vec<u8>> {
@@ -525,8 +546,10 @@ pub(crate) fn first_bytes(file: &Path, count: usize) -> Option<Vec<u8>> {
 }
 
 /// What a folder of several games is told, for it to be imported game by game.
-pub const SEVERAL_GAMES: &str =
-    "This folder holds more than one game. Import them one at a time, or use Scan a folder for games.";
+/// An update's or add-on's folder counts too, as its emulator takes it far
+/// enough to refuse it, so a game beside its update is named as well.
+pub const SEVERAL_GAMES: &str = "This folder holds more than one game, or a game with its update or add-ons. \
+                                 Import the game's own folder, or use Scan a folder for games.";
 
 /// How many games a folder holds at its top, each a folder or a file some
 /// emulator takes, as a drive's folder of games does. A file isn't a folder
@@ -646,6 +669,13 @@ mod tests {
         // Anything else keeps the answer that names what Omoio takes.
         let notes = write("notes.txt", b"hello");
         assert!(identify(&notes).unwrap_err().starts_with("This doesn't look like a game Omoio can play."));
+        // A disc image's key file alone is told what it is for, and never read.
+        let key = write("Spyro.dkey", b"never read");
+        assert_eq!(identify(&key).unwrap_err(), KEY_FILE);
+        // A PS3 game's ISO without the disc's header, as a PC tool makes one.
+        let pc = crate::core::iso9660::tests::image(&[("PS3_DISC.SFB", b".SFB"), ("PS3_GAME/PARAM.SFO", b"\0PSF")]);
+        let pc = write("Spyro.iso", &pc);
+        assert_eq!(identify(&pc).unwrap_err(), NO_DISC_HEADER);
         let _ = std::fs::remove_dir_all(&root);
     }
 

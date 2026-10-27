@@ -520,6 +520,8 @@ export interface ScanResult {
   added: number;
   already_there: number;
   not_games: number;
+  /// PS3 disc images left out because their key file isn't beside them.
+  encrypted: number;
   cancelled: boolean;
   /// The games added that may not run well.
   warnings: ImportWarning[];
