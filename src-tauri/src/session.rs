@@ -370,8 +370,9 @@ pub fn watch(app: AppHandle, pid: u32) {
                         // while the game runs on, the new one is taken, and
                         // the emulator is asked to close only once no game
                         // window has come for a while (`GAME_GONE`), never at
-                        // once and over and over as before (players saw
-                        // Dolphin close on Alt+Tab, October 2026).
+                        // once and over and over as before. That was a risk
+                        // found in the code, not what closed Dolphin on
+                        // Alt+Tab for players, which is still not found.
                         let is_game = |title: &str| backend.is_none_or(|backend| backend.is_game_window(title));
                         if let Some(game) = overlay::find_window(pid, &is_game) {
                             take_window(&app, &session, game, host, pid);

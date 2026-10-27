@@ -62,16 +62,21 @@ pub const EVERY_GAME: [(&str, &str, &str); 10] = [
 ///   size alone (`QWindowsWindow::handleWmSize` and `isFullScreen_sys`,
 ///   qwindowswindow.cpp lines 2254 to 2263 and 2608 to 2618, Qt 6.8.3).
 ///   Dolphin answers that with exclusive full screen on D3D11, its first
-///   choice on Windows (`Host::SetRenderFullscreen`, DolphinQt/Host.cpp
-///   lines 173 to 181; `ExclusiveFullscreenEnabled`, VideoCommon/
-///   VideoConfig.h lines 367 to 370), and from then on pauses the game to
-///   go in or out of that mode each time its window gains or loses the
-///   front (`Host::SetRenderFocus`, Host.cpp lines 137 to 147, pausing
-///   through `RunWithGPUThreadInactive`, lines 79 to 117), which the portal
-///   menu and Alt+Tab both make it do. Borderless, it neither pauses nor
-///   switches, and the picture is the same. Read in the source on 27 October
-///   2026 after players reported the game lagging after the menu and
-///   Dolphin closing on Alt+Tab; not yet tried.
+///   choice on Windows (`GetDefaultVideoBackend`, VideoCommon/
+///   VideoBackendBase.cpp lines 182 to 188; `bSupportsExclusiveFullscreen`,
+///   VideoBackends/D3D/D3DMain.cpp line 81; `Host::SetRenderFullscreen`,
+///   DolphinQt/Host.cpp lines 173 to 181; `ExclusiveFullscreenEnabled`,
+///   VideoCommon/VideoConfig.h lines 367 to 370), and from then on pauses
+///   the game to go in or out of that mode each time its window gains or
+///   loses the front (`Host::SetRenderFocus`, Host.cpp lines 137 to 147,
+///   pausing through `RunWithGPUThreadInactive`, lines 79 to 117), which the
+///   portal menu and Alt+Tab both make it do. Borderless, it neither pauses
+///   nor switches. The screen's resolution stays as it is either way, since
+///   `FullscreenDisplayRes` is "Auto" unless set (Core/Config/
+///   MainSettings.cpp lines 294 to 295, DolphinQt/MainWindow.cpp line 1240).
+///   All in Dolphin 2609a, read on 27 October 2026 after players reported
+///   the game lagging after the menu and Dolphin closing on Alt+Tab; not yet
+///   tried on a real PC.
 pub const EVERY_GAME_GRAPHICS: [(&str, &str, &str); 1] = [("Settings", "BorderlessFullscreen", "True")];
 
 /// Dolphin.ini, with what a game needs set: `EVERY_GAME`, and the Skylanders

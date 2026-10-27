@@ -98,13 +98,14 @@ impl Automation {
     }
 
     /// A button by its words, waited for. The manager's own buttons sit in
-    /// its row of commands, the window's only frame among its children
-    /// (`SkylanderPortalWindow::SkylanderPortalWindow`, lines 107 to 128 of
-    /// SkylanderPortalWindow.cpp, Dolphin 2609a; Qt shows a QFrame as a
-    /// Custom element, qwindowsuiautils.cpp lines 86 to 156, Qt 6.8.3; read
-    /// 27 October 2026), so they are looked for there first, which keeps the
-    /// walk out of the figure list (`slots`). Then the whole window, as a
-    /// dialog has no such row.
+    /// its row of commands, a plain QFrame and the window's only child that
+    /// UI Automation shows as Custom (`SkylanderPortalWindow::CreateMainWindow`,
+    /// lines 107 to 128 of SkylanderPortalWindow.cpp, Dolphin 2609a; Qt gives
+    /// a plain QFrame the Border role, qaccessiblewidgetfactory.cpp lines 149
+    /// to 150, and shows that role as Custom, qwindowsuiautils.cpp line 107,
+    /// Qt 6.8.3; read 27 October 2026), so they are looked for there first,
+    /// which keeps the walk out of the figure list (`slots`). Then the whole
+    /// window, as a dialog has no such row.
     fn button(&self, within: &IUIAutomationElement, words: &str) -> Result<IUIAutomationElement, String> {
         let named = |found: Vec<IUIAutomationElement>| found.into_iter().find(|button| name(button) == words);
         soon(WAIT, || {
@@ -363,12 +364,17 @@ fn unknown(name: &str) -> Option<(u16, u16)> {
 /// that sort its list by element and kind have theirs.
 fn slots(automation: &Automation, manager: &IUIAutomationElement) -> Result<(Vec<IUIAutomationElement>, Vec<IUIAutomationElement>), String> {
     // Looked for inside the group of slots, one of the window's own
-    // children, so the walk never goes through the figure list beside it:
-    // Qt makes an element of every one of its 517 rows on each walk that
-    // passes them (`QAccessibleList::child`, itemviews.cpp lines 1007 to
-    // 1040, and `Navigate`, qwindowsuiamainprovider.cpp lines 676 to 685,
-    // Qt 6.8.3), all on Dolphin's own window thread. The whole window only
-    // if the group isn't there.
+    // children, so the walk never goes through the figure list beside it.
+    // That list has a row for each of the 517 figures Dolphin knows
+    // (`list_skylanders`, Core/IOS/USB/Emulated/Skylanders/Skylander.cpp
+    // lines 18 to 609, Dolphin 2609a). A walk that passes the list tests
+    // every row, on Dolphin's own window thread, and Qt makes each row's
+    // element the first time it is asked for, and again after every load
+    // refills the list (`QAccessibleList::child`, itemviews.cpp lines 1006
+    // to 1040; `modelChange`, lines 683 to 694; `Navigate`,
+    // qwindowsuiamainprovider.cpp lines 676 to 685, Qt 6.8.3;
+    // `RefreshList`, SkylanderPortalWindow.cpp line 704). The whole window
+    // only if the group isn't there.
     let group = automation.0.child(manager, UIA_GroupControlTypeId, Some(PORTAL_SLOTS));
     let within = group.as_ref().unwrap_or(manager);
     let names: Vec<IUIAutomationElement> = automation
