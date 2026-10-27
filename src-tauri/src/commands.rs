@@ -1792,13 +1792,25 @@ fn running_emulator(app: &AppHandle) -> Result<(&'static dyn crate::backends::Em
 #[tauri::command]
 pub async fn portal_figures(app: AppHandle) -> Result<Vec<String>, String> {
     let (backend, pid) = running_emulator(&app)?;
+    let asked = std::time::Instant::now();
     let names = tauri::async_runtime::spawn_blocking(move || backend.portal_figures(pid))
         .await;
+    // A slow read is a menu that lags as it opens, so the log a player sends
+    // says how long it took (players saw the menu lag on Dolphin, October
+    // 2026).
+    let took = asked.elapsed();
+    if took >= SLOW_READ {
+        app.state::<Session>()
+            .note(&format!("read the portal in {} ms", took.as_millis()));
+    }
     // Even when the errand panicked, so the game is let hear again.
     crate::portal_menu::take_front(&app);
     let names = names.map_err(|e| e.to_string())?;
     names
 }
+
+/// How long a read of the portal may take before the session's log says so.
+const SLOW_READ: std::time::Duration = std::time::Duration::from_millis(500);
 
 /// `slot` counts from 0. A copy of the figure is kept first, before the
 /// emulator opens it. A figure that went on is remembered as used, so the
