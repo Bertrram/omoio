@@ -477,6 +477,10 @@ impl super::EmulatorBackend for Rpcs3 {
         portal::tidy(pid, game);
     }
 
+    fn refused_start(&self, app: &AppHandle, since: std::time::SystemTime) -> Option<String> {
+        launch::refused_image(app, since).map(str::to_string)
+    }
+
     #[cfg(windows)]
     fn session_notes(&self, pid: u32) -> Vec<String> {
         portal::way_used(pid).map(str::to_string).into_iter().collect()
@@ -501,8 +505,9 @@ impl super::EmulatorBackend for Rpcs3 {
         Ok(())
     }
 
-    /// A PS3 game is a folder of plain files, which is all the picture
-    /// reader needs.
+    /// A PS3 game in a folder is plain files, which is all the picture
+    /// reader needs. A disc image has none yet: omoio-portraits reads
+    /// folders and Cemu's .wua, and takes any other file for a .wua.
     fn readable_copy(
         &self,
         _app: &AppHandle,
@@ -563,7 +568,7 @@ impl super::EmulatorBackend for Rpcs3 {
     }
 
     fn icon(&self, _app: &AppHandle, game: &crate::core::library::Game) -> Option<Vec<u8>> {
-        std::fs::read(crate::import::icon_path(&game.path)?).ok()
+        crate::import::icon(&game.path)
     }
 
     fn button_names(&self) -> &'static [(&'static str, &'static str)] {

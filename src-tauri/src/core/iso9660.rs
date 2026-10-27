@@ -132,6 +132,14 @@ pub fn read(image: &mut (impl Read + Seek), file: Entry, limit: u64) -> Option<V
     read_at(image, file.offset, usize::try_from(file.size).ok()?)
 }
 
+/// A file's first `count` bytes, or all of it when it is shorter.
+pub fn head(image: &mut (impl Read + Seek), file: Entry, count: usize) -> Option<Vec<u8>> {
+    if file.directory {
+        return None;
+    }
+    read_at(image, file.offset, count.min(usize::try_from(file.size).ok()?))
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -167,44 +175,52 @@ pub(crate) mod tests {
         bytes
     }
 
-    /// An image with `files` (a path and its bytes, at most one directory
-    /// deep, each file under a sector) laid out as a disc's mastering tool
-    /// would: the descriptors at 16 and 17, the root at 18, then each
-    /// directory and file in a sector of its own.
+    /// The folder a path is in, "" for the root.
+    fn parent(path: &str) -> &str {
+        path.rsplit_once('/').map_or("", |(folder, _)| folder)
+    }
+
+    /// An image with `files` (a path and its bytes) laid out as a disc's
+    /// mastering tool would: the descriptors at 16 and 17, the root at 18,
+    /// then every other folder in a sector of its own, then the files.
     pub(crate) fn image(files: &[(&str, &[u8])]) -> Vec<u8> {
-        let mut sectors: Vec<Vec<u8>> = vec![vec![0; SECTOR as usize]; 19];
-        let mut root = Vec::new();
-        let mut folders: Vec<(String, Vec<Vec<u8>>, u32)> = Vec::new();
-        let mut next = 19u32;
-        let mut contents: Vec<(u32, Vec<u8>)> = Vec::new();
-        for (path, bytes) in files {
-            let place = next;
-            next += 1;
-            contents.push((place, bytes.to_vec()));
-            match path.split_once('/') {
-                Some((folder, name)) => {
-                    let name = format!("{name};1");
-                    let record = dir_record(name.as_bytes(), place, bytes.len() as u32, false);
-                    match folders.iter_mut().find(|(known, ..)| known == folder) {
-                        Some((_, records, _)) => records.push(record),
-                        None => folders.push((folder.to_string(), vec![record], 0)),
-                    }
-                }
-                None => root.push(dir_record(format!("{path};1").as_bytes(), place, bytes.len() as u32, false)),
+        let mut folders: Vec<&str> = vec![""];
+        for (path, _) in files {
+            let mut folder = parent(path);
+            while !folders.contains(&folder) {
+                folders.push(folder);
+                folder = parent(folder);
             }
         }
-        for (name, records, sector) in &mut folders {
-            *sector = next;
-            next += 1;
-            root.push(dir_record(name.as_bytes(), *sector, SECTOR as u32, true));
-            contents.push((*sector, directory(*sector, 18, records)));
+        let folder_at = |folder: &str| 18 + folders.iter().position(|known| *known == folder).unwrap() as u32;
+        let mut file_at = Vec::new();
+        let mut next = 18 + folders.len() as u32;
+        for (_, bytes) in files {
+            file_at.push(next);
+            next += (bytes.len() as u64).div_ceil(SECTOR).max(1) as u32;
         }
-        sectors.resize(next as usize, vec![0; SECTOR as usize]);
-        sectors[18] = directory(18, 18, &root);
-        for (sector, mut bytes) in contents {
-            bytes.resize(SECTOR as usize, 0);
-            sectors[sector as usize] = bytes;
+        let mut sectors: Vec<Vec<u8>> = vec![vec![0; SECTOR as usize]; next as usize];
+        for folder in &folders {
+            let mut records = Vec::new();
+            for sub in folders.iter().filter(|sub| !sub.is_empty() && parent(sub) == *folder) {
+                let name = sub.rsplit('/').next().unwrap();
+                records.push(dir_record(name.as_bytes(), folder_at(sub), SECTOR as u32, true));
+            }
+            for ((path, bytes), at) in files.iter().zip(&file_at) {
+                if parent(path) == *folder {
+                    let name = format!("{};1", path.rsplit('/').next().unwrap());
+                    records.push(dir_record(name.as_bytes(), *at, bytes.len() as u32, false));
+                }
+            }
+            let own = folder_at(folder);
+            sectors[own as usize] = directory(own, folder_at(parent(folder)), &records);
         }
+        let mut sectors = sectors.concat();
+        for ((_, bytes), at) in files.iter().zip(&file_at) {
+            let start = *at as usize * SECTOR as usize;
+            sectors[start..start + bytes.len()].copy_from_slice(bytes);
+        }
+        let mut sectors: Vec<Vec<u8>> = sectors.chunks(SECTOR as usize).map(<[u8]>::to_vec).collect();
         let mut primary = vec![0u8; SECTOR as usize];
         primary[0] = 1;
         primary[1..6].copy_from_slice(b"CD001");
@@ -231,6 +247,21 @@ pub(crate) mod tests {
         assert!(locate(&mut disc, &["ps3_game", "param.sfo"]).is_some());
         assert!(locate(&mut disc, &["PS3_DISC.SFB"]).is_some_and(|sfb| !sfb.directory));
         assert!(locate(&mut disc, &["PS3_GAME"]).is_some_and(|game| game.directory));
+    }
+
+    #[test]
+    fn folders_inside_folders_and_files_over_a_sector_are_read() {
+        let eboot = [b"SCE".as_slice(), &[7u8; 5000]].concat();
+        let mut disc = Cursor::new(image(&[
+            ("PS3_GAME/PARAM.SFO", b"sfo"),
+            ("PS3_GAME/USRDIR/EBOOT.BIN", &eboot),
+            ("PS3_GAME/LICDIR/LIC.DAT", b"PS3LICDA"),
+        ]));
+        let file = locate(&mut disc, &["PS3_GAME", "USRDIR", "EBOOT.BIN"]).unwrap();
+        assert_eq!(read(&mut disc, file, 1 << 20).unwrap(), eboot);
+        assert_eq!(head(&mut disc, file, 3).unwrap(), b"SCE");
+        let lic = locate(&mut disc, &["PS3_GAME", "LICDIR", "LIC.DAT"]).unwrap();
+        assert_eq!(head(&mut disc, lic, 64).unwrap(), b"PS3LICDA", "no more than the file holds");
     }
 
     #[test]
@@ -272,7 +303,7 @@ pub(crate) mod tests {
         let moved = 30 * SECTOR as usize;
         disc.resize(32 * SECTOR as usize, 0);
         let first = disc[root_at..root_at + 68].to_vec();
-        let game = dir_record(b"PS3_GAME", 20, SECTOR as u32, true);
+        let game = dir_record(b"PS3_GAME", 19, SECTOR as u32, true);
         disc[moved..moved + 68].copy_from_slice(&first);
         disc[moved + SECTOR as usize..moved + SECTOR as usize + game.len()].copy_from_slice(&game);
         let mut root_record = dir_record(&[0], 30, 2 * SECTOR as u32, true);

@@ -12,6 +12,7 @@ pub mod library;
 pub mod pad_layout;
 pub mod playlog;
 pub mod problems;
+pub mod ps3_image;
 pub mod settings;
 pub mod sfo;
 pub mod tested;

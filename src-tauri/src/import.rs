@@ -1,4 +1,4 @@
-//! Turning a folder the user picked into a library entry.
+//! Turning a folder or a disc image the user picked into a library entry.
 //!
 //! Games are referenced where they already are. An 8 GB dump is not copied,
 //! so importing is immediate and a game on an external drive stays on it.
@@ -6,6 +6,7 @@
 use crate::core::console::Console;
 use crate::core::import_warning::Imported;
 use crate::core::library::Game;
+use crate::core::ps3_image;
 use crate::core::sfo::{Category, Sfo};
 use std::path::{Path, PathBuf};
 
@@ -17,6 +18,11 @@ pub enum Error {
     UnreadableMetadata,
     IsAnUpdate,
     NoTitleId,
+    /// A disc image whose PARAM.SFO couldn't be read.
+    UnreadableImage,
+    /// A disc image whose game files are still encrypted, with no key file
+    /// beside it for RPCS3.
+    EncryptedImage,
 }
 
 impl std::fmt::Display for Error {
@@ -33,6 +39,16 @@ impl std::fmt::Display for Error {
             }
             Self::NoTitleId => {
                 write!(f, "This dump is missing its title ID, so it can't be identified.")
+            }
+            Self::UnreadableImage => {
+                write!(f, "Couldn't read PARAM.SFO in this disc image. The image may be incomplete.")
+            }
+            Self::EncryptedImage => {
+                write!(
+                    f,
+                    "This disc image is encrypted. RPCS3 needs the key file that came with the dump, \
+                     named like the image and ending .dkey, in the same folder."
+                )
             }
         }
     }
@@ -59,12 +75,64 @@ fn sfo_path(root: &Path) -> Option<PathBuf> {
 
 /// The tile art shipped inside the dump itself. Using it costs nothing and
 /// needs no metadata service, which is why it is the default before one exists.
-pub fn icon_path(root: &Path) -> Option<PathBuf> {
+fn icon_path(root: &Path) -> Option<PathBuf> {
     let candidates = [
         root.join("PS3_GAME").join("ICON0.PNG"),
         root.join("ICON0.PNG"),
     ];
     candidates.into_iter().find(|p| p.is_file())
+}
+
+/// The tile art of a dump or a disc image, read out of the image where it
+/// lies.
+pub fn icon(game: &Path) -> Option<Vec<u8>> {
+    if is_image_name(game) {
+        return ps3_image::icon(&mut std::fs::File::open(game).ok()?);
+    }
+    std::fs::read(icon_path(game)?).ok()
+}
+
+/// Whether a game's path is a disc image, by its name, the way Cemu and
+/// Dolphin tell theirs, so one on a drive that isn't plugged in is still
+/// known for one.
+pub fn is_image_name(path: &Path) -> bool {
+    path.extension().is_some_and(|extension| extension.eq_ignore_ascii_case("iso"))
+}
+
+/// Whether a file is a PS3 disc image RPCS3 boots (core/ps3_image.rs). A
+/// Wii or GameCube .iso isn't, and is left to Dolphin.
+fn is_ps3_image(path: &Path) -> bool {
+    is_image_name(path) && path.is_file() && std::fs::File::open(path).is_ok_and(|mut file| ps3_image::is_ps3(&mut file))
+}
+
+/// The PS3 disc image picked, or the one in the folder picked, at the top or
+/// one level down, which is where an archive unpacks it. Two or more is not
+/// clear, so none, as Dolphin does with its images.
+fn find_image(picked: &Path) -> Option<PathBuf> {
+    if picked.is_file() {
+        return is_ps3_image(picked).then(|| picked.to_path_buf());
+    }
+    let mut found = Vec::new();
+    for entry in std::fs::read_dir(picked).ok()?.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            if let Ok(inner) = std::fs::read_dir(&path) {
+                found.extend(inner.flatten().map(|inside| inside.path()).filter(|inside| is_ps3_image(inside)));
+            }
+        } else if is_ps3_image(&path) {
+            found.push(path);
+        }
+    }
+    (found.len() == 1).then(|| found.remove(0))
+}
+
+/// Whether the key file RPCS3 decrypts an image with is beside it: the
+/// image's own name ending .dkey, or .key, in its folder (Loader/ISO.cpp,
+/// `iso_file_decryption::check_type`, RPCS3/rpcs3 c365ea7, read 27 October
+/// 2026). Only its name is looked at. Omoio never opens it: RPCS3 does any
+/// decrypting.
+fn has_key_file(image: &Path) -> bool {
+    ["dkey", "key"].iter().any(|extension| image.with_extension(extension).is_file())
 }
 
 /// Archives usually extract into a folder of their own name, so the dump often
@@ -88,10 +156,11 @@ fn find_dump_root(picked: &Path) -> Option<PathBuf> {
     candidate
 }
 
-/// Whether a folder is a PS3 dump, without reading or measuring it. Every
-/// emulator is asked about every import, so this has to be cheap.
+/// Whether a folder is a PS3 dump, or a PS3 disc image, without measuring
+/// it: an image is read only as far as a few sectors. Every emulator is
+/// asked about every import, so this has to be cheap.
 pub fn recognises(picked: &Path) -> bool {
-    find_dump_root(picked).is_some()
+    find_dump_root(picked).is_some() || find_image(picked).is_some()
 }
 
 /// The title id, name and version a PARAM.SFO gives.
@@ -113,7 +182,9 @@ fn read_sfo(bytes: &[u8]) -> Result<(String, String, Option<String>), Error> {
 }
 
 pub fn identify(picked: &Path) -> Result<Game, Error> {
-    let root = find_dump_root(picked).ok_or(Error::NotAGameDump)?;
+    let Some(root) = find_dump_root(picked) else {
+        return identify_image(&find_image(picked).ok_or(Error::NotAGameDump)?);
+    };
     let sfo_file = sfo_path(&root).ok_or(Error::NotAGameDump)?;
 
     let bytes = std::fs::read(&sfo_file).map_err(|_| Error::UnreadableMetadata)?;
@@ -127,6 +198,32 @@ pub fn identify(picked: &Path) -> Result<Game, Error> {
         update_version: None,
         size_bytes: directory_size(&root),
         path: root,
+    })
+}
+
+/// A PS3 disc image, kept where it is, as Wii and Wii U images are. One
+/// whose game files are still encrypted is taken only with its key file
+/// beside it, since without one RPCS3 refuses to boot it (Emu/System.cpp,
+/// `check_disc_key`). Whether that key is the right one only RPCS3 can say,
+/// by decrypting with it, which Omoio never does.
+fn identify_image(image: &Path) -> Result<Game, Error> {
+    let mut file = std::fs::File::open(image).map_err(|_| Error::UnreadableImage)?;
+    if ps3_image::encrypted(&mut file) && !has_key_file(image) {
+        return Err(Error::EncryptedImage);
+    }
+    let bytes = ps3_image::param_sfo(&mut file).ok_or(Error::UnreadableImage)?;
+    let (title_id, title, version) = read_sfo(&bytes).map_err(|error| match error {
+        Error::UnreadableMetadata => Error::UnreadableImage,
+        other => other,
+    })?;
+    Ok(Game {
+        console: Console::Ps3,
+        title_id,
+        title,
+        version,
+        update_version: None,
+        size_bytes: file.metadata().map(|meta| meta.len()).unwrap_or(0),
+        path: image.to_path_buf(),
     })
 }
 
@@ -463,6 +560,81 @@ mod tests {
         dir.write("sce_sys/param.sfo", &sfo(&[("TITLE_ID", "CUSA02180"), ("CATEGORY", "gd")]));
         assert!(!recognises(&dir.0));
         assert!(!recognises(&dir.0.join("sce_sys")));
+    }
+
+    /// Spyro's Adventure as a decrypted disc image.
+    fn spyro_image(lic: &[u8]) -> Vec<u8> {
+        let sfo = sfo(&[
+            ("CATEGORY", "DG"),
+            ("TITLE", "Skylanders Spyro's Adventure"),
+            ("TITLE_ID", "BLUS30779"),
+            ("APP_VER", "01.00"),
+        ]);
+        let icon = b"\x89PNG\r\n\x1a\nthe tile".to_vec();
+        crate::core::ps3_image::tests::disc(&[
+            ("PS3_GAME/PARAM.SFO", &sfo),
+            ("PS3_GAME/ICON0.PNG", &icon),
+            ("PS3_GAME/LICDIR/LIC.DAT", lic),
+            ("PS3_GAME/USRDIR/EBOOT.BIN", b"SCE\0\0\0\x02"),
+        ])
+    }
+
+    #[test]
+    fn imports_a_disc_image_where_it_is() {
+        let dir = TempDir::new("image");
+        dir.write("Spyro.iso", &spyro_image(b"PS3LICDA"));
+        let image = dir.0.join("Spyro.iso");
+        assert!(recognises(&image));
+        let game = identify(&image).unwrap();
+        assert_eq!((game.title_id.as_str(), game.title.as_str()), ("BLUS30779", "Skylanders Spyro's Adventure"));
+        assert_eq!(game.version.as_deref(), Some("01.00"));
+        assert_eq!(game.path, image);
+        assert_eq!(game.size_bytes, std::fs::metadata(&image).unwrap().len());
+        assert_eq!(icon(&image).unwrap(), b"\x89PNG\r\n\x1a\nthe tile");
+    }
+
+    #[test]
+    fn finds_the_one_disc_image_an_archive_unpacked() {
+        let dir = TempDir::new("image-unpacked");
+        dir.write("Spyro (USA)/Spyro (USA).iso", &spyro_image(b"PS3LICDA"));
+        dir.write("Spyro (USA)/Spyro (USA).dkey", b"not read");
+        dir.write("Spyro (USA)/readme.txt", b"hello");
+        assert_eq!(identify(&dir.0).unwrap().path, dir.0.join("Spyro (USA)").join("Spyro (USA).iso"));
+        // Two images are not clear, so neither is taken.
+        dir.write("Another.iso", &spyro_image(b"PS3LICDA"));
+        assert!(!recognises(&dir.0));
+    }
+
+    #[test]
+    fn an_iso_that_isnt_a_ps3_disc_is_left_to_the_others() {
+        let dir = TempDir::new("image-other");
+        dir.write("wii.iso", &[0u8; 64 * 1024]);
+        dir.write("pc.iso", &crate::core::iso9660::tests::image(&[("SETUP.EXE", b"MZ")]));
+        assert!(!recognises(&dir.0.join("wii.iso")));
+        assert!(!recognises(&dir.0.join("pc.iso")));
+        assert!(!recognises(&dir.0));
+    }
+
+    #[test]
+    fn an_encrypted_image_is_taken_only_with_its_key_file_beside_it() {
+        let dir = TempDir::new("image-encrypted");
+        dir.write("Spyro.iso", &spyro_image(b"\x9a\x13 scrambled"));
+        let image = dir.0.join("Spyro.iso");
+        assert!(recognises(&image), "it is a PS3 disc all the same");
+        let refused = identify(&image).unwrap_err();
+        assert_eq!(refused, Error::EncryptedImage);
+        assert_eq!(
+            refused.to_string(),
+            "This disc image is encrypted. RPCS3 needs the key file that came with the dump, named like the image and ending .dkey, in the same folder."
+        );
+        dir.write("Spyro.dkey", b"never opened by Omoio");
+        assert_eq!(identify(&image).unwrap().title_id, "BLUS30779");
+        std::fs::remove_file(dir.0.join("Spyro.dkey")).unwrap();
+        dir.write("Spyro.key", b"never opened by Omoio");
+        assert!(identify(&image).is_ok(), "RPCS3 takes .key too");
+        std::fs::remove_file(dir.0.join("Spyro.key")).unwrap();
+        dir.write("Other.dkey", b"another disc's");
+        assert_eq!(identify(&image).unwrap_err(), Error::EncryptedImage, "named like another image");
     }
 }
 

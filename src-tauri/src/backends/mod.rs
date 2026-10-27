@@ -259,6 +259,14 @@ pub trait EmulatorBackend: Sync {
     /// game.
     fn tidy_window(&self, _pid: u32, _game: isize) {}
 
+    /// Why the emulator won't start the game it was started with `since`,
+    /// worded for the person playing, when it has said so somewhere Omoio can
+    /// read and will never open the game's window. Asked while waiting for
+    /// that window.
+    fn refused_start(&self, _app: &AppHandle, _since: std::time::SystemTime) -> Option<String> {
+        None
+    }
+
     /// Has the emulator hold the mouse in `game`'s window itself, for one
     /// whose mouse aiming needs more than the cursor kept inside the window
     /// (cursor.rs), and says whether that was done or isn't needed. Called

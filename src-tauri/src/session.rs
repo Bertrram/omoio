@@ -223,6 +223,10 @@ fn still_running(pid: u32) -> bool {
 pub fn watch(app: AppHandle, pid: u32) {
     tauri::async_runtime::spawn(async move {
         let mut attached = false;
+        let since = std::time::SystemTime::now();
+        // How many times the game's window has been looked for, and whether
+        // the emulator's refusal to start the game has been passed on.
+        let (mut looks, mut refused) = (0u32, false);
         // When the game's window appeared, until its pads have been asked
         // about.
         let mut pads_unasked: Option<std::time::Instant> = None;
@@ -301,6 +305,17 @@ pub fn watch(app: AppHandle, pid: u32) {
                     attached = true;
                     pads_unasked = Some(std::time::Instant::now());
                     let _ = app.emit("game-started", session.playing());
+                }
+                // An emulator that won't start the game never opens its
+                // window, so one that says why is asked every two seconds
+                // meanwhile, and stopped once it has.
+                looks = looks.wrapping_add(1);
+                if !attached && !refused && looks % 5 == 0 {
+                    if let Some(why) = backend.and_then(|backend| backend.refused_start(&app, since)) {
+                        refused = true;
+                        let _ = app.emit("game-refused", why);
+                        session.stop();
+                    }
                 }
             }
 

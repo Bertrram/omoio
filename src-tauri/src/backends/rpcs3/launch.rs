@@ -17,9 +17,14 @@ fn eboot_path(root: &Path) -> Option<PathBuf> {
 /// RPCS3 keeps its own list of games as `TITLE_ID: path/`, one per line, with
 /// forward slashes and a trailing slash. Read off a working install rather than
 /// guessed at, and written back the same way so RPCS3 recognises its own file.
+/// A disc image is listed as the file itself, with no slash, as RPCS3 lists
+/// one it booted (Emu/System.cpp, the games list after `Load`, and
+/// Emu/games_config.cpp, `add_game`; RPCS3/rpcs3 c365ea7, read 27 October
+/// 2026), since it reads the line back as a file to mount the disc for an
+/// installed update.
 fn games_list_line(title_id: &str, root: &Path) -> String {
     let mut path = root.to_string_lossy().replace('\\', "/");
-    if !path.ends_with('/') {
+    if !path.ends_with('/') && !crate::import::is_image_name(root) {
         path.push('/');
     }
     // Windows forbids quotes and backslashes in names, so the quoted form needs
@@ -293,11 +298,20 @@ pub fn launch(app: &AppHandle, game: &Game) -> Result<u32, String> {
     if super::firmware::detect_version(app).is_none() {
         return Err("Add PS3 firmware first, then you can play.".to_string());
     }
-    if !game.path.is_dir() {
-        return Err("This game's folder isn't there. Reconnect the drive it's on.".to_string());
-    }
-    let eboot = eboot_path(&game.path)
-        .ok_or("Couldn't find the game's program file. This folder may be incomplete.")?;
+    // RPCS3 boots a disc image itself: it mounts it as the disc and starts
+    // PS3_GAME's EBOOT.BIN from it (Emu/System.cpp, `Emulator::Load`,
+    // RPCS3/rpcs3 c365ea7, read 27 October 2026).
+    let boot = if crate::import::is_image_name(&game.path) {
+        if !game.path.is_file() {
+            return Err("This game isn't where it was. Reconnect the drive it's on.".to_string());
+        }
+        game.path.clone()
+    } else {
+        if !game.path.is_dir() {
+            return Err("This game's folder isn't there. Reconnect the drive it's on.".to_string());
+        }
+        eboot_path(&game.path).ok_or("Couldn't find the game's program file. This folder may be incomplete.")?
+    };
 
     // Before RPCS3's files are written, so one on its way out doesn't save
     // its own over them.
@@ -318,7 +332,7 @@ pub fn launch(app: &AppHandle, game: &Game) -> Result<u32, String> {
     } else {
         command.arg("--no-gui");
     }
-    let child = command.arg(&eboot).spawn().map_err(|e| e.to_string())?;
+    let child = command.arg(&boot).spawn().map_err(|e| e.to_string())?;
     if skylanders {
         super::portal::prepare(child.id());
     }
@@ -383,6 +397,26 @@ mod tests {
     fn does_not_double_the_trailing_slash() {
         let line = games_list_line("BCES00141", Path::new("D:/games/LBP/"));
         assert_eq!(line, "BCES00141: \"D:/games/LBP/\"");
+    }
+
+    #[test]
+    fn a_disc_image_rpcs3_cant_read_is_said_in_plain_words() {
+        // The two lines Emu/System.cpp's `check_disc_key` logs, with the
+        // paths it puts in.
+        let wrong = "\u{b7}E 0:00:01.802354 SYS: The key file found for the disc image 'E:/PS3/Spyro.iso' does not decrypt it: it belongs to another disc";
+        assert_eq!(
+            key_refusal(wrong),
+            Some("RPCS3 couldn't read this disc image. The key file beside it is for another disc.")
+        );
+        let missing = "\u{b7}E 0:00:01.802354 SYS: The disc image 'E:/PS3/Spyro.iso' is encrypted and no matching decryption key was found in 'C:/rpcs3/data/redump/'";
+        assert!(key_refusal(missing).is_some_and(|words| words.starts_with("This disc image is encrypted.")));
+        assert_eq!(key_refusal("S SYS: Boot successful."), None);
+    }
+
+    #[test]
+    fn a_disc_image_is_listed_as_the_file_itself() {
+        let line = games_list_line("BLUS30779", Path::new("E:\\PS3\\Skylanders Spyro's Adventure.ISO"));
+        assert_eq!(line, "BLUS30779: \"E:/PS3/Skylanders Spyro's Adventure.ISO\"");
     }
 
     #[test]
@@ -502,6 +536,32 @@ mod tests {
         assert_eq!(eboot_path(&root.join("nothing")), None);
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+}
+
+/// Why RPCS3 won't boot the disc image it was given, from its log this run,
+/// when it is the image's key. Whether a key file fits only RPCS3 can tell,
+/// by decrypting with it, which Omoio never does. RPCS3 then never opens the
+/// game's window: it logs why (Emu/System.cpp, `check_disc_key`) and, with
+/// --no-gui, shows its own error, while a Skylanders game, started with its
+/// window hidden, shows nothing at all (rpcs3.cpp, the boot from the command
+/// line; RPCS3/rpcs3 c365ea7, read 27 October 2026).
+pub fn refused_image(app: &AppHandle, since: std::time::SystemTime) -> Option<&'static str> {
+    let log = super::install_dir(app).ok()?.join("log").join("RPCS3.log");
+    key_refusal(&this_run(&log, since))
+}
+
+/// The plain words for the two lines `check_disc_key` logs.
+fn key_refusal(log: &str) -> Option<&'static str> {
+    if log.contains("does not decrypt it: it belongs to another disc") {
+        Some("RPCS3 couldn't read this disc image. The key file beside it is for another disc.")
+    } else if log.contains("is encrypted and no matching decryption key was found") {
+        Some(
+            "This disc image is encrypted. RPCS3 needs the key file that came with the dump, \
+             named like the image and ending .dkey, in the same folder.",
+        )
+    } else {
+        None
     }
 }
 
