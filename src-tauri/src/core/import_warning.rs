@@ -156,7 +156,8 @@ pub struct Warning {
     /// "The Wii U version is rated Playable in Cemu.", or "The Wii U version
     /// runs well in Omoio." for one on the tested list. With a portal
     /// warning, where the menu works instead: "The portal menu works in the
-    /// Wii U version." Empty when there is no such version.
+    /// Wii U version." Empty when there is no such version, and beside a
+    /// known problem, whose own words name the version that does better.
     pub better: String,
     /// For Imaginators: "Senseis and Creation Crystals made in an emulator
     /// don't work in the PS3 version. ..." (`figures::made_figures_note`),
@@ -178,6 +179,10 @@ pub fn warning(game: &Imported, lists: &[List]) -> Option<Warning> {
         return None;
     }
     let (rating, better) = rated.unwrap_or_default();
+    // A known problem names the version that does better itself, and the
+    // lists' line beside it named a second one, or the same one again
+    // (Bertram, 27 October 2026).
+    let better = if problem.is_empty() { better } else { String::new() };
     // Where the menu works is the version to point to. One the lists rate
     // well may have no menu at all.
     let (portal, better) = match portal {
@@ -478,6 +483,34 @@ mod tests {
         assert_eq!(warning(&ps3_game("BLES02055", "Skylanders Trap Team"), &lists()).unwrap().problem, "");
     }
 
+    /// The version the lists point to, before the warning weighs it.
+    fn lists_line(game: &Imported, lists: &[List]) -> String {
+        super::rated(game, lists).map(|(_, better)| better).unwrap_or_default()
+    }
+
+    /// The freeze line says the Wii version runs better, and the lists'
+    /// line beside it named the Wii U's, or the Wii's again.
+    #[test]
+    fn a_known_problem_names_the_better_version_alone() {
+        let mut lists = lists();
+        let spyro = "Skylanders: Spyro's Adventure";
+        lists.push(List::new(
+            Console::Wii,
+            "Dolphin",
+            vec![Entry { regions: vec!["EU"], ..entry(Console::Wii, "SSPP52", spyro, "Perfect") }],
+        ));
+        for title_id in ["BLES01272", "BLJM61044"] {
+            let game = ps3_game(title_id, "Skylanders Spyro's Adventure");
+            assert_ne!(lists_line(&game, &lists), "", "{title_id}: the lists name a version");
+            let warning = warning(&game, &lists).unwrap();
+            assert!(warning.problem.ends_with("The Wii version runs better."), "{title_id}");
+            assert_eq!(warning.better, "", "{title_id}");
+        }
+        // A game with no known problem keeps the lists' line.
+        let trap_team = warning(&ps3_game("BLES02055", "Skylanders Trap Team"), &lists).unwrap();
+        assert_ne!(trap_team.better, "");
+    }
+
     #[test]
     fn no_better_version_is_offered_when_the_other_one_has_problems_too() {
         let lists = vec![
@@ -519,14 +552,13 @@ mod tests {
 
     #[test]
     fn a_version_sold_in_one_region_is_offered_only_to_a_copy_from_there() {
-        // Spyro's Adventure came out on the Wii U in Japan only.
-        let european = warning(&ps3_game("BLES01272", "Skylanders Spyro's Adventure"), &lists()).unwrap();
-        assert_eq!(european.better, "");
-        let japanese = warning(&ps3_game("BLJM61044", "Skylanders Spyro's Adventure"), &lists()).unwrap();
-        assert_eq!(
-            japanese.better,
-            "The Wii U version is rated Perfect in Cemu, and the portal menu works in it."
-        );
+        // Spyro's Adventure came out on the Wii U in Japan only. Its PS3
+        // warning leaves the lists' line out for its known problem, so the
+        // line is asked for itself.
+        let european = lists_line(&ps3_game("BLES01272", "Skylanders Spyro's Adventure"), &lists());
+        assert_eq!(european, "");
+        let japanese = lists_line(&ps3_game("BLJM61044", "Skylanders Spyro's Adventure"), &lists());
+        assert_eq!(japanese, "The Wii U version is rated Perfect in Cemu, and the portal menu works in it.");
 
         // A PS3 release found in one region doesn't mean the game came out
         // only there: RPCS3's list holds the releases somebody tested.
@@ -542,11 +574,8 @@ mod tests {
             List::new(Console::Ps3, "RPCS3", vec![ps3("BLES01272", "Skylanders Spyro's Adventure", "Ingame")]),
             List::new(Console::WiiU, "Cemu", vec![wii_u("Skylanders: Spyro's Adventure", "Perfect", &[])]),
         ];
-        let unknown = warning(&ps3_game("BLES01272", "Skylanders Spyro's Adventure"), &lists).unwrap();
-        assert_eq!(
-            unknown.better,
-            "The Wii U version is rated Perfect in Cemu, and the portal menu works in it."
-        );
+        let unknown = lists_line(&ps3_game("BLES01272", "Skylanders Spyro's Adventure"), &lists);
+        assert_eq!(unknown, "The Wii U version is rated Perfect in Cemu, and the portal menu works in it.");
     }
 
     /// The Dolphin wiki lists a release per id, as RPCS3's list does. It
@@ -564,11 +593,8 @@ mod tests {
             ],
         ));
         // The Wii U version came out in Japan only, so the Wii's is offered.
-        let european = warning(&ps3_game("BLES01272", "Skylanders Spyro's Adventure"), &lists).unwrap();
-        assert_eq!(
-            european.better,
-            "The Wii version is rated Perfect in Dolphin, and the portal menu works in it."
-        );
+        let european = lists_line(&ps3_game("BLES01272", "Skylanders Spyro's Adventure"), &lists);
+        assert_eq!(european, "The Wii version is rated Perfect in Dolphin, and the portal menu works in it.");
     }
 
     #[test]
