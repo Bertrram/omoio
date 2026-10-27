@@ -10,6 +10,7 @@ pub mod iso9660;
 pub mod keys;
 pub mod library;
 pub mod pad_layout;
+pub mod picked;
 pub mod playlog;
 pub mod problems;
 pub mod ps3_image;

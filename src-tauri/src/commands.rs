@@ -203,6 +203,14 @@ pub async fn import_archive(
 
     tauri::async_runtime::spawn_blocking(move || {
         let source = PathBuf::from(&path);
+        // A .zipx starts as a zip does, but holds methods Omoio's zip
+        // reader may not know, and a .rar given a .zip's name is still a
+        // .rar (core/picked.rs).
+        let name = source.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
+        let head = crate::backends::first_bytes(&source, crate::core::picked::HEAD).unwrap_or_default();
+        if crate::core::picked::other_archive(&name, &head) {
+            return Err(crate::backends::OTHER_ARCHIVE.to_string());
+        }
         let kind = archive::detect_kind(&source)
             .ok_or("That file isn't a .7z or .zip archive.")?;
 

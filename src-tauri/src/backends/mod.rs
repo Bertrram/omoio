@@ -469,8 +469,52 @@ pub fn identify(path: &Path) -> Result<Game, String> {
     match all().iter().find(|backend| backend.recognises(path)) {
         Some(backend) => backend.identify(path),
         None if games_inside(path) > 1 => Err(SEVERAL_GAMES.to_string()),
-        None => Err(unknown_dump(all().iter().map(|backend| backend.console().short()))),
+        None => Err(seen(path).unwrap_or_else(|| unknown_dump(all().iter().map(|backend| backend.console().short())))),
     }
+}
+
+/// What an archive Omoio doesn't open is told.
+pub const OTHER_ARCHIVE: &str = "Omoio opens .zip and .7z only. Unpack it first.";
+
+/// What a file no emulator takes is, when its own bytes or its name make it
+/// certain (core/picked.rs): an archive Omoio doesn't open, or a game for a
+/// console Omoio doesn't run. A folder's own files are looked at the same
+/// way. `None` when nothing is certain.
+fn seen(path: &Path) -> Option<String> {
+    let folder = path.is_dir();
+    let files: Vec<std::path::PathBuf> = if folder {
+        std::fs::read_dir(path).ok()?.flatten().map(|entry| entry.path()).filter(|file| file.is_file()).collect()
+    } else {
+        vec![path.to_path_buf()]
+    };
+    let takes = consoles(all().iter().map(|backend| backend.console().short()));
+    files.iter().find_map(|file| {
+        let name = file.file_name()?.to_string_lossy().into_owned();
+        let head = first_bytes(file, crate::core::picked::HEAD)?;
+        if crate::core::picked::other_archive(&name, &head) {
+            return Some(if folder {
+                format!("This folder holds an archive Omoio can't open. {OTHER_ARCHIVE}")
+            } else {
+                OTHER_ARCHIVE.to_string()
+            });
+        }
+        let console = crate::core::picked::other_console(&name, &head).or_else(|| {
+            if !file.extension().is_some_and(|extension| extension.eq_ignore_ascii_case("iso")) {
+                return None;
+            }
+            crate::core::picked::console_in_image(&mut std::fs::File::open(file).ok()?)
+        })?;
+        let what = if folder { "This folder holds" } else { "This is" };
+        Some(format!("{what} a game for the {console}. Omoio plays {takes} games."))
+    })
+}
+
+/// Up to `count` bytes from the start of a file.
+pub(crate) fn first_bytes(file: &Path, count: usize) -> Option<Vec<u8>> {
+    use std::io::Read;
+    let mut bytes = Vec::with_capacity(count);
+    std::fs::File::open(file).ok()?.take(count as u64).read_to_end(&mut bytes).ok()?;
+    Some(bytes)
 }
 
 /// What a folder of several games is told, for it to be imported game by game.
@@ -533,14 +577,18 @@ pub fn names_in(path: &Path) -> Vec<String> {
 
 /// Says which consoles Omoio takes, so an unknown folder gets an answer that
 /// helps rather than one that only says no.
-fn unknown_dump<'a>(consoles: impl Iterator<Item = &'a str>) -> String {
-    let names: Vec<&str> = consoles.collect();
-    let list = match names.as_slice() {
+fn unknown_dump<'a>(names: impl Iterator<Item = &'a str>) -> String {
+    format!("This doesn't look like a game Omoio can play. It takes {} games.", consoles(names))
+}
+
+/// "PS3, Wii U, Wii and GameCube".
+fn consoles<'a>(names: impl Iterator<Item = &'a str>) -> String {
+    let names: Vec<&str> = names.collect();
+    match names.as_slice() {
         [] => String::new(),
         [one] => one.to_string(),
         [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
-    };
-    format!("This doesn't look like a game Omoio can play. It takes {list} games.")
+    }
 }
 
 #[cfg(test)]
@@ -564,6 +612,33 @@ mod tests {
         assert!(identify(&root).is_err_and(|why| why != SEVERAL_GAMES), "the one dump's own PARAM.SFO is fake");
         std::fs::remove_dir_all(root.join("Spyro")).unwrap();
         assert!(identify(&root).unwrap_err().starts_with("This doesn't look like a game Omoio can play."));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn what_omoio_saw_is_said_where_it_is_certain() {
+        let root = std::env::temp_dir().join(format!("omoio-seen-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("Download")).unwrap();
+        let write = |name: &str, bytes: &[u8]| {
+            std::fs::write(root.join(name), bytes).unwrap();
+            root.join(name)
+        };
+        let rar = write("Spyro.rar", b"Rar!\x1A\x07\x01\x00and the rest");
+        assert_eq!(identify(&rar).unwrap_err(), OTHER_ARCHIVE);
+        let nes = write("Game.nes", b"NES\x1A\x02\x01\x01\x00");
+        assert_eq!(
+            identify(&nes).unwrap_err(),
+            "This is a game for the NES. Omoio plays PS3, Wii U, Wii and GameCube games."
+        );
+        write("Download/Spyro.rar", b"Rar!\x1A\x07\x00and the rest");
+        assert_eq!(
+            identify(&root.join("Download")).unwrap_err(),
+            format!("This folder holds an archive Omoio can't open. {OTHER_ARCHIVE}")
+        );
+        // Anything else keeps the answer that names what Omoio takes.
+        let notes = write("notes.txt", b"hello");
+        assert!(identify(&notes).unwrap_err().starts_with("This doesn't look like a game Omoio can play."));
         let _ = std::fs::remove_dir_all(&root);
     }
 
