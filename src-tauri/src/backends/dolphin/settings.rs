@@ -87,7 +87,10 @@ pub fn prepare(config: &Path, skylanders: bool, figures: &Path) -> std::io::Resu
         values.push(("General", "SkylandersCollectionPath", &figures));
     }
     ini::update(&config.join("Dolphin.ini"), &values)?;
-    ini::update(&config.join("GFX.ini"), &EVERY_GAME_GRAPHICS)
+    // The game starts without it, so a GFX.ini that can't be written is left
+    // as it was rather than keeping the game from starting.
+    let _ = ini::update(&config.join("GFX.ini"), &EVERY_GAME_GRAPHICS);
+    Ok(())
 }
 
 /// What Omoio sets in `[Interface]` while a player is on the keyboard and
