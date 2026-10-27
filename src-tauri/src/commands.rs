@@ -255,8 +255,15 @@ pub async fn import_archive(
         let game = match crate::backends::identify(&dest) {
             Ok(game) => game,
             Err(e) => {
-                // Nothing importable came out, so don't leave it behind.
+                // Nothing importable came out, so don't leave it behind. The
+                // folder is Omoio's own, so several games in it were the
+                // archive's.
                 let _ = std::fs::remove_dir_all(&dest);
+                if e == crate::backends::SEVERAL_GAMES {
+                    return Err("This archive holds more than one game. Unpack it, then import them one at a \
+                                time or use Scan a folder for games."
+                        .to_string());
+                }
                 return Err(e.to_string());
             }
         };

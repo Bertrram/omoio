@@ -463,11 +463,32 @@ impl Drop for Process {
 }
 
 /// Works out which console a dump is for and reads it with that emulator.
+/// When none takes it, says what Omoio saw where it can be sure (players got
+/// only "doesn't look like a game" with no idea why, October 2026).
 pub fn identify(path: &Path) -> Result<Game, String> {
     match all().iter().find(|backend| backend.recognises(path)) {
         Some(backend) => backend.identify(path),
+        None if games_inside(path) > 1 => Err(SEVERAL_GAMES.to_string()),
         None => Err(unknown_dump(all().iter().map(|backend| backend.console().short()))),
     }
+}
+
+/// What a folder of several games is told, for it to be imported game by game.
+pub const SEVERAL_GAMES: &str =
+    "This folder holds more than one game. Import them one at a time, or use Scan a folder for games.";
+
+/// How many games a folder holds at its top, each a folder or a file some
+/// emulator takes, as a drive's folder of games does. A file isn't a folder
+/// of games.
+pub fn games_inside(folder: &Path) -> usize {
+    let Ok(entries) = std::fs::read_dir(folder) else {
+        return 0;
+    };
+    entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|inside| all().iter().any(|backend| backend.recognises(inside)))
+        .count()
 }
 
 /// Whether any emulator takes this one file as a whole game.
@@ -525,6 +546,26 @@ fn unknown_dump<'a>(consoles: impl Iterator<Item = &'a str>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_folder_of_several_games_is_told_so() {
+        let root = std::env::temp_dir().join(format!("omoio-several-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        for game in ["Spyro", "Giants"] {
+            std::fs::create_dir_all(root.join(game).join("PS3_GAME")).unwrap();
+            std::fs::write(root.join(game).join("PS3_GAME").join("PARAM.SFO"), b"\0PSF").unwrap();
+        }
+        std::fs::write(root.join("notes.txt"), b"mine").unwrap();
+        assert_eq!(games_inside(&root), 2);
+        assert_eq!(identify(&root).unwrap_err(), SEVERAL_GAMES);
+        // One game in a folder is that game, and a folder of none is unknown.
+        std::fs::remove_dir_all(root.join("Giants")).unwrap();
+        assert_eq!(games_inside(&root), 1);
+        assert!(identify(&root).is_err_and(|why| why != SEVERAL_GAMES), "the one dump's own PARAM.SFO is fake");
+        std::fs::remove_dir_all(root.join("Spyro")).unwrap();
+        assert!(identify(&root).unwrap_err().starts_with("This doesn't look like a game Omoio can play."));
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn an_unknown_dump_is_told_which_consoles_are_taken() {
