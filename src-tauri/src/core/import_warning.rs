@@ -414,14 +414,9 @@ mod tests {
         let trap_team = warning(&wii("Skylanders Trap Team"), &[]).unwrap();
         assert_eq!(trap_team.better, "The portal menu works in the PS3 and Wii U versions.");
 
-        // Spyro's Adventure came out on the Wii U in Japan; the menu works in
-        // the PS3's and the Wii's, and Cemu's Perfect isn't offered instead.
-        let spyro = warning(&wii_u_game("Skylanders: Spyro's Adventure"), &lists()).unwrap();
-        assert_eq!(
-            spyro.portal,
-            "Omoio's portal menu doesn't work in Skylanders Spyro's Adventure on the Wii U, so you can't put figures on the portal."
-        );
-        assert_eq!(spyro.better, "The portal menu works in the PS3 and Wii versions.");
+        // Spyro's Adventure came out on the Wii U in Japan, where the menu is
+        // offered untested, and Cemu rates it Perfect.
+        assert_eq!(warning(&wii_u_game("Skylanders: Spyro's Adventure"), &lists()), None);
     }
 
     #[test]
@@ -528,7 +523,10 @@ mod tests {
         let european = warning(&ps3_game("BLES01272", "Skylanders Spyro's Adventure"), &lists()).unwrap();
         assert_eq!(european.better, "");
         let japanese = warning(&ps3_game("BLJM61044", "Skylanders Spyro's Adventure"), &lists()).unwrap();
-        assert_eq!(japanese.better, "The Wii U version is rated Perfect in Cemu.");
+        assert_eq!(
+            japanese.better,
+            "The Wii U version is rated Perfect in Cemu, and the portal menu works in it."
+        );
 
         // A PS3 release found in one region doesn't mean the game came out
         // only there: RPCS3's list holds the releases somebody tested.
@@ -545,7 +543,10 @@ mod tests {
             List::new(Console::WiiU, "Cemu", vec![wii_u("Skylanders: Spyro's Adventure", "Perfect", &[])]),
         ];
         let unknown = warning(&ps3_game("BLES01272", "Skylanders Spyro's Adventure"), &lists).unwrap();
-        assert_eq!(unknown.better, "The Wii U version is rated Perfect in Cemu.");
+        assert_eq!(
+            unknown.better,
+            "The Wii U version is rated Perfect in Cemu, and the portal menu works in it."
+        );
     }
 
     /// The Dolphin wiki lists a release per id, as RPCS3's list does. It

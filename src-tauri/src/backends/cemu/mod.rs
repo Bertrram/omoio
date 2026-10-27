@@ -771,6 +771,10 @@ fn read_meta(xml: &str) -> Result<(String, String, Option<String>), String> {
         .map(|name| name.split_whitespace().collect::<Vec<_>>().join(" "))
         .find(|name| !name.is_empty())
         .unwrap_or_else(|| title_id.clone());
+    // A Skylanders game whose English name doesn't say so, as the Japanese
+    // Spyro's Adventure's needn't, goes by its English name, so its portal is
+    // on and the portal menu knows it.
+    let title = crate::core::figures::english_name(Console::WiiU, &title_id, &title).map_or(title, str::to_string);
 
     Ok((title_id, title, (!meta.version.is_empty()).then_some(meta.version)))
 }
@@ -1376,6 +1380,22 @@ Deluxe");
         assert_eq!(game.title, "Example Game & Friends Deluxe");
         assert_eq!(game.version.as_deref(), Some("16"));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Spyro's Adventure came out on the Wii U in Japan only, and its English
+    /// name in meta.xml needn't be English.
+    #[test]
+    fn a_skylanders_game_is_known_by_its_title_id_whatever_its_meta_calls_it() {
+        let japanese = META
+            .replace("0005000010abcd00", "0005000010142d00")
+            .replace("Example Game &amp; Friends\nDeluxe", "スカイランダーズ スパイロの大冒険")
+            .replace("Example Game", "スカイランダーズ");
+        let (title_id, title, _) = read_meta(&japanese).unwrap();
+        assert_eq!(title_id, "0005000010142D00");
+        assert_eq!(title, "Skylanders Spyro's Adventure");
+        assert!(is_skylanders(&title));
+        // Any other game keeps the name its meta.xml gives.
+        assert_eq!(read_meta(META).unwrap().1, "Example Game & Friends Deluxe");
     }
 
     /// An uncompressed 24 bit TGA of one grey.

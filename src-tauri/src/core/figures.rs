@@ -80,6 +80,40 @@ pub fn characters_file(console: Console) -> String {
     format!("characters-{key}.json")
 }
 
+/// Every Wii U Skylanders release by its title id, from WiiUBrew's title
+/// database (revision 4868, 24 October 2026) and GameTDB's, which agree,
+/// as do the ids in Cemu's community packs for these games. The last is
+/// named only in Imaginators' Signature Patch, which calls it a demo.
+const WII_U: [(&str, Game); 12] = [
+    ("0005000010142D00", Game::Spyro),
+    ("000500001010D700", Game::Giants),
+    ("0005000010116000", Game::Giants),
+    ("0005000010139200", Game::SwapForce),
+    ("0005000010140400", Game::SwapForce),
+    ("000500001017C600", Game::TrapTeam),
+    ("0005000010181F00", Game::TrapTeam),
+    ("00050000101B8500", Game::SuperChargers),
+    ("00050000101BFC00", Game::SuperChargers),
+    ("00050000101F4D00", Game::Imaginators),
+    ("00050000101FB100", Game::Imaginators),
+    ("0005000010205E00", Game::Imaginators),
+];
+
+/// The name a Wii U Skylanders game goes by in Omoio when the name its
+/// meta.xml gives doesn't say which game it is: the game's English name,
+/// known by its title id. Spyro's Adventure came out on the Wii U in Japan
+/// only, and Omoio knows a Skylanders game by its English name everywhere
+/// (GitHub issue 27: it got no portal there, October 2026). A translation
+/// that renames it leaves its title id as it was. `None` for any other game,
+/// and for one whose name already says it.
+pub fn english_name(console: Console, title_id: &str, title: &str) -> Option<&'static str> {
+    if console != Console::WiiU {
+        return None;
+    }
+    let (_, game) = WII_U.iter().find(|(id, _)| id.eq_ignore_ascii_case(title_id))?;
+    (!is_skylanders(title) || game_from_title(title) != Some(*game)).then(|| game.name())
+}
+
 /// Which game a title is, from its name. `None` for one Omoio can't tell,
 /// which then shows every figure.
 pub fn game_from_title(title: &str) -> Option<Game> {
@@ -107,13 +141,19 @@ pub fn game_from_title(title: &str) -> Option<Game> {
 /// there, Voodood, left the game on the portal screen. That was never
 /// settled, and the menu is offered so players can say how it goes. On the
 /// Wii, Spyro's Adventure comes first, through Dolphin; the Wii's other
-/// Skylanders games follow once each has been played there.
+/// Skylanders games follow once each has been played there. Spyro's
+/// Adventure on the Wii U, sold in Japan only, has it untested: nobody has
+/// played it with the menu yet, and it is offered so players can say how it
+/// goes (GitHub issue 27, October 2026).
 pub fn has_portal_menu(console: Console, title: &str) -> bool {
     is_skylanders(title)
         && matches!(
             (console, game_from_title(title)),
             (Console::Ps3, Some(Game::Spyro | Game::Giants | Game::SwapForce | Game::TrapTeam))
-                | (Console::WiiU, Some(Game::SwapForce | Game::TrapTeam | Game::SuperChargers | Game::Imaginators))
+                | (
+                    Console::WiiU,
+                    Some(Game::Spyro | Game::SwapForce | Game::TrapTeam | Game::SuperChargers | Game::Imaginators)
+                )
                 | (Console::Wii, Some(Game::Spyro))
         )
 }
@@ -888,6 +928,7 @@ mod tests {
         assert!(has_portal_menu(Console::WiiU, "Skylanders Imaginators"));
         assert!(has_portal_menu(Console::WiiU, "Skylanders: Imaginators"));
         assert!(has_portal_menu(Console::Wii, "Skylanders Spyro's Adventure"));
+        assert!(has_portal_menu(Console::WiiU, "Skylanders Spyro's Adventure"), "untested, sold in Japan only");
 
         assert!(!has_portal_menu(Console::WiiU, "Skylanders: Giants"));
         assert!(!has_portal_menu(Console::GameCube, "Skylanders Spyro's Adventure"), "no such release");
@@ -896,10 +937,8 @@ mod tests {
 
     #[test]
     fn the_other_skylanders_games_have_no_portal_menu_yet() {
-        // Spyro's Adventure's Wii U release was sold in Japan only.
         // SuperChargers and Imaginators have it on the Wii U only so far, and
         // the Wii's later games wait for a play there.
-        assert!(!has_portal_menu(Console::WiiU, "Skylanders Spyro's Adventure"));
         assert!(!has_portal_menu(Console::Wii, "Skylanders Giants"));
         assert!(!has_portal_menu(Console::Ps3, "Skylanders SuperChargers"));
         assert!(!has_portal_menu(Console::Ps3, "Skylanders: SuperChargers"));
@@ -932,7 +971,6 @@ mod tests {
         let elsewhere = |console, title| portal_menu_elsewhere(console, title);
         assert_eq!(elsewhere(Ps3, "Skylanders SuperChargers™"), Some(vec![WiiU]));
         assert_eq!(elsewhere(Ps3, "Skylanders Imaginators"), Some(vec![WiiU]));
-        assert_eq!(elsewhere(WiiU, "Skylanders: Spyro's Adventure"), Some(vec![Ps3, Wii]));
         assert_eq!(elsewhere(Wii, "Skylanders Giants"), Some(vec![Ps3]));
         assert_eq!(elsewhere(Wii, "Skylanders SWAP Force"), Some(vec![Ps3, WiiU]));
         assert_eq!(elsewhere(Wii, "Skylanders Trap Team"), Some(vec![Ps3, WiiU]));
@@ -944,7 +982,30 @@ mod tests {
         assert_eq!(elsewhere(Ps3, "Skylanders Spyro's Adventure"), None);
         assert_eq!(elsewhere(WiiU, "Skylanders Imaginators"), None);
         assert_eq!(elsewhere(Wii, "Skylanders Spyro's Adventure"), None);
+        assert_eq!(elsewhere(WiiU, "Skylanders: Spyro's Adventure"), None);
         assert_eq!(elsewhere(Ps3, "LittleBigPlanet 3"), None);
+    }
+
+    #[test]
+    fn a_wii_u_skylanders_game_is_known_by_its_title_id_whatever_its_name() {
+        let japanese = "スカイランダーズ　スパイロの大冒険";
+        assert_eq!(
+            english_name(Console::WiiU, "0005000010142D00", japanese),
+            Some("Skylanders Spyro's Adventure")
+        );
+        assert_eq!(english_name(Console::WiiU, "0005000010142d00", ""), Some("Skylanders Spyro's Adventure"));
+        // A name that says neither "Skylanders" nor the game is replaced too.
+        assert_eq!(
+            english_name(Console::WiiU, "0005000010142D00", "Spyro's Adventure (English)"),
+            Some("Skylanders Spyro's Adventure")
+        );
+        // One that says it is kept, and so is every other game.
+        assert_eq!(english_name(Console::WiiU, "0005000010142D00", "Skylanders: Spyro's Adventure"), None);
+        assert_eq!(english_name(Console::WiiU, "0005000010181F00", "Skylanders Trap Team"), None);
+        assert_eq!(english_name(Console::WiiU, "0005000010181F00", "SKYLANDERS"), Some("Skylanders Trap Team"));
+        assert_eq!(english_name(Console::WiiU, "0005000010145D00", japanese), None, "not Skylanders");
+        assert_eq!(english_name(Console::Wii, "0005000010142D00", japanese), None, "a Wii U id only");
+        assert!(has_portal_menu(Console::WiiU, english_name(Console::WiiU, "0005000010142D00", japanese).unwrap()));
     }
 
     #[test]

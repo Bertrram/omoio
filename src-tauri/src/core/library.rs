@@ -272,7 +272,14 @@ fn parse(bytes: &[u8]) -> Option<Library> {
     let mut library = Library { rest, ..Library::default() };
     for entry in entries {
         match serde_json::from_value::<Game>(entry.clone()) {
-            Ok(game) => {
+            Ok(mut game) => {
+                // A Wii U Skylanders game imported under a name that doesn't
+                // say so, before Omoio knew it by its title id, takes its
+                // English name, so it gets its portal without being imported
+                // again (`figures::english_name`).
+                if let Some(name) = crate::core::figures::english_name(game.console, &game.title_id, &game.title) {
+                    game.title = name.to_string();
+                }
                 let fields = fields_unknown(&game, entry);
                 if !fields.is_empty() {
                     library.fields.insert(game.title_id.clone(), fields);
