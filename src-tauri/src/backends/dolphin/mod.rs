@@ -491,8 +491,12 @@ impl super::EmulatorBackend for Dolphin {
         portal::is_game_title(title)
     }
 
-    fn tidy_window(&self, pid: u32, game: isize) {
-        portal::tidy(pid, game);
+    fn tidy_window(&self, pid: u32, _game: isize) {
+        portal::tidy(pid);
+    }
+
+    fn close_after_game(&self, pid: u32) -> bool {
+        portal::close_after_game(pid)
     }
 
     /// Omoio's menus keep the game deaf by taking the keyboard from its

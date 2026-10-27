@@ -259,6 +259,13 @@ pub trait EmulatorBackend: Sync {
     /// game.
     fn tidy_window(&self, _pid: u32, _game: isize) {}
 
+    /// Called once the game's window has been gone for a while with no other
+    /// in its place, so the game is over, for an emulator that would carry on
+    /// out of sight after it. Says whether it was asked to close.
+    fn close_after_game(&self, _pid: u32) -> bool {
+        false
+    }
+
     /// Why the emulator won't start the game it was started with `since`,
     /// worded for the person playing, when it has said so somewhere Omoio can
     /// read and will never open the game's window. Asked while waiting for

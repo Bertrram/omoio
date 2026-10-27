@@ -241,6 +241,9 @@ pub fn watch(app: AppHandle, pid: u32) {
         // How many times the game's window has been looked for, and whether
         // the emulator's refusal to start the game has been passed on.
         let (mut looks, mut refused) = (0u32, false);
+        // Since when the game's window has been gone with no other in its
+        // place, and whether the emulator has been asked to close for it.
+        let (mut gone_since, mut closed_after): (Option<std::time::Instant>, bool) = (None, false);
         // When the game's window appeared, until its pads have been asked
         // about.
         let mut pads_unasked: Option<std::time::Instant> = None;
@@ -310,14 +313,7 @@ pub fn watch(app: AppHandle, pid: u32) {
                 let backend = session.playing().and_then(|playing| crate::backends::for_console(playing.console));
                 let is_game = |title: &str| backend.is_none_or(|backend| backend.is_game_window(title));
                 if let Some(game) = overlay::find_window(pid, &is_game) {
-                    overlay::attach(game, host);
-                    session.adopt_window(game);
-                    // Big Picture was asked for while the game was starting.
-                    if session.is_hidden() {
-                        overlay::hide(game);
-                    } else if overlay::front_belongs_to(&[std::process::id(), pid]) {
-                        overlay::focus(game);
-                    }
+                    take_window(&app, &session, game, host, pid);
                     attached = true;
                     pads_unasked = Some(std::time::Instant::now());
                     let _ = app.emit("game-started", session.playing());
@@ -337,11 +333,39 @@ pub fn watch(app: AppHandle, pid: u32) {
             }
 
             if attached {
-                if let Some(game) = session.window().filter(|&game| overlay::exists(game)) {
-                    overlay::keep(game, host);
+                let backend = session.playing().and_then(|playing| crate::backends::for_console(playing.console));
+                match session.window().filter(|&game| overlay::exists(game)) {
+                    Some(game) => {
+                        overlay::keep(game, host);
+                        gone_since = None;
+                    }
+                    None => {
+                        // Should an emulator make its game's window again
+                        // while the game runs on, the new one is taken, and
+                        // the emulator is asked to close only once no game
+                        // window has come for a while (`GAME_GONE`), never at
+                        // once and over and over as before (players saw
+                        // Dolphin close on Alt+Tab, October 2026).
+                        let is_game = |title: &str| backend.is_none_or(|backend| backend.is_game_window(title));
+                        if let Some(game) = overlay::find_window(pid, &is_game) {
+                            take_window(&app, &session, game, host, pid);
+                            session.note("took the game's new window: the one it had was gone, and the game ran on");
+                            gone_since = None;
+                        } else {
+                            let since = *gone_since.get_or_insert_with(std::time::Instant::now);
+                            if !closed_after && since.elapsed() >= GAME_GONE {
+                                closed_after = true;
+                                if backend.is_some_and(|backend| backend.close_after_game(pid)) {
+                                    session.note(&format!(
+                                        "asked the emulator to close: its game's window had been gone for {} seconds, with no other in its place",
+                                        GAME_GONE.as_secs()
+                                    ));
+                                }
+                            }
+                        }
+                    }
                 }
                 place(&window, &session);
-                let backend = session.playing().and_then(|playing| crate::backends::for_console(playing.console));
                 if let (Some(backend), Some(game)) = (backend, session.window()) {
                     backend.tidy_window(pid, game);
                 }
@@ -354,6 +378,31 @@ pub fn watch(app: AppHandle, pid: u32) {
         }
     });
 }
+
+/// Takes the game's window into Omoio's, when it first appears or when the
+/// emulator made it again. Hidden while Big Picture is over the game, and
+/// given the front only from Omoio or the emulator, and never from the
+/// portal menu, which keeps the game deaf while it is up.
+fn take_window(app: &AppHandle, session: &Session, game: isize, host: isize, pid: u32) {
+    overlay::attach(game, host);
+    session.adopt_window(game);
+    if session.is_hidden() {
+        overlay::hide(game);
+    } else if overlay::front_belongs_to(&[std::process::id(), pid]) && !crate::portal_menu::showing(app) {
+        overlay::focus(game);
+    }
+}
+
+/// How long the game's window may be gone, with no other in its place,
+/// before the game is taken for over and its emulator asked to close.
+/// Dolphin 2609a makes its game's window anew only once the game has
+/// stopped or failed to start (`MainWindow::OnStopComplete` and
+/// `HideRenderWidget`, DolphinQt/MainWindow.cpp lines 923 to 952 and 1307 to
+/// 1333), and Qt keeps the same window when it moves one that asks for a
+/// window of its own (`setParent_sys`, qwidget.cpp lines 10949 to 10954, Qt
+/// 6.8.3; read 27 October 2026), so this is room for a case not found there,
+/// at the cost of a stopped game's emulator closing three seconds later.
+const GAME_GONE: std::time::Duration = std::time::Duration::from_secs(3);
 
 /// How long after the game's window appears to ask whether the emulator
 /// found every pad. RPCS3 sets its pads up a fraction of a second after it

@@ -473,8 +473,12 @@ impl super::EmulatorBackend for Rpcs3 {
         title.starts_with(portal::GAME_TITLE)
     }
 
-    fn tidy_window(&self, pid: u32, game: isize) {
-        portal::tidy(pid, game);
+    fn tidy_window(&self, pid: u32, _game: isize) {
+        portal::tidy(pid);
+    }
+
+    fn close_after_game(&self, pid: u32) -> bool {
+        portal::close_after_game(pid)
     }
 
     fn refused_start(&self, app: &AppHandle, since: std::time::SystemTime) -> Option<String> {

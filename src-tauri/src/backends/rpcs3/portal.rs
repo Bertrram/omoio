@@ -41,7 +41,7 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, VK_DOWN, VK_ESCAPE,
     VK_LMENU, VK_RETURN, VK_UP,
 };
-use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, IsWindow, PostMessageW, SetForegroundWindow, WM_CLOSE};
+use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, PostMessageW, SetForegroundWindow, WM_CLOSE};
 
 /// How many figures RPCS3's portal window holds (`UI_SKY_NUM`).
 pub const SLOTS: usize = 8;
@@ -398,18 +398,19 @@ fn warm_up(automation: &Automation, pid: u32, window: HWND) {
     give_back_to_game(pid);
 }
 
-/// Keeps RPCS3's main window hidden while the game runs, and closes RPCS3
-/// once the game's window `game` has gone: with its main window there, RPCS3
-/// would otherwise carry on, out of sight, after the game.
-pub fn tidy(pid: u32, game: isize) {
-    let Some(main) = main_window(pid) else {
-        return;
-    };
-    if !unsafe { IsWindow(Some(HWND(game as *mut _))) }.as_bool() {
-        let _ = unsafe { PostMessageW(Some(main), WM_CLOSE, WPARAM(0), LPARAM(0)) };
-    } else if visible(main) {
+/// Keeps RPCS3's main window hidden while the game runs.
+pub fn tidy(pid: u32) {
+    if let Some(main) = main_window(pid).filter(|&main| visible(main)) {
         hide(main);
     }
+}
+
+/// Closes RPCS3 once its game is over: with its main window there, RPCS3
+/// would otherwise carry on, out of sight, after the game. Asked once, by the
+/// session, only when no game window has been there for a while, so a game
+/// window RPCS3 only made again never ends the game.
+pub fn close_after_game(pid: u32) -> bool {
+    main_window(pid).is_some_and(|main| unsafe { PostMessageW(Some(main), WM_CLOSE, WPARAM(0), LPARAM(0)) }.is_ok())
 }
 
 fn check(slot: usize) -> Result<(), String> {

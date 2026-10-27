@@ -279,18 +279,22 @@ pub fn prepare(pid: u32) {
     });
 }
 
-/// Keeps Dolphin's main window hidden while the game runs, and closes
-/// Dolphin once the game's window `game` has gone: with its main window
-/// there, Dolphin would otherwise carry on, out of sight, after the game.
-pub fn tidy(pid: u32, game: isize) {
-    let Some(main) = main_window(pid) else {
-        return;
-    };
-    if !unsafe { IsWindow(Some(HWND(game as *mut _))) }.as_bool() {
-        let _ = unsafe { PostMessageW(Some(main), WM_CLOSE, WPARAM(0), LPARAM(0)) };
-    } else if visible(main) {
+/// Keeps Dolphin's main window hidden while the game runs.
+pub fn tidy(pid: u32) {
+    if let Some(main) = main_window(pid).filter(|&main| visible(main)) {
         hide(main);
     }
+}
+
+/// Closes Dolphin once its game is over: with its main window there, Dolphin
+/// would otherwise carry on, out of sight, after the game. Asked once, by the
+/// session, only when no game window has been there for a while. Asked while
+/// a Wii game runs, Dolphin takes a close as a press of the console's power
+/// button, and a second as a stop (`MainWindow::RequestStop`, see `ASK_AGAIN`
+/// in backends/mod.rs), so a close sent when the game's window was only made
+/// again would end the game.
+pub fn close_after_game(pid: u32) -> bool {
+    main_window(pid).is_some_and(|main| unsafe { PostMessageW(Some(main), WM_CLOSE, WPARAM(0), LPARAM(0)) }.is_ok())
 }
 
 /// Asks Dolphin to stop the game and quit, as closing one of its windows
