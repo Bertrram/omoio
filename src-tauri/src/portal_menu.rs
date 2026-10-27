@@ -721,7 +721,12 @@ pub fn close(app: &AppHandle) {
 /// with Cemu's figure maker at work `close` left the game deaf until now.
 pub fn take_front(app: &AppHandle) {
     if let Some(window) = app.get_webview_window(LABEL).filter(|_| showing(app)) {
-        let _ = window.set_focus();
+        // An errand can take seconds, and a player who went to another
+        // program meanwhile stays there.
+        let ours = app.state::<Session>().pid().is_some_and(crate::session::front_is_ours);
+        if ours {
+            let _ = window.set_focus();
+        }
     } else {
         crate::session::quiet_game(app);
     }
@@ -829,7 +834,11 @@ pub fn watch(app: AppHandle, pid: u32) {
                 .into_iter()
                 .find(|pad| crate::pads::held(&pad.device).is_some_and(|held| held.iter().any(|h| *h == wanted)));
             let now = pressing.is_some();
-            let by_pad = now && !was;
+            // A pad is read wherever the player is, so it opens the menu only
+            // over Omoio or the game, never over a program the player went
+            // to. It closes the menu from anywhere, since the menu stays
+            // drawn over the screen.
+            let by_pad = now && !was && (showing(&app) || crate::session::front_is_ours(pid));
             let by_key = (key && !with_shift_or_ctrl() && omoio_or_game_in_front(session.window()))
                 || (second && !key_held(VK_CONTROL) && !switched && game_or_menu_in_front(&app, session.window()));
             if by_pad || by_key {

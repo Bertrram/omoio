@@ -470,19 +470,29 @@ pub fn quiet_game(app: &AppHandle) {
             // of every key (lines 401 to 405). Only for a keyboard player, so
             // nothing changes for a pad.
             // Never from another program the player went to meanwhile.
-            let ours = overlay::front() == 0 || overlay::front_belongs_to(&[std::process::id(), pid]);
-            if ours && crate::controllers::keyboard_plays(&app, &playing.title_id) {
+            if front_is_ours(pid) && crate::controllers::keyboard_plays(&app, &playing.title_id) {
                 if let Some(window) = app.get_webview_window("portal") {
                     let _ = window.set_focus();
                 }
             }
         }
-        if backend.hush(pid, over).is_ok() && over {
+        // Readying the portal can wait on the emulator for seconds, long
+        // enough for the player to have gone to another program, which keeps
+        // the front.
+        if backend.hush(pid, over).is_ok() && over && front_is_ours(pid) {
             if let Some(window) = app.get_webview_window(if portal { "portal" } else { "main" }) {
                 let _ = window.set_focus();
             }
         }
     });
+}
+
+/// Whether the window in front is Omoio's or the game's emulator's, or there
+/// is none, as there isn't for a moment while Windows switches. Anything
+/// else is a program the player went to, which Omoio never takes the front
+/// from.
+pub(crate) fn front_is_ours(pid: u32) -> bool {
+    overlay::front() == 0 || overlay::front_belongs_to(&[std::process::id(), pid])
 }
 
 /// What is in front, seen from a game Omoio is handing the front to.
