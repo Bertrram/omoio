@@ -103,9 +103,10 @@ const WII_U: [(&str, Game); 12] = [
 /// meta.xml gives doesn't say which game it is: the game's English name,
 /// known by its title id. Spyro's Adventure came out on the Wii U in Japan
 /// only, and Omoio knows a Skylanders game by its English name everywhere
-/// (GitHub issue 27: it got no portal there, October 2026). A translation
-/// that renames it leaves its title id as it was. `None` for any other game,
-/// and for one whose name already says it.
+/// (GitHub issue 27, October 2026: it stalled at its autosave notice in
+/// Omoio, most likely for want of its portal). A translation that renames it
+/// most likely keeps its title id. `None` for any other game, and for one
+/// whose name already says it.
 pub fn english_name(console: Console, title_id: &str, title: &str) -> Option<&'static str> {
     if console != Console::WiiU {
         return None;
