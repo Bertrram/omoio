@@ -34,6 +34,7 @@ struct Ended {
     notes: Vec<String>,
     seconds: u64,
     stopped_by_us: bool,
+    refused: Option<String>,
 }
 
 struct Running {
@@ -49,6 +50,9 @@ struct Running {
     /// What Omoio did to the game's emulator or its windows on its own, with
     /// when, for the log kept of the game.
     notes: Vec<String>,
+    /// Why the emulator wouldn't start the game, in the player's words, when
+    /// Omoio stopped it for that.
+    refused: Option<String>,
 }
 
 impl Session {
@@ -62,12 +66,21 @@ impl Session {
             started: std::time::Instant::now(),
             stopped_by_us: false,
             notes: Vec::new(),
+            refused: None,
         });
     }
 
     /// Writes down something Omoio did on its own, with how far into the
     /// game it was, so the log a player sends shows it beside the
     /// emulator's own lines.
+    /// Keeps why the emulator wouldn't start the game, so the log kept of it
+    /// says it was refused rather than stopped from Omoio.
+    fn refused(&self, why: &str) {
+        if let Some(running) = self.inner.lock().unwrap().as_mut() {
+            running.refused = Some(why.to_string());
+        }
+    }
+
     pub fn note(&self, what: &str) {
         if let Some(running) = self.inner.lock().unwrap().as_mut() {
             let at = running.started.elapsed().as_secs();
@@ -183,6 +196,7 @@ impl Session {
             stopped_by_us: r.stopped_by_us,
             playing: r.playing,
             notes: r.notes,
+            refused: r.refused,
         })
     }
 
@@ -280,7 +294,7 @@ pub fn watch(app: AppHandle, pid: u32) {
 
             if !still_running(pid) {
                 // Read the log before anything else can overwrite it.
-                if let Some(Ended { playing, mut notes, seconds, stopped_by_us }) = session.end(pid) {
+                if let Some(Ended { playing, mut notes, seconds, stopped_by_us, refused: words }) = session.end(pid) {
                     // Cemu says why it won't start a game only in a message,
                     // which Omoio read and closed (backends::cemu::start_errors).
                     let refused = crate::backends::cemu::start_errors::take(pid);
@@ -289,7 +303,7 @@ pub fn watch(app: AppHandle, pid: u32) {
                             .map(|backend| backend.session_notes(pid))
                             .unwrap_or_default(),
                     );
-                    keep_session_log(&app, &playing, seconds, stopped_by_us, refused.as_ref(), &notes);
+                    keep_session_log(&app, &playing, seconds, stopped_by_us, refused.as_ref(), words.as_deref(), &notes);
                     if let Some(refused) = refused {
                         let _ = app.emit("game-refused", refused.shown);
                     }
@@ -337,6 +351,7 @@ pub fn watch(app: AppHandle, pid: u32) {
                     if let Some(why) = backend.and_then(|backend| backend.refused_start(&app, since)) {
                         refused = true;
                         session.note(&format!("stopped the emulator, which said it won't start the game: {why}"));
+                        session.refused(&why);
                         let _ = app.emit("game-refused", why);
                         session.stop();
                     }
@@ -762,6 +777,8 @@ fn keep_session_log(
     seconds: u64,
     stopped_by_us: bool,
     refused: Option<&crate::backends::cemu::start_errors::Refusal>,
+    // Why another emulator wouldn't start the game, whose own log is kept.
+    words: Option<&str>,
     notes: &[String],
 ) {
     use crate::core::playlog::{self, Ending, Session as LoggedSession};
@@ -784,7 +801,7 @@ fn keep_session_log(
         learn_version(app, &playing.title_id, version);
     }
 
-    let ending = if refused.is_some() {
+    let ending = if refused.is_some() || words.is_some() {
         Ending::Refused
     } else if stopped_by_us {
         Ending::Stopped
@@ -816,9 +833,10 @@ fn keep_session_log(
         seconds,
         ending,
         machine: playlog::read_machine(&log),
-        problems: match refused {
-            Some(refused) => vec![refused.shown.clone()],
-            None => playlog::read_problems(&log, 40),
+        problems: match (refused, words) {
+            (Some(refused), _) => vec![refused.shown.clone()],
+            (None, Some(words)) => vec![words.to_string()],
+            (None, None) => playlog::read_problems(&log, 40),
         },
         log_file: log_file.to_string_lossy().into_owned(),
     };
