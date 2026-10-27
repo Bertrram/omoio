@@ -6,6 +6,7 @@ pub mod figures;
 pub mod game_settings;
 pub mod imaginators;
 pub mod import_warning;
+pub mod iso9660;
 pub mod keys;
 pub mod library;
 pub mod pad_layout;
