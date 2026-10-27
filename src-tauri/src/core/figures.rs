@@ -204,10 +204,12 @@ pub fn portal_menu_note(console: Console, title: &str) -> Option<String> {
 /// player in Giants on the Wii opened the menu with Insert and found only
 /// Spyro's Adventure's figures in it (reported on Discord, October 2026),
 /// since the keys and the pad button opened it in any Skylanders game.
-/// `None` where the menu is offered, and for a game that isn't Skylanders,
-/// where the key does nothing.
+/// `None` where the menu is offered, for a game that isn't Skylanders,
+/// where the key does nothing, and for a Skylanders game whose name doesn't
+/// say which it is, such as a .wux named Skylanders_Trap_Team, where the
+/// menu opens with every figure as it always has.
 pub fn menu_note(features: Features, console: Console, title: &str) -> Option<String> {
-    if !is_skylanders(title) || offers_portal_menu(features, console, title) {
+    if !is_skylanders(title) || game_from_title(title).is_none() || offers_portal_menu(features, console, title) {
         return None;
     }
     Some(portal_menu_note(console, title).unwrap_or_else(|| "The portal menu doesn't work in this game yet.".to_string()))
@@ -1051,6 +1053,8 @@ mod tests {
         assert_eq!(menu_note(portal, Console::Wii, "Skylanders Spyro's Adventure"), None);
         assert_eq!(menu_note(portal, Console::WiiU, "Skylanders SWAP Force"), None);
         assert_eq!(menu_note(portal, Console::WiiU, "Mario Kart 8"), None);
+        // A name that doesn't say which game keeps the menu with every figure.
+        assert_eq!(menu_note(portal, Console::WiiU, "Skylanders_Trap_Team"), None);
     }
 
     #[test]
