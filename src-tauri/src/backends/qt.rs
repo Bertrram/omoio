@@ -18,7 +18,7 @@ use windows::Win32::System::Variant::{VariantClear, VARIANT, VT_BSTR, VT_I4};
 use windows::Win32::UI::Accessibility::{
     CUIAutomation8, IUIAutomation, IUIAutomation2, IUIAutomationCondition, IUIAutomationElement,
     IUIAutomationElementArray, IUIAutomationExpandCollapsePattern, IUIAutomationInvokePattern,
-    IUIAutomationSelectionItemPattern, IUIAutomationValuePattern, TreeScope_Descendants,
+    IUIAutomationSelectionItemPattern, IUIAutomationValuePattern, TreeScope_Children, TreeScope_Descendants,
     UIA_AutomationIdPropertyId, UIA_ControlTypePropertyId, UIA_ExpandCollapsePatternId, UIA_InvokePatternId,
     UIA_MenuItemControlTypeId, UIA_NamePropertyId, UIA_SelectionItemPatternId, UIA_ValuePatternId,
     UIA_CONTROLTYPE_ID, UIA_PROPERTY_ID,
@@ -79,6 +79,21 @@ impl Automation {
     /// window a moment before its widgets answer.
     pub fn first(&self, within: &IUIAutomationElement, id: &str) -> Option<IUIAutomationElement> {
         soon(WAIT, || self.all(within, id).into_iter().next())
+    }
+
+    /// The first widget of one kind among `within`'s own children, not any
+    /// deeper, and with `label` as its name when one is given. Looks at a
+    /// handful of widgets, where `of_kind` walks everything inside.
+    pub fn child(&self, within: &IUIAutomationElement, kind: UIA_CONTROLTYPE_ID, label: Option<&str>) -> Option<IUIAutomationElement> {
+        let by_kind = self.number_is(UIA_ControlTypePropertyId, kind.0).ok()?;
+        let condition = match label {
+            Some(label) => {
+                let by_name = self.text_is(UIA_NamePropertyId, label).ok()?;
+                unsafe { self.0.CreateAndCondition(&by_name, &by_kind) }.ok()?
+            }
+            None => by_kind,
+        };
+        unsafe { within.FindFirst(TreeScope_Children, &condition) }.ok()
     }
 
     pub fn menu_item(&self, within: &IUIAutomationElement, label: &str) -> Option<IUIAutomationElement> {

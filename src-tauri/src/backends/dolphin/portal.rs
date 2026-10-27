@@ -28,13 +28,14 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::UI::Accessibility::{
-    IUIAutomationElement, UIA_ButtonControlTypeId, UIA_EditControlTypeId, UIA_RadioButtonControlTypeId,
+    IUIAutomationElement, UIA_ButtonControlTypeId, UIA_CustomControlTypeId, UIA_EditControlTypeId,
+    UIA_GroupControlTypeId, UIA_RadioButtonControlTypeId,
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, VK_ESCAPE, VK_LMENU,
     VK_RETURN,
 };
-use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, IsWindow, PostMessageW, SetForegroundWindow, WM_CLOSE};
+use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, PostMessageW, SetForegroundWindow, WM_CLOSE};
 
 /// How many figures Dolphin's portal holds (`MAX_SKYLANDERS` in
 /// Core/IOS/USB/Emulated/Skylanders/Skylander.h).
@@ -96,17 +97,31 @@ impl Automation {
         self.0.window(window).ok_or_else(|| LOOKS_DIFFERENT.to_string())
     }
 
-    /// A button by its words, waited for.
+    /// A button by its words, waited for. The manager's own buttons sit in
+    /// its row of commands, the window's only frame among its children
+    /// (`SkylanderPortalWindow::SkylanderPortalWindow`, lines 107 to 128 of
+    /// SkylanderPortalWindow.cpp, Dolphin 2609a; Qt shows a QFrame as a
+    /// Custom element, qwindowsuiautils.cpp lines 86 to 156, Qt 6.8.3; read
+    /// 27 October 2026), so they are looked for there first, which keeps the
+    /// walk out of the figure list (`slots`). Then the whole window, as a
+    /// dialog has no such row.
     fn button(&self, within: &IUIAutomationElement, words: &str) -> Result<IUIAutomationElement, String> {
+        let named = |found: Vec<IUIAutomationElement>| found.into_iter().find(|button| name(button) == words);
         soon(WAIT, || {
             self.0
-                .of_kind(within, UIA_ButtonControlTypeId)
-                .into_iter()
-                .find(|button| name(button) == words)
+                .child(within, UIA_CustomControlTypeId, None)
+                .and_then(|row| named(self.0.of_kind(&row, UIA_ButtonControlTypeId)))
+                .or_else(|| named(self.0.of_kind(within, UIA_ButtonControlTypeId)))
         })
         .ok_or_else(|| LOOKS_DIFFERENT.to_string())
     }
 }
+
+/// The manager's group of portal slots, by its title (`CreateSlotLayout`,
+/// SkylanderPortalWindow.cpp lines 137 to 200, Dolphin 2609a), which Qt gives
+/// as its name (simplewidgets.cpp lines 563 to 571, Qt 6.8.3). Dolphin
+/// speaks English in Omoio (settings.rs).
+const PORTAL_SLOTS: &str = "Portal Slots";
 
 /// The main window's title is Dolphin's name and version, "Dolphin 2609a"
 /// (`GetScmRevStr`, Common/Version.cpp). The game's window starts as
@@ -347,15 +362,24 @@ fn unknown(name: &str) -> Option<(u16, u16)> {
 /// boxes do. The slots' radio buttons are its only ones without words: those
 /// that sort its list by element and kind have theirs.
 fn slots(automation: &Automation, manager: &IUIAutomationElement) -> Result<(Vec<IUIAutomationElement>, Vec<IUIAutomationElement>), String> {
+    // Looked for inside the group of slots, one of the window's own
+    // children, so the walk never goes through the figure list beside it:
+    // Qt makes an element of every one of its 517 rows on each walk that
+    // passes them (`QAccessibleList::child`, itemviews.cpp lines 1007 to
+    // 1040, and `Navigate`, qwindowsuiamainprovider.cpp lines 676 to 685,
+    // Qt 6.8.3), all on Dolphin's own window thread. The whole window only
+    // if the group isn't there.
+    let group = automation.0.child(manager, UIA_GroupControlTypeId, Some(PORTAL_SLOTS));
+    let within = group.as_ref().unwrap_or(manager);
     let names: Vec<IUIAutomationElement> = automation
         .0
-        .of_kind(manager, UIA_EditControlTypeId)
+        .of_kind(within, UIA_EditControlTypeId)
         .into_iter()
         .filter(|edit| !qt::enabled(edit))
         .collect();
     let radios: Vec<IUIAutomationElement> = automation
         .0
-        .of_kind(manager, UIA_RadioButtonControlTypeId)
+        .of_kind(within, UIA_RadioButtonControlTypeId)
         .into_iter()
         .filter(|radio| name(radio).is_empty())
         .collect();
