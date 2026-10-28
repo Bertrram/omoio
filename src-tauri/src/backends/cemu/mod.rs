@@ -312,17 +312,18 @@ fn disc_id(file: &str) -> String {
 }
 
 /// The product code at the start of a Wii U disc, "WUP-P-AS7J-00-...", as
-/// the four letters after "WUP-P-". It is in the clear: Cemu reads it before
-/// it decrypts anything (`DiscHeaderA`, src/Cafe/Filesystem/FST/FST.cpp
-/// lines 121 to 125 and 249 to 252), and tells a .wud by its "WUP-"
-/// (Cafe/TitleList/TitleInfo.cpp lines 38 to 56; Bertrram/Cemu v2.6-1). A
-/// .wux keeps the disc's sectors behind an index table: a 32 byte header of
-/// "WUX0" and 0x1099D02E, the sector size and the disc's size, one
-/// little-endian sector number for each of the disc's sectors, then the
-/// sectors from the next whole sector on (Cafe/Filesystem/WUD/wud.h lines 3
-/// to 26, wud.cpp lines 19 to 54 and 99 to 109). Read off Bertram's four
-/// .wux files on 28 October 2026: "WUP-P-ASFP-00-301EUR-0" for SWAP Force.
-/// Nothing a key is needed for is read.
+/// the four letters after "WUP-P-". It is in the clear: Cemu reads it as it
+/// lies, with no key (`DiscHeaderA`, src/Cafe/Filesystem/FST/FST.cpp lines
+/// 121 to 125 and 249 to 252), and decrypts only from the partition table at
+/// 0x18000 on (lines 137 to 140, 196 to 209 and 260 to 265). It tells a .wud
+/// by its "WUP-" (Cafe/TitleList/TitleInfo.cpp lines 38 to 56; Bertrram/Cemu
+/// v2.6-1). A .wux keeps the disc's sectors behind an index table: a 32
+/// byte header of "WUX0" and 0x1099D02E, the sector size and the disc's
+/// size, one little-endian sector number for each of the disc's sectors,
+/// then the sectors from the next whole sector on (Cafe/Filesystem/WUD/wud.h
+/// lines 3 to 26, wud.cpp lines 19 to 54 and 99 to 109). Read off Bertram's
+/// four .wux files on 28 October 2026: "WUP-P-ASFP-00-301EUR-0" for SWAP
+/// Force. Nothing a key is needed for is read.
 fn product_code(image: &Path) -> Option<String> {
     use std::io::{Read, Seek, SeekFrom};
     let mut file = std::fs::File::open(image).ok()?;

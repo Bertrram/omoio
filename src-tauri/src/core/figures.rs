@@ -102,9 +102,9 @@ const WII_U: [(&str, Game); 12] = [
 /// Every Wii U Skylanders disc by its product code, the four letters after
 /// "WUP-P-" at the start of its image, from GameTDB's wiiutdb.xml (27
 /// October 2026) and WiiUBrew's title database (revision 4868), which agree.
-/// The four European ones were also read off Bertram's own images on 28
-/// October 2026, Imaginators' BL6P among them as the retail game, though
-/// GameTDB calls it a demo.
+/// ASFP, BK7P, BS5P and BL6P were also read off Bertram's own images on 28
+/// October 2026, Imaginators' BL6P as the retail game, though GameTDB calls
+/// it a demo.
 const WII_U_DISCS: [(&str, Game); 11] = [
     ("AS7J", Game::Spyro),
     ("ASLE", Game::Giants),
@@ -239,8 +239,9 @@ pub fn portal_menu_note(console: Console, title: &str) -> Option<String> {
 /// since the keys and the pad button opened it in any Skylanders game.
 /// `None` where the menu is offered, for a game that isn't Skylanders,
 /// where the key does nothing, and for a Skylanders game whose name doesn't
-/// say which it is, such as a .wux named Skylanders_Trap_Team, where the
-/// menu opens with every figure as it always has.
+/// say which it is, such as a disc image named only Skylanders whose product
+/// code Omoio doesn't know, where the menu opens with every figure as it
+/// always has.
 pub fn menu_note(features: Features, console: Console, title: &str) -> Option<String> {
     if !is_skylanders(title) || game_from_title(title).is_none() || offers_portal_menu(features, console, title) {
         return None;
@@ -1053,10 +1054,13 @@ mod tests {
         assert_eq!(disc_english_name("BK7P", "Skylanders - Trap Team"), None);
         assert_eq!(disc_english_name("ASFP", "Skylanders - Swap Force"), None);
         assert_eq!(disc_english_name("ARKE", japanese), None, "not Skylanders");
-        // Each disc is one of the releases known by title id.
+        // A game has a disc for each release known by title id at most, so a
+        // code given the wrong game shows.
         for (code, game) in WII_U_DISCS {
             assert!(code.len() == 4 && code.bytes().all(|b| b.is_ascii_uppercase() || b.is_ascii_digit()), "{code}");
-            assert!(WII_U.iter().any(|(_, known)| *known == game), "{code}");
+            let discs = WII_U_DISCS.iter().filter(|(_, other)| *other == game).count();
+            let releases = WII_U.iter().filter(|(_, other)| *other == game).count();
+            assert!(discs <= releases, "{code}: {game:?}");
         }
     }
 
