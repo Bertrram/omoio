@@ -662,6 +662,21 @@ fn launch(app: AppHandle, title_id: &str) -> Result<(), String> {
     // without it.
     crate::vc_runtime::ensure()?;
 
+    // A Wii U disc image imported before Omoio read its product code goes by
+    // its file's name, which may not say which game it is. Read now, as the
+    // emulator is about to read the image anyway, and kept, so the game has
+    // its portal from this start on.
+    let renamed = backend.title_from_image(game).map(|title| crate::core::library::Game { title, ..game.clone() });
+    if let Some(renamed) = &renamed {
+        let _ = Library::edit(&library_path(&app)?, |library| {
+            if let Some(kept) = library.get_mut(&renamed.title_id) {
+                kept.title = renamed.title.clone();
+            }
+            Ok(())
+        });
+    }
+    let game = renamed.as_ref().unwrap_or(game);
+
     // One game at a time: starting another stops the one already running.
     app.state::<Session>().stop();
     // The known fixes for this game go in before it starts, each only once,

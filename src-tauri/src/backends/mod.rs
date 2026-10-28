@@ -274,6 +274,14 @@ pub trait EmulatorBackend: Sync {
         None
     }
 
+    /// The name a game's own image gives it, for one imported under a name
+    /// that doesn't say which game it is, before Omoio read that from the
+    /// image: a Wii U disc's product code. Asked as the game starts. `None`
+    /// keeps the name it has.
+    fn title_from_image(&self, _game: &Game) -> Option<String> {
+        None
+    }
+
     /// Has the emulator hold the mouse in `game`'s window itself, for one
     /// whose mouse aiming needs more than the cursor kept inside the window
     /// (cursor.rs), and says whether that was done or isn't needed. Called

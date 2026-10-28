@@ -200,6 +200,10 @@ void watchForDroppedGames();
 onGameStarted((playing) => {
   store.setNotice(null);
   store.setPlaying(playing);
+  // A Wii U disc image can take its game's name from its own product code as
+  // it starts, so its tile says the same as the bar.
+  const shown = store.get().games?.find((game) => game.title_id === playing.title_id);
+  if (shown && shown.title !== playing.title) void listGames().then((games) => store.setGames(games));
 });
 onGameFullscreen((on) => store.setGameFullscreen(on));
 onPadNotFound(showPlayingNote);

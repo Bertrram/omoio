@@ -99,6 +99,26 @@ const WII_U: [(&str, Game); 12] = [
     ("0005000010205E00", Game::Imaginators),
 ];
 
+/// Every Wii U Skylanders disc by its product code, the four letters after
+/// "WUP-P-" at the start of its image, from GameTDB's wiiutdb.xml (27
+/// October 2026) and WiiUBrew's title database (revision 4868), which agree.
+/// The four European ones were also read off Bertram's own images on 28
+/// October 2026, Imaginators' BL6P among them as the retail game, though
+/// GameTDB calls it a demo.
+const WII_U_DISCS: [(&str, Game); 11] = [
+    ("AS7J", Game::Spyro),
+    ("ASLE", Game::Giants),
+    ("ASLP", Game::Giants),
+    ("ASFE", Game::SwapForce),
+    ("ASFP", Game::SwapForce),
+    ("BK7E", Game::TrapTeam),
+    ("BK7P", Game::TrapTeam),
+    ("BS5E", Game::SuperChargers),
+    ("BS5P", Game::SuperChargers),
+    ("BL6E", Game::Imaginators),
+    ("BL6P", Game::Imaginators),
+];
+
 /// The name a Wii U Skylanders game goes by in Omoio when the name its
 /// meta.xml gives doesn't say which game it is: the game's English name,
 /// known by its title id. Spyro's Adventure came out on the Wii U in Japan
@@ -112,7 +132,19 @@ pub fn english_name(console: Console, title_id: &str, title: &str) -> Option<&'s
         return None;
     }
     let (_, game) = WII_U.iter().find(|(id, _)| id.eq_ignore_ascii_case(title_id))?;
-    (!is_skylanders(title) || game_from_title(title) != Some(*game)).then(|| game.name())
+    named_unless_said(*game, title)
+}
+
+/// The same for a Wii U disc image, known by its product code, as its title
+/// id can't be read without decrypting it. Its name comes from its file's,
+/// which may say nothing of the game.
+pub fn disc_english_name(product_code: &str, title: &str) -> Option<&'static str> {
+    let (_, game) = WII_U_DISCS.iter().find(|(code, _)| code.eq_ignore_ascii_case(product_code))?;
+    named_unless_said(*game, title)
+}
+
+fn named_unless_said(game: Game, title: &str) -> Option<&'static str> {
+    (!is_skylanders(title) || game_from_title(title) != Some(game)).then(|| game.name())
 }
 
 /// Which game a title is, from its name. `None` for one Omoio can't tell,
@@ -1009,6 +1041,23 @@ mod tests {
         assert_eq!(english_name(Console::WiiU, "0005000010145D00", japanese), None, "not Skylanders");
         assert_eq!(english_name(Console::Wii, "0005000010142D00", japanese), None, "a Wii U id only");
         assert!(has_portal_menu(Console::WiiU, english_name(Console::WiiU, "0005000010142D00", japanese).unwrap()));
+    }
+
+    #[test]
+    fn a_wii_u_skylanders_disc_is_known_by_its_product_code_whatever_its_file_is_called() {
+        let japanese = "スカイランダーズ　スパイロの大冒険";
+        assert_eq!(disc_english_name("AS7J", japanese), Some("Skylanders Spyro's Adventure"));
+        assert_eq!(disc_english_name("as7j", "game"), Some("Skylanders Spyro's Adventure"));
+        assert_eq!(disc_english_name("BK7P", "Skylanders_Trap_Team"), Some("Skylanders Trap Team"));
+        // A name that says the game is kept, and so is every other disc.
+        assert_eq!(disc_english_name("BK7P", "Skylanders - Trap Team"), None);
+        assert_eq!(disc_english_name("ASFP", "Skylanders - Swap Force"), None);
+        assert_eq!(disc_english_name("ARKE", japanese), None, "not Skylanders");
+        // Each disc is one of the releases known by title id.
+        for (code, game) in WII_U_DISCS {
+            assert!(code.len() == 4 && code.bytes().all(|b| b.is_ascii_uppercase() || b.is_ascii_digit()), "{code}");
+            assert!(WII_U.iter().any(|(_, known)| *known == game), "{code}");
+        }
     }
 
     #[test]

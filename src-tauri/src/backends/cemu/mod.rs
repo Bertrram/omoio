@@ -311,13 +311,58 @@ fn disc_id(file: &str) -> String {
     format!("WUD{:013X}", hash >> 12)
 }
 
+/// The product code at the start of a Wii U disc, "WUP-P-AS7J-00-...", as
+/// the four letters after "WUP-P-". It is in the clear: Cemu reads it before
+/// it decrypts anything (`DiscHeaderA`, src/Cafe/Filesystem/FST/FST.cpp
+/// lines 121 to 125 and 249 to 252), and tells a .wud by its "WUP-"
+/// (Cafe/TitleList/TitleInfo.cpp lines 38 to 56; Bertrram/Cemu v2.6-1). A
+/// .wux keeps the disc's sectors behind an index table: a 32 byte header of
+/// "WUX0" and 0x1099D02E, the sector size and the disc's size, one
+/// little-endian sector number for each of the disc's sectors, then the
+/// sectors from the next whole sector on (Cafe/Filesystem/WUD/wud.h lines 3
+/// to 26, wud.cpp lines 19 to 54 and 99 to 109). Read off Bertram's four
+/// .wux files on 28 October 2026: "WUP-P-ASFP-00-301EUR-0" for SWAP Force.
+/// Nothing a key is needed for is read.
+fn product_code(image: &Path) -> Option<String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut file = std::fs::File::open(image).ok()?;
+    let mut header = [0u8; 32];
+    file.read_exact(&mut header).ok()?;
+    let mut code = [0u8; 10];
+    if header[..8] == [b'W', b'U', b'X', b'0', 0x2E, 0xD0, 0x99, 0x10] {
+        let sector = u64::from(u32::from_le_bytes(header[8..12].try_into().ok()?));
+        let size = u64::from_le_bytes(header[16..24].try_into().ok()?);
+        // Cemu's own bounds for a sector (wud.cpp line 33).
+        if !(0x100..0x1000_0000).contains(&sector) {
+            return None;
+        }
+        let mut first = [0u8; 4];
+        file.read_exact(&mut first).ok()?;
+        let sectors = (32 + size.div_ceil(sector) * 4).div_ceil(sector) * sector;
+        file.seek(SeekFrom::Start(sectors + u64::from(u32::from_le_bytes(first)) * sector)).ok()?;
+        file.read_exact(&mut code).ok()?;
+    } else {
+        code.copy_from_slice(&header[..10]);
+    }
+    let game = std::str::from_utf8(&code).ok()?.strip_prefix("WUP-P-")?;
+    game.bytes().all(|b| b.is_ascii_alphanumeric()).then(|| game.to_ascii_uppercase())
+}
+
+/// The game's English name, where the disc's product code says which
+/// Skylanders game it is and the name it was given doesn't
+/// (`figures::disc_english_name`).
+fn named_by_disc(image: &Path, title: &str) -> Option<&'static str> {
+    crate::core::figures::disc_english_name(&product_code(image)?, title)
+}
+
 fn identify_disc(image: &Path) -> Game {
     let stem = image.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
     let file = image.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    let title = title_from_file(&stem);
     Game {
         console: Console::WiiU,
         title_id: disc_id(&file),
-        title: title_from_file(&stem),
+        title: named_by_disc(image, &title).map_or(title, str::to_string),
         version: None,
         update_version: None,
         size_bytes: std::fs::metadata(image).map(|m| m.len()).unwrap_or(0),
@@ -1041,6 +1086,13 @@ impl super::EmulatorBackend for Cemu {
         identify_packed(names, read)
     }
 
+    fn title_from_image(&self, game: &Game) -> Option<String> {
+        if !is_disc_image(&game.path.to_string_lossy()) {
+            return None;
+        }
+        named_by_disc(&game.path, &game.title).map(str::to_string)
+    }
+
     fn refuses(&self, app: &AppHandle, names: &[String]) -> Option<String> {
         refusal(names, keys::count(app) > 0)
     }
@@ -1589,6 +1641,58 @@ Deluxe");
         assert_eq!(disc_id("Game.wux"), disc_id("GAME.WUX"), "the same file, the same id");
         assert_ne!(disc_id("Game.wux"), disc_id("Other.wux"));
         assert_eq!(disc_id("Game.wux").len(), 16);
+    }
+
+    /// A .wud as it begins, and a .wux whose disc's first sector isn't the
+    /// first one it keeps.
+    #[test]
+    fn a_disc_image_says_which_skylanders_game_it_is_by_its_product_code() {
+        let dir = scratch("product-code");
+        let japanese = dir.join("スカイランダーズ　スパイロの大冒険.wud");
+        std::fs::write(&japanese, b"WUP-P-AS7J-00-000JPN-0\0\0\0\0\0\0\0\0\0\0").unwrap();
+        assert_eq!(product_code(&japanese).as_deref(), Some("AS7J"));
+        assert_eq!(identify_disc(&japanese).title, "Skylanders Spyro's Adventure");
+
+        // Four sectors of 0x100 bytes, the disc's first kept second.
+        let mut wux = Vec::new();
+        wux.extend_from_slice(b"WUX0");
+        wux.extend_from_slice(&[0x2E, 0xD0, 0x99, 0x10]);
+        wux.extend_from_slice(&0x100u32.to_le_bytes());
+        wux.extend_from_slice(&[0; 4]);
+        wux.extend_from_slice(&0x400u64.to_le_bytes());
+        wux.extend_from_slice(&[0; 8]);
+        for kept in [1u32, 0, 2, 3] {
+            wux.extend_from_slice(&kept.to_le_bytes());
+        }
+        wux.resize(0x100, 0);
+        wux.extend_from_slice(b"WUP-P-ZZZZ");
+        wux.resize(0x200, 0);
+        wux.extend_from_slice(b"WUP-P-BK7P-00-410EUR-0");
+        wux.resize(0x300, 0);
+        let unnamed = dir.join("Skylanders_Trap_Team.wux");
+        std::fs::write(&unnamed, &wux).unwrap();
+        assert_eq!(product_code(&unnamed).as_deref(), Some("BK7P"));
+        assert_eq!(identify_disc(&unnamed).title, "Skylanders Trap Team");
+
+        // A name that says the game is kept, and a file that isn't a disc
+        // keeps its file's name.
+        let named = dir.join("Skylanders - Trap Team (Europe).wux");
+        std::fs::write(&named, &wux).unwrap();
+        assert_eq!(identify_disc(&named).title, "Skylanders - Trap Team");
+        let other = dir.join("Other Game.wud");
+        std::fs::write(&other, b"x").unwrap();
+        assert_eq!(product_code(&other), None);
+        assert_eq!(identify_disc(&other).title, "Other Game");
+
+        // One imported before keeps its id and takes the name as it starts.
+        use crate::backends::EmulatorBackend;
+        let before = Game { title: "Skylanders_Trap_Team".into(), ..identify_disc(&dir.join("missing.wux")) };
+        let renamed = Cemu.title_from_image(&Game { path: unnamed.clone(), ..before.clone() });
+        assert_eq!(renamed.as_deref(), Some("Skylanders Trap Team"));
+        let named = Game { path: named.clone(), title: "Skylanders - Trap Team".into(), ..before.clone() };
+        assert_eq!(Cemu.title_from_image(&named), None);
+        assert_eq!(Cemu.title_from_image(&Game { path: dir.clone(), ..before }), None, "a folder");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
