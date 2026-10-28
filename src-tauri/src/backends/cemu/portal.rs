@@ -23,7 +23,7 @@
 use crate::backends::portal_ipc::{free_port, Failed, Server, Slot};
 use crate::core::figures::{self, Character};
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, AtomicU16, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU16, AtomicUsize, Ordering};
 use std::sync::{Mutex, MutexGuard, PoisonError, TryLockError};
 use std::time::{Duration, Instant};
 use windows::core::BOOL;
@@ -1161,7 +1161,7 @@ fn open_creator(pid: u32, window: HWND, slot: usize) -> Result<HWND, String> {
     }
     // One pressed for before is still filling its list, and a second press
     // would have Cemu make another after it.
-    if WAITING_LATE.load(Ordering::SeqCst) {
+    if matches!(*late(), Late::Waiting) {
         return Err(MAKER_SLOW.to_string());
     }
     let create = controls(window, "Button", Some("Create"))
@@ -1194,7 +1194,8 @@ fn cancel_creator(creator: HWND) {
 /// server reports from then on. A maker that shows only after this stopped
 /// waiting for it is read then, for the next ask (`read_when_shown`).
 pub fn characters(pid: u32) -> Result<Vec<Character>, String> {
-    if let Some(found) = LATE.lock().unwrap_or_else(PoisonError::into_inner).take() {
+    let read = take_read(&mut late());
+    if let Some(found) = read {
         know_names(found.clone());
         return Ok(found);
     }
@@ -1202,23 +1203,43 @@ pub fn characters(pid: u32) -> Result<Vec<Character>, String> {
     let _turn = turn();
     let window = open(pid)?;
     let creator = open_creator(pid, window, 0)?;
-    let found = read_list(creator);
-    cancel_creator(creator);
+    let found = read_and_close(creator);
     std::thread::sleep(Duration::from_millis(300));
     if found.is_empty() {
         Err("Couldn't read Cemu's list of characters.".to_string())
     } else {
-        know_names(found.clone());
         Ok(found)
     }
 }
 
-/// A list read from a figure maker that showed after `characters` stopped
-/// waiting for it.
-static LATE: Mutex<Option<Vec<Character>>> = Mutex::new(None);
+/// Where a figure maker that didn't show in time (`open_creator`) stands.
+enum Late {
+    /// None is being waited for, and there is no list from one.
+    Idle,
+    /// One is being waited for (`read_when_shown`).
+    Waiting,
+    /// One showed after `characters` stopped waiting for it, and its list is
+    /// kept for the next ask.
+    Read(Vec<Character>),
+}
 
-/// Whether a figure maker that didn't show in time is being waited for.
-static WAITING_LATE: AtomicBool = AtomicBool::new(false);
+static LATE: Mutex<Late> = Mutex::new(Late::Idle);
+
+fn late() -> MutexGuard<'static, Late> {
+    LATE.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// The list of a late figure maker, once, if it has been read. A maker still
+/// being waited for is left to be.
+fn take_read(late: &mut Late) -> Option<Vec<Character>> {
+    match std::mem::replace(late, Late::Idle) {
+        Late::Read(found) => Some(found),
+        other => {
+            *late = other;
+            None
+        }
+    }
+}
 
 /// How long a figure maker that didn't show in time is waited for. With a
 /// game at 120 frames a second, Trap Team's, Cemu filled the maker's list
@@ -1230,8 +1251,12 @@ const LATE_WAIT: Duration = Duration::from_secs(180);
 /// its list for the next ask and closes it. Left alone it would stay open,
 /// modal, over Cemu's portal window, and come up over the game.
 fn read_when_shown(pid: u32) {
-    if WAITING_LATE.swap(true, Ordering::SeqCst) {
-        return;
+    {
+        let mut state = late();
+        if matches!(*state, Late::Waiting) {
+            return;
+        }
+        *state = Late::Waiting;
     }
     std::thread::spawn(move || {
         let until = Instant::now() + LATE_WAIT;
@@ -1246,22 +1271,27 @@ fn read_when_shown(pid: u32) {
             }
             std::thread::sleep(Duration::from_millis(250));
         };
+        let mut found = Vec::new();
         if let Some(creator) = shown {
             let _making = Making::new();
             let _turn = turn();
             // Another errand may have used the maker and closed it meanwhile.
             if title(creator) == CREATOR {
                 out_of_sight(creator);
-                let found = read_list(creator);
-                cancel_creator(creator);
-                if !found.is_empty() {
-                    know_names(found.clone());
-                    *LATE.lock().unwrap_or_else(PoisonError::into_inner) = Some(found);
-                }
+                found = read_and_close(creator);
             }
         }
-        WAITING_LATE.store(false, Ordering::SeqCst);
+        *late() = if found.is_empty() { Late::Idle } else { Late::Read(found) };
     });
+}
+
+/// Reads the list of an open figure maker, closes it without making anything,
+/// and has the menu name the figures by it from then on.
+fn read_and_close(creator: HWND) -> Vec<Character> {
+    let found = read_list(creator);
+    cancel_creator(creator);
+    know_names(found.clone());
+    found
 }
 
 /// The characters in an open figure maker's list.
@@ -1369,6 +1399,18 @@ mod tests {
         ]
         .map(|(name, id, variant)| Character { name: name.to_string(), id, variant })
         .to_vec()
+    }
+
+    #[test]
+    fn a_late_figure_makers_list_is_given_once_and_a_waited_for_one_is_left() {
+        let mut state = Late::Read(list());
+        assert_eq!(take_read(&mut state).map(|found| found.len()), Some(list().len()));
+        assert!(matches!(state, Late::Idle), "given once");
+        assert!(take_read(&mut state).is_none());
+
+        let mut state = Late::Waiting;
+        assert!(take_read(&mut state).is_none());
+        assert!(matches!(state, Late::Waiting), "still being waited for");
     }
 
     #[test]
