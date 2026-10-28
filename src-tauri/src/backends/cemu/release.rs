@@ -12,33 +12,37 @@
 //! asking, so it goes no further than this release until the next one has
 //! been read and tried.
 //!
-//! The release is Cemu v2.6 with one addition, a server on 127.0.0.1 that
-//! puts figures on the emulated Skylanders portal and takes them off
-//! (github.com/Bertrram/Cemu, branch omoio-portal-ipc, tag v2.6-1), which
-//! the portal menu uses instead of Cemu's windows (portal.rs). It is built
-//! by that repository's own GitHub workflow with the libraries v2.6 was
-//! built with, SDL2 2.30.3 and wxWidgets 3.2.5 among them, so it names pads
-//! as v2.6 does, and packed as Cemu packs a release (Bertram, 22 October
-//! 2026). An installed v2.6 is replaced by it, as by any newer release.
+//! The release is Cemu v2.6 with three additions (github.com/Bertrram/Cemu,
+//! branch omoio-portal-ipc, tag v2.6-2): a server on 127.0.0.1 that puts
+//! figures on the emulated Skylanders portal and takes them off, which the
+//! portal menu uses instead of Cemu's windows (portal.rs; v2.6-1, Bertram,
+//! 22 October 2026); Imaginators' last two level pieces and the Mystery
+//! Chests in the figure maker; and Trap Team's portal speaker, mixed into
+//! the TV's sound (v2.6-2, 28 October 2026). It is built by that
+//! repository's own GitHub workflow with the libraries v2.6 was built with,
+//! SDL2 2.30.3 and wxWidgets 3.2.5 among them, so it names pads as v2.6
+//! does, and packed as Cemu packs a release. An installed v2.6 or v2.6-1 is
+//! replaced by it, as by any newer release.
 //!
 //! The download is a fixed file, so it is checked against the SHA-256 it had
-//! when it was published (22 October 2026).
+//! when it was published (28 October 2026).
 
 /// The release, by its tag.
-pub const TAG: &str = "v2.6-1";
+pub const TAG: &str = "v2.6-2";
 
 /// The Windows build of `TAG`, from the fork's GitHub releases.
-pub const DOWNLOAD: &str = "https://github.com/Bertrram/Cemu/releases/download/v2.6-1/cemu-2.6-1-windows-x64.zip";
+pub const DOWNLOAD: &str = "https://github.com/Bertrram/Cemu/releases/download/v2.6-2/cemu-2.6-2-windows-x64.zip";
 
 /// The file's name, which is what it is saved as while it downloads.
-pub const FILE: &str = "cemu-2.6-1-windows-x64.zip";
+pub const FILE: &str = "cemu-2.6-2-windows-x64.zip";
 
 /// SHA-256 of `DOWNLOAD`, as hex.
-pub const SHA256: &str = "ad63701e3a14e2886649078de19422c7495c4fe99f2869c12bc783a9b25ad877";
+pub const SHA256: &str = "f057ff6499aed794d4b5575f66fcae2231414d890008aa9aba523ac6afb3e986";
 
-/// Cemu's own release this one is built from, which names SDL pads the same
-/// way and is what an Omoio before this build installed.
-const BUILT_FROM: &str = "2.6";
+/// Cemu's own release this one is built from, and Omoio's earlier build of
+/// it, which name SDL pads the same way and are what an Omoio before this
+/// build installed. A pad stays named while such a Cemu waits to be updated.
+const BUILT_FROM: [&str; 2] = ["2.6", "2.6-1"];
 
 /// `TAG` as `detect_version` reports a version, without the `v`.
 pub fn version() -> &'static str {
@@ -54,7 +58,7 @@ pub fn version() -> &'static str {
 pub fn names_sdl_pads_as_checked(installed: Option<&str>) -> bool {
     installed.is_some_and(|got| {
         let got = got.trim().strip_prefix('v').unwrap_or(got.trim());
-        got == version() || got == BUILT_FROM
+        got == version() || BUILT_FROM.contains(&got)
     })
 }
 
@@ -65,7 +69,7 @@ mod tests {
 
     #[test]
     fn the_download_is_the_tagged_release() {
-        assert_eq!(version(), "2.6-1");
+        assert_eq!(version(), "2.6-2");
         assert!(DOWNLOAD.contains(&format!("/releases/download/{TAG}/")));
         assert!(DOWNLOAD.ends_with(&format!("/{FILE}")));
         assert!(FILE.ends_with("-windows-x64.zip"), "the Windows build");
@@ -81,13 +85,16 @@ mod tests {
         assert!(is_newer_release(version(), "2.5"));
         assert!(is_newer_release(version(), "2.0-94"));
         assert!(is_newer_release(version(), "2.6"), "Cemu's own 2.6 is replaced by Omoio's build");
-        assert!(!is_newer_release(version(), "2.6-1"), "the checked release is kept");
+        assert!(is_newer_release(version(), "2.6-1"), "and so is Omoio's earlier build");
+        assert!(!is_newer_release(version(), "2.6-2"), "the checked release is kept");
         assert!(!is_newer_release(version(), "2.7"), "a newer Cemu is never taken back");
     }
 
     #[test]
     fn only_the_checked_release_has_its_sdl_pads_named() {
-        assert!(names_sdl_pads_as_checked(Some("2.6-1")));
+        assert!(names_sdl_pads_as_checked(Some("2.6-2")));
+        assert!(names_sdl_pads_as_checked(Some("v2.6-2")));
+        assert!(names_sdl_pads_as_checked(Some("2.6-1")), "Omoio's earlier build, until it is updated");
         assert!(names_sdl_pads_as_checked(Some("v2.6-1")));
         assert!(names_sdl_pads_as_checked(Some("2.6")), "the release it is built from");
         assert!(names_sdl_pads_as_checked(Some("v2.6")));
