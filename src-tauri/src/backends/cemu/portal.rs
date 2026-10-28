@@ -23,7 +23,7 @@
 use crate::backends::portal_ipc::{free_port, Failed, Server, Slot};
 use crate::core::figures::{self, Character};
 use std::path::Path;
-use std::sync::atomic::{AtomicU16, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU16, AtomicUsize, Ordering};
 use std::sync::{Mutex, MutexGuard, PoisonError, TryLockError};
 use std::time::{Duration, Instant};
 use windows::core::BOOL;
@@ -1159,6 +1159,11 @@ fn open_creator(pid: u32, window: HWND, slot: usize) -> Result<HWND, String> {
         out_of_sight(creator);
         return Ok(creator);
     }
+    // One pressed for before is still filling its list, and a second press
+    // would have Cemu make another after it.
+    if WAITING_LATE.load(Ordering::SeqCst) {
+        return Err(MAKER_SLOW.to_string());
+    }
     let create = controls(window, "Button", Some("Create"))
         .into_iter()
         .nth(slot)
@@ -1166,11 +1171,15 @@ fn open_creator(pid: u32, window: HWND, slot: usize) -> Result<HWND, String> {
     input_settings_gone(pid);
     let _hurried = Hurried::new(window);
     press(create);
-    let creator =
-        wait_up_to(MAKER_WAIT, pid, |w| title(w) == CREATOR).ok_or("Cemu's figure maker didn't open. Try again.")?;
+    let Some(creator) = wait_up_to(MAKER_WAIT, pid, |w| title(w) == CREATOR) else {
+        read_when_shown(pid);
+        return Err(MAKER_SLOW.to_string());
+    };
     out_of_sight(creator);
     Ok(creator)
 }
+
+const MAKER_SLOW: &str = "Cemu's figure maker is still opening. Try again in a minute.";
 
 fn cancel_creator(creator: HWND) {
     if let Some(cancel) = controls(creator, "Button", Some("Cancel")).into_iter().next() {
@@ -1182,13 +1191,82 @@ fn cancel_creator(creator: HWND) {
 /// each item shows and the id and variant it carries. The maker is closed
 /// again without making anything. The portal server has no list, so this
 /// is read from the window with or without it, and names the figures the
-/// server reports from then on.
+/// server reports from then on. A maker that shows only after this stopped
+/// waiting for it is read then, for the next ask (`read_when_shown`).
 pub fn characters(pid: u32) -> Result<Vec<Character>, String> {
+    if let Some(found) = LATE.lock().unwrap_or_else(PoisonError::into_inner).take() {
+        know_names(found.clone());
+        return Ok(found);
+    }
     let _making = Making::new();
     let _turn = turn();
     let window = open(pid)?;
     let creator = open_creator(pid, window, 0)?;
-    let found: Vec<Character> = children(creator)
+    let found = read_list(creator);
+    cancel_creator(creator);
+    std::thread::sleep(Duration::from_millis(300));
+    if found.is_empty() {
+        Err("Couldn't read Cemu's list of characters.".to_string())
+    } else {
+        know_names(found.clone());
+        Ok(found)
+    }
+}
+
+/// A list read from a figure maker that showed after `characters` stopped
+/// waiting for it.
+static LATE: Mutex<Option<Vec<Character>>> = Mutex::new(None);
+
+/// Whether a figure maker that didn't show in time is being waited for.
+static WAITING_LATE: AtomicBool = AtomicBool::new(false);
+
+/// How long a figure maker that didn't show in time is waited for. With a
+/// game at 120 frames a second, Trap Team's, Cemu filled the maker's list
+/// for 63 seconds before it showed (28 October 2026).
+const LATE_WAIT: Duration = Duration::from_secs(180);
+
+/// Waits, on a thread of its own and holding up nothing, for a figure maker
+/// pressed for but not waited for long enough (`open_creator`), then reads
+/// its list for the next ask and closes it. Left alone it would stay open,
+/// modal, over Cemu's portal window, and come up over the game.
+fn read_when_shown(pid: u32) {
+    if WAITING_LATE.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    std::thread::spawn(move || {
+        let until = Instant::now() + LATE_WAIT;
+        let shown = loop {
+            let windows = windows_of(pid);
+            if let Some(&creator) = windows.iter().find(|&&w| title(w) == CREATOR) {
+                break Some(creator);
+            }
+            // Cemu has quit with its game.
+            if windows.is_empty() || Instant::now() >= until {
+                break None;
+            }
+            std::thread::sleep(Duration::from_millis(250));
+        };
+        if let Some(creator) = shown {
+            let _making = Making::new();
+            let _turn = turn();
+            // Another errand may have used the maker and closed it meanwhile.
+            if title(creator) == CREATOR {
+                out_of_sight(creator);
+                let found = read_list(creator);
+                cancel_creator(creator);
+                if !found.is_empty() {
+                    know_names(found.clone());
+                    *LATE.lock().unwrap_or_else(PoisonError::into_inner) = Some(found);
+                }
+            }
+        }
+        WAITING_LATE.store(false, Ordering::SeqCst);
+    });
+}
+
+/// The characters in an open figure maker's list.
+fn read_list(creator: HWND) -> Vec<Character> {
+    children(creator)
         .into_iter()
         .find(|&c| class(c) == "ComboBox")
         .map(|list| {
@@ -1207,15 +1285,7 @@ pub fn characters(pid: u32) -> Result<Vec<Character>, String> {
                 })
                 .collect()
         })
-        .unwrap_or_default();
-    cancel_creator(creator);
-    std::thread::sleep(Duration::from_millis(300));
-    if found.is_empty() {
-        Err("Couldn't read Cemu's list of characters.".to_string())
-    } else {
-        know_names(found.clone());
-        Ok(found)
-    }
+        .unwrap_or_default()
 }
 
 /// Has Cemu's figure maker make a figure of `character` into `file`. Cemu
