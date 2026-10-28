@@ -549,18 +549,19 @@ pub fn characters(
         .filter(|kept| !kept.characters.is_empty());
     let listed = match kept {
         Some(kept) if kept.version == version => Ok(kept.characters),
-        kept => backend
-            .portal_characters(pid)
-            .inspect(|characters| {
+        stale => match backend.portal_characters(pid) {
+            Ok(characters) => {
                 if let Ok(text) = serde_json::to_string(&Kept { version, characters: characters.clone() }) {
                     let _ = std::fs::write(&file, text);
                 }
-            })
+                Ok(characters)
+            }
             // The list kept from the emulator before names the same figures,
             // if maybe not its newest ones, so the menu offers those until
             // the new list can be read: Cemu's maker took a minute to show
             // while a game ran (28 October 2026), and the menu showed none.
-            .or_else(|why| kept.map(|kept| kept.characters).ok_or(why)),
+            Err(why) => stale.map(|kept| kept.characters).ok_or(why),
+        },
     };
     if backend.lists_characters() {
         return listed;
