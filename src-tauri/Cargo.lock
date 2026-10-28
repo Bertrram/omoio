@@ -2891,7 +2891,7 @@ dependencies = [
 
 [[package]]
 name = "omoio"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "aes 0.9.3",
  "encoding_rs",
