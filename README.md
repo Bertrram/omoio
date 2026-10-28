@@ -29,7 +29,7 @@ issue.
 - RPCS3, Cemu and Dolphin installed for you. RPCS3 is kept up to date, and
   Dolphin is updated to the newest version Omoio has been tested with. Cemu is
   Omoio's own build of Cemu 2.6, which adds a portal server for the Skylanders
-  portal menu.
+  portal menu and plays Trap Team's portal speaker.
 - One controller layout for every emulator, set by pressing the buttons, for up
   to four players.
 - Keyboard and mouse for any player, on every system. W A S D move, the mouse
@@ -81,7 +81,8 @@ two buttons take you back into the game.
 Skylanders games need figures on a portal. Omoio opens a portal menu over the
 game instead, and these games have it so far:
 
-- Skylanders Spyro's Adventure on PS3 and Wii, through RPCS3 and Dolphin
+- Skylanders Spyro's Adventure on PS3 and Wii, through RPCS3 and Dolphin, and
+  on Wii U, through Cemu (sold in Japan only, and not tested there yet)
 - Skylanders Giants on PS3, through RPCS3
 - Skylanders SWAP Force on PS3 and Wii U, through RPCS3 and Cemu
 - Skylanders Trap Team on PS3 and Wii U, through RPCS3 and Cemu
@@ -221,7 +222,8 @@ decrypted, and a PS4 game you bought is locked to Sony's keys.
 
 No. Omoio downloads them on the Emulators screen or when it first starts:
 RPCS3's and Dolphin's official builds, and for Cemu, Omoio's own build of Cemu
-2.6, which is Cemu 2.6 with a portal server added
+2.6, which is Cemu 2.6 with a portal server, Imaginators' last level pieces
+and Trap Team's portal speaker added
 ([source](https://github.com/Bertrram/Cemu/tree/omoio-portal-ipc)). It keeps
 RPCS3 up to date, and updates Cemu and Dolphin to the newest version Omoio has
 been tested with, so a new release waits until Omoio has been checked against
@@ -416,7 +418,8 @@ downloaded by you. Covers come only from RAWG or your own games and saves, and t
 Skylanders pictures only from your own copy of the game. Omoio has no connection with Activision, who
 publish Skylanders. RPCS3, Cemu and Dolphin are separate projects, and all
 credit for the emulation goes to them. RPCS3 and Dolphin run as their official
-builds. Cemu runs as Omoio's build of Cemu 2.6, which only adds a portal server;
+builds. Cemu runs as Omoio's build of Cemu 2.6, which only adds a portal server,
+Imaginators' last level pieces and Trap Team's portal speaker;
 it is under Cemu's licence, the MPL 2.0, with its source on
 [GitHub](https://github.com/Bertrram/Cemu/tree/omoio-portal-ipc). The
 Emulators screen shows each emulator's own icon, unchanged, under its project's
