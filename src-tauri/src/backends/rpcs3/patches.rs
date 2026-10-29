@@ -254,12 +254,12 @@ fn match_title(
     top: &Hash,
     title_id: &str,
     app_version: &str,
-    enabled: &[(String, String)],
+    enabled: &[Switch],
 ) -> Vec<Patch> {
-    let mut found = Vec::new();
+    let mut found: Vec<Patch> = Vec::new();
 
     for (hash, entries) in patch_entries(top) {
-        for (name, info) in entries_last_wins(entries) {
+        for (name, info) in entries {
             let Some(info) = info.as_hash() else { continue };
             let Some(games) = last(info, K_GAMES).and_then(Yaml::as_hash) else {
                 continue;
@@ -270,17 +270,25 @@ fn match_title(
                 let Some(serials) = serials.as_hash() else { continue };
                 let (serial, versions) = match last(serials, title_id).and_then(Yaml::as_vec) {
                     Some(versions) => (title_id, versions),
+                    // RPCS3 only reads an "All" serial under the game "All".
                     None => match (fix, last(serials, K_ALL).and_then(Yaml::as_vec)) {
-                        (Some(_), Some(versions)) => (K_ALL, versions),
+                        (Some(_), Some(versions)) if game == K_ALL => (K_ALL, versions),
                         _ => continue,
                     },
                 };
                 let versions: Vec<String> = versions.iter().filter_map(scalar).collect();
                 let applies = versions.iter().any(|v| v == K_ALL || v == app_version);
+                let on = enabled.iter().any(|k| {
+                    k.hash == hash
+                        && k.name == name
+                        && k.game == game
+                        && (k.serial == serial || k.serial == K_ALL)
+                        && (k.version == app_version || k.version == K_ALL)
+                });
 
-                found.push(Patch {
+                let patch = Patch {
                     applies,
-                    enabled: enabled.iter().any(|(h, n)| *h == hash && *n == name),
+                    enabled: on,
                     hash: hash.clone(),
                     name: name.clone(),
                     game: game.clone(),
@@ -290,7 +298,20 @@ fn match_title(
                     version: text(info, K_PATCH_VERSION),
                     versions,
                     fix: fix.map(str::to_string),
-                });
+                };
+
+                // The same patch can sit under several game names. It is one
+                // patch to the interface, keyed by `pack_id`, so keep the
+                // first, unless a later one fits the running version and the
+                // first does not: then "Written for 01.00" would be wrong.
+                match found
+                    .iter_mut()
+                    .find(|p| p.serial == serial && p.hash == hash && p.name == name)
+                {
+                    Some(seen) if !seen.applies && patch.applies => *seen = patch,
+                    Some(_) => {}
+                    None => found.push(patch),
+                }
             }
         }
     }
@@ -300,23 +321,61 @@ fn match_title(
     found
 }
 
-/// The top-level entries that actually hold patches, keyed by hash with the
-/// padding stripped back off.
+/// The patches under each hash, with the padding stripped back off.
 ///
 /// Which prefixes RPCS3 uses is not worth guessing at: the file has PPU, SPU,
-/// OVL and PRX today and could gain another. An entry is a patch entry when it
+/// OVL and PRX today and could gain another. A block is a patch block when it
 /// contains something that names the games it is for, which is what makes it
-/// usable at all. Repeats keep the last, as yaml-cpp does.
-fn patch_entries(top: &Hash) -> Vec<(String, &Hash)> {
-    entries_last_wins(top)
-        .into_iter()
-        .filter_map(|(hash, value)| Some((hash, value.as_hash()?)))
-        .filter(|(_, entries)| {
-            entries
-                .values()
-                .any(|info| info.as_hash().is_some_and(|i| last(i, K_GAMES).is_some()))
-        })
-        .collect()
+/// usable at all.
+///
+/// A hash can head several blocks, and RPCS3 merges them (`patch_engine::load`
+/// walks every top-level entry into one container per hash). When a name
+/// repeats under a hash, the later one replaces the earlier only if its
+/// "Patch Version" is higher; otherwise the first stays.
+fn patch_entries(top: &Hash) -> Vec<(String, Vec<(String, &Yaml)>)> {
+    let mut out: Vec<(String, Vec<(String, &Yaml)>)> = Vec::new();
+    for (hash, block) in top {
+        let (Some(hash), Some(block)) = (hash.as_str(), block.as_hash()) else {
+            continue;
+        };
+        let holds_patches = block
+            .values()
+            .any(|info| info.as_hash().is_some_and(|i| last(i, K_GAMES).is_some()));
+        if !holds_patches {
+            continue;
+        }
+        let hash = hash.trim_end();
+        let at = match out.iter().position(|(seen, _)| seen == hash) {
+            Some(at) => at,
+            None => {
+                out.push((hash.to_string(), Vec::new()));
+                out.len() - 1
+            }
+        };
+        let patches = &mut out[at].1;
+        for (name, info) in block {
+            let Some(name) = name.as_str() else { continue };
+            let name = name.trim_end().to_string();
+            match patches.iter_mut().find(|(seen, _)| *seen == name) {
+                Some(slot) => {
+                    let newer = patch_version(info)
+                        .zip(patch_version(slot.1))
+                        .is_some_and(|(new, old)| super::compat::is_newer(&new, &old));
+                    if newer {
+                        slot.1 = info;
+                    }
+                }
+                None => patches.push((name, info)),
+            }
+        }
+    }
+    out
+}
+
+fn patch_version(info: &Yaml) -> Option<String> {
+    info.as_hash()
+        .map(|i| text(i, K_PATCH_VERSION))
+        .filter(|v| !v.is_empty())
 }
 
 /// A mapping's entries with repeats collapsed to the last one written, and the
@@ -334,23 +393,52 @@ fn entries_last_wins(map: &Hash) -> Vec<(String, &Yaml)> {
     out
 }
 
-/// Which patches are switched on, as hash and name. RPCS3 writes an entry only
-/// while a patch is enabled, so presence is the whole answer.
-fn read_enabled(app: &AppHandle) -> Vec<(String, String)> {
+/// One switch in RPCS3's config: a leaf under hash, name, game, serial and
+/// version holding `Enabled: true`.
+struct Switch {
+    hash: String,
+    name: String,
+    game: String,
+    serial: String,
+    version: String,
+}
+
+/// Which patches are switched on, by the keys RPCS3 reads them under. The
+/// file also keeps entries that only hold a patch's saved config values, so
+/// a name being present is not enough: the leaf has to say `Enabled: true`.
+fn read_enabled(app: &AppHandle) -> Vec<Switch> {
     let Ok(root) = config_path(app).and_then(|p| load(&p)) else {
         return Vec::new();
     };
-    let Some(top) = root.as_hash() else {
-        return Vec::new();
+    match root.as_hash() {
+        Some(top) => read_enabled_from(top),
+        None => Vec::new(),
+    }
+}
+
+fn read_enabled_from(top: &Hash) -> Vec<Switch> {
+    let keys = |map: &Hash| -> Vec<(String, Hash)> {
+        map.iter()
+            .filter_map(|(k, v)| Some((k.as_str()?.to_string(), v.as_hash()?.clone())))
+            .collect()
     };
     let mut on = Vec::new();
-    for (hash_key, entries) in top {
-        let (Some(hash), Some(entries)) = (hash_key.as_str(), entries.as_hash()) else {
-            continue;
-        };
-        for (name_key, _) in entries {
-            if let Some(name) = name_key.as_str() {
-                on.push((hash.to_string(), name.to_string()));
+    for (hash, names) in keys(top) {
+        for (name, games) in keys(&names) {
+            for (game, serials) in keys(&games) {
+                for (serial, versions) in keys(&serials) {
+                    for (version, leaf) in keys(&versions) {
+                        if leaf.get(&Yaml::String(K_ENABLED.into())).and_then(Yaml::as_bool) == Some(true) {
+                            on.push(Switch {
+                                hash: hash.clone(),
+                                name: name.clone(),
+                                game: game.clone(),
+                                serial: serial.clone(),
+                                version: version.clone(),
+                            });
+                        }
+                    }
+                }
             }
         }
     }
@@ -416,7 +504,10 @@ pub fn set_enabled(
         );
         leaf.insert(Yaml::String(K_ENABLED.into()), Yaml::Boolean(true));
     } else {
-        remove(&mut root, &[&hash, &name, &game, &serial, &version]);
+        // Every version of this game's serial, so a switch left from an older
+        // version goes too. Other games sharing the hash, and any values
+        // RPCS3 saved for the patch, stay.
+        clear_enabled(&mut root, &[&hash, &name, &game, &serial]);
     }
 
     if root.is_empty() {
@@ -436,19 +527,24 @@ pub fn set_enabled(
     std::fs::write(&path, out).map_err(|e| e.to_string())
 }
 
-/// Takes one entry out and tidies up behind it, so switching a patch off does
-/// not leave a trail of empty maps RPCS3 has to wade through.
-fn remove(map: &mut Hash, path: &[&str]) {
+/// Removes `Enabled` from every version under `path` (hash, name, game,
+/// serial) and tidies up behind it, so switching a patch off does not leave a
+/// trail of empty maps RPCS3 has to wade through. A version that also holds
+/// saved config values keeps them.
+fn clear_enabled(map: &mut Hash, path: &[&str]) {
     let Some((head, rest)) = path.split_first() else {
+        let enabled = Yaml::String(K_ENABLED.into());
+        for version in map.values_mut() {
+            if let Yaml::Hash(leaf) = version {
+                leaf.remove(&enabled);
+            }
+        }
+        map.retain(|_, version| !matches!(version, Yaml::Hash(leaf) if leaf.is_empty()));
         return;
     };
     let key = Yaml::String((*head).into());
-    if rest.is_empty() {
-        map.remove(&key);
-        return;
-    }
     if let Some(Yaml::Hash(inner)) = map.get_mut(&key) {
-        remove(inner, rest);
+        clear_enabled(inner, rest);
         if inner.is_empty() {
             map.remove(&key);
         }
@@ -544,44 +640,66 @@ PPU-abc:
         assert!(games["LittleBigPlanet 2"]["BCES00850"].as_vec().is_some());
     }
 
+    /// `Enabled: true` at hash, name, game, serial, version.
+    fn switch_on(root: &mut Hash, keys: [&str; 5]) {
+        let [hash, name, game, serial, version] = keys;
+        let leaf = nested(
+            nested(nested(nested(nested(root, hash), name), game), serial),
+            version,
+        );
+        leaf.insert(Yaml::String(K_ENABLED.into()), Yaml::Boolean(true));
+    }
+
     #[test]
     fn switching_a_patch_off_leaves_nothing_behind() {
         let mut root = Hash::new();
-        {
-            let a = nested(&mut root, "PPU-abc");
-            let b = nested(a, "Unlock FPS");
-            let c = nested(b, "LittleBigPlanet 2");
-            let d = nested(c, "BCES00850");
-            let leaf = nested(d, "01.33");
-            leaf.insert(Yaml::String(K_ENABLED.into()), Yaml::Boolean(true));
-        }
-        remove(
-            &mut root,
-            &["PPU-abc", "Unlock FPS", "LittleBigPlanet 2", "BCES00850", "01.33"],
-        );
+        switch_on(&mut root, ["PPU-abc", "Unlock FPS", "LittleBigPlanet 2", "BCES00850", "01.33"]);
+        clear_enabled(&mut root, &["PPU-abc", "Unlock FPS", "LittleBigPlanet 2", "BCES00850"]);
         assert!(root.is_empty(), "empty maps were left behind");
     }
 
     #[test]
-    fn switching_one_off_leaves_the_others_alone() {
+    fn switching_a_patch_off_removes_it_under_every_version() {
         let mut root = Hash::new();
-        {
-            let leaf = nested(
-                nested(nested(nested(nested(&mut root, "PPU-abc"), "One"), "Game"), "SER"),
-                "01.00",
-            );
-            leaf.insert(Yaml::String(K_ENABLED.into()), Yaml::Boolean(true));
-            let other = nested(
-                nested(nested(nested(nested(&mut root, "PPU-abc"), "Two"), "Game"), "SER"),
-                "01.00",
-            );
-            other.insert(Yaml::String(K_ENABLED.into()), Yaml::Boolean(true));
+        for version in ["01.00", "01.01"] {
+            switch_on(&mut root, ["PPU-abc", "Fix", "Game", "SER", version]);
         }
-        remove(&mut root, &["PPU-abc", "One", "Game", "SER", "01.00"]);
-        assert!(root.get(&Yaml::String("PPU-abc".into())).is_some());
-        let kept = root[&Yaml::String("PPU-abc".into())].as_hash().unwrap();
-        assert!(kept.get(&Yaml::String("Two".into())).is_some());
-        assert!(kept.get(&Yaml::String("One".into())).is_none());
+        clear_enabled(&mut root, &["PPU-abc", "Fix", "Game", "SER"]);
+        assert!(root.is_empty(), "an entry or empty map was left behind");
+    }
+
+    #[test]
+    fn switching_off_keeps_other_games_and_saved_values() {
+        let mut root = Hash::new();
+        // The same SPU hash and name under another game, and a leaf of this
+        // game that holds a saved config value as well as the switch.
+        switch_on(&mut root, ["SPU-abc", "Fix", "Other", "SER2", "All"]);
+        switch_on(&mut root, ["SPU-abc", "Fix", "Game", "SER", "01.00"]);
+        let leaf = nested(
+            nested(nested(nested(nested(&mut root, "SPU-abc"), "Fix"), "Game"), "SER"),
+            "01.00",
+        );
+        leaf.insert(Yaml::String("Value".into()), Yaml::Integer(3));
+
+        clear_enabled(&mut root, &["SPU-abc", "Fix", "Game", "SER"]);
+
+        let enabled = read_enabled_from(&root);
+        assert_eq!(enabled.len(), 1);
+        assert_eq!(enabled[0].game, "Other");
+        let leaf = &root[&Yaml::String("SPU-abc".into())]["Fix"]["Game"]["SER"]["01.00"];
+        assert_eq!(leaf["Value"].as_i64(), Some(3), "saved value was wiped");
+        assert!(leaf["Enabled"].is_badvalue());
+    }
+
+    #[test]
+    fn a_config_entry_without_enabled_is_not_on() {
+        let mut root = Hash::new();
+        let leaf = nested(
+            nested(nested(nested(nested(&mut root, "SPU-abc"), "Fix"), "Game"), "SER"),
+            "01.00",
+        );
+        leaf.insert(Yaml::String("Value".into()), Yaml::Integer(3));
+        assert!(read_enabled_from(&root).is_empty());
     }
 
     #[test]
@@ -620,7 +738,8 @@ PPU-abc:
             .iter()
             .map(|(_, entry)| {
                 entry
-                    .values()
+                    .iter()
+                    .map(|(_, info)| info)
                     .filter(|info| {
                         info.as_hash()
                             .and_then(|i| i.get(&Yaml::String(K_GAMES.into())))
@@ -634,7 +753,7 @@ PPU-abc:
     }
 
     #[test]
-    fn a_repeated_key_parses_and_the_last_one_wins() {
+    fn a_repeated_hash_is_merged_the_way_rpcs3_does() {
         // Both halves of what the published file does: repeated Anchors blocks
         // whose anchors must all survive, and a repeated entry.
         let text = "\
@@ -659,12 +778,40 @@ PPU-abc:
         assert_eq!(entries.len(), 1, "the repeated hash should appear once");
         let (hash, patches) = &entries[0];
         assert_eq!(hash, "PPU-abc", "the padding should be gone");
-        // yaml-cpp keeps the last, so RPCS3 only ever applies "New".
-        assert!(patches.contains_key(&Yaml::String("New".into())));
-        assert!(!patches.contains_key(&Yaml::String("Old".into())));
+        // RPCS3 walks every block into one container per hash, so both are
+        // offered.
+        assert!(patches.iter().any(|(name, _)| name == "New"));
+        assert!(patches.iter().any(|(name, _)| name == "Old"));
         // The anchor from the first block still resolved, which is why the
         // blocks are renamed rather than dropped.
         assert!(root["Anchors"]["first"].as_hash().is_some());
+    }
+
+    #[test]
+    fn a_repeated_name_keeps_the_first_unless_the_later_one_is_newer() {
+        let text = "\
+PPU-abc:
+  \"Fix\":
+    Games: { G: { SER00001: [ 01.00 ] } }
+    Patch Version: 1.1
+PPU-abc:
+  \"Fix\":
+    Games: { G: { SER00001: [ 01.00 ] } }
+    Patch Version: 1.0
+  \"Other\":
+    Games: { G: { SER00001: [ 01.00 ] } }
+    Patch Version: 1.0
+PPU-abc:
+  \"Other\":
+    Games: { G: { SER00001: [ 01.00 ] } }
+    Patch Version: 1.2
+";
+        let root = parse(text).unwrap();
+        let found = match_title(root.as_hash().unwrap(), "SER00001", "01.00", &[]);
+        let version = |name: &str| found.iter().find(|p| p.name == name).unwrap().version.clone();
+        assert_eq!(found.len(), 2);
+        assert_eq!(version("Fix"), "1.1");
+        assert_eq!(version("Other"), "1.2");
     }
 
     /// One patch for one game by serial, the real MLAA fix written for every
@@ -711,6 +858,76 @@ SPU-def:
         assert!(!found.iter().any(|p| p.name.starts_with("Some other patch")));
         let lbp1 = match_title(root.as_hash().unwrap(), "BCES00141", "01.30", &[]);
         assert!(lbp1.is_empty(), "nothing in this list is for LittleBigPlanet 1");
+    }
+
+    #[test]
+    fn a_patch_under_two_game_names_is_offered_once() {
+        let text = "\
+SPU-702d0205a89d445d15dc0f96548546c4e2e7a59f:
+  \"Disable SPU MLAA\":
+    Games:
+      One:
+        BCES01663: [ 01.26 ]
+      Two:
+        BCES01663: [ 01.26 ]
+";
+        let root = parse(text).unwrap();
+        let found = match_title(root.as_hash().unwrap(), "BCES01663", "01.26", &[]);
+        assert_eq!(found.len(), 1);
+    }
+
+    #[test]
+    fn the_listing_that_fits_the_running_version_wins() {
+        let text = "\
+PPU-abc:
+  \"Fix\":
+    Games:
+      One:
+        SER00001: [ 01.00 ]
+      Two:
+        SER00001: [ 01.05 ]
+";
+        let root = parse(text).unwrap();
+        let found = match_title(root.as_hash().unwrap(), "SER00001", "01.05", &[]);
+        assert_eq!(found.len(), 1);
+        assert!(found[0].applies);
+        assert_eq!(found[0].game, "Two");
+    }
+
+    #[test]
+    fn an_all_serial_only_counts_under_the_game_all() {
+        let text = "\
+SPU-702d0205a89d445d15dc0f96548546c4e2e7a59f:
+  \"Disable SPU MLAA - LittleBigPlanet 2, LittleBigPlanet 3, LittleBigPlanet Hub\":
+    Games:
+      One:
+        All: [ All ]
+";
+        let root = parse(text).unwrap();
+        let found = match_title(root.as_hash().unwrap(), "BCES01663", "01.26", &[]);
+        assert!(found.is_empty(), "RPCS3 ignores an All serial under a named game");
+    }
+
+    #[test]
+    fn a_switch_for_another_game_does_not_turn_this_one_on() {
+        let root = parse(LIST).unwrap();
+        let switch = |game: &str, version: &str| Switch {
+            hash: "PPU-abc".into(),
+            name: "Unlock FPS".into(),
+            game: game.into(),
+            serial: "BCES01663".into(),
+            version: version.into(),
+        };
+        let on = |switches: &[Switch]| {
+            match_title(root.as_hash().unwrap(), "BCES01663", "01.26", switches)
+                .iter()
+                .find(|p| p.name == "Unlock FPS")
+                .unwrap()
+                .enabled
+        };
+        assert!(on(&[switch("LittleBigPlanet 3", "01.26")]));
+        assert!(!on(&[switch("LittleBigPlanet 3", "01.00")]), "an older version's switch");
+        assert!(!on(&[switch("Other", "01.26")]));
     }
 
     #[test]

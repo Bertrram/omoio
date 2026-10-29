@@ -20,13 +20,13 @@ pub struct Game {
     pub title: String,
     /// The version of the dump itself, out of its PARAM.SFO.
     pub version: Option<String>,
-    /// The official update Omoio installed, if any.
+    /// The official update Omoio installed itself, if any.
     ///
     /// An update lives in the emulator's own storage rather than in the dump,
-    /// so the dump keeps saying what it always said. RPCS3's game-data folder
-    /// does hold a version, but it is written for reasons of its own and did
-    /// not match either the disc or anything we installed, so it is not
-    /// something to read a version out of. What we put there ourselves is.
+    /// so the dump keeps saying what it always said. This note only covers
+    /// updates that went in through Omoio. For RPCS3 what is in its
+    /// dev_hdd0 wins over it, older or newer, because RPCS3 matches patches
+    /// against that; with no update there the disc runs, whatever this says.
     #[serde(default)]
     pub update_version: Option<String>,
     pub path: PathBuf,
@@ -34,7 +34,9 @@ pub struct Game {
 }
 
 impl Game {
-    /// The version that actually runs, which is the update when there is one.
+    /// The version Omoio knows of: the update it installed when there is one,
+    /// else the dump's. What will run is
+    /// `EmulatorBackend::running_version`, which asks the emulator first.
     pub fn running_version(&self) -> Option<&str> {
         self.update_version
             .as_deref()

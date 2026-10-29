@@ -365,6 +365,12 @@ pub trait EmulatorBackend: Sync {
         None
     }
 
+    /// The version the emulator will run, which patches and updates are
+    /// matched against. Omoio's own note of it unless the emulator knows better.
+    fn running_version(&self, _app: &AppHandle, game: &Game) -> Option<String> {
+        game.running_version().map(str::to_string)
+    }
+
     /// Switches on the known fixes for this game that have not been applied
     /// before, and returns their ids so none is ever applied twice. Most
     /// emulators have none, so this does nothing unless one overrides it.

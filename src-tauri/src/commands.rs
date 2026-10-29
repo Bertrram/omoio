@@ -501,7 +501,30 @@ pub fn catalogue(
 #[tauri::command]
 pub fn list_games(app: AppHandle) -> Result<Vec<GameEntry>, String> {
     let library = Library::load(&library_path(&app)?);
-    Ok(library.games().iter().cloned().map(|g| entry(&app, g)).collect())
+    Ok(library
+        .games()
+        .iter()
+        .cloned()
+        .map(|mut g| {
+            // Shown at the version the emulator will run, the same one patches
+            // and updates go by, so a stale note or an update put in outside
+            // Omoio never makes the screen disagree with them. Not saved.
+            let running = crate::backends::for_console(g.console).and_then(|b| b.running_version(&app, &g));
+            g.update_version = shown_update(&g, running.as_deref());
+            entry(&app, g)
+        })
+        .collect())
+}
+
+/// The update to show for a game, given the version its emulator says runs.
+/// That version is the update unless it is the disc's own; with no answer from
+/// the emulator, Omoio's note stands.
+fn shown_update(game: &crate::core::library::Game, running: Option<&str>) -> Option<String> {
+    match running {
+        Some(running) if Some(running) != game.version.as_deref() => Some(running.to_string()),
+        Some(_) => None,
+        None => game.update_version.clone(),
+    }
 }
 
 /// Said once over the library when loading it had to keep a copy of the file
@@ -1220,15 +1243,9 @@ pub async fn install_update(
     let file = library_path(&app)?;
     // What RPCS3 itself has installed comes first; the library's note of it
     // can fall behind.
-    let installed = rpcs3::updates::installed_version(&app, &title_id)
-        .or_else(|| {
-            Library::load(&file)
-                .games()
-                .iter()
-                .find(|g| g.title_id == title_id)
-                .and_then(|g| g.update_version.clone().or_else(|| g.version.clone()))
-        })
-        .unwrap_or_default();
+    let library = Library::load(&file);
+    let game = library.games().iter().find(|g| g.title_id == title_id);
+    let installed = rpcs3::updates::running_version(&app, &title_id, game);
     // Already there, so only the library's note needs catching up.
     if installed == update.version {
         return note_update(&file, &title_id, installed);
@@ -1381,12 +1398,12 @@ pub fn pending_updates(app: AppHandle) -> Result<(bool, Vec<PendingUpdate>), Str
         .games()
         .iter()
         .filter_map(|game| {
-            let installed = game.running_version()?;
+            let installed = crate::backends::for_console(game.console)?.running_version(&app, game)?;
             let published = newest.get(&game.title_id)?;
-            rpcs3::compat::is_newer(published, installed).then(|| PendingUpdate {
+            rpcs3::compat::is_newer(published, &installed).then(|| PendingUpdate {
                 title_id: game.title_id.clone(),
                 title: game.title.clone(),
-                installed: installed.to_string(),
+                installed,
                 newest: published.clone(),
             })
         })
@@ -2102,4 +2119,37 @@ pub fn stop_figure_pictures() {
 #[tauri::command]
 pub fn pad_input(device: String) -> Option<Vec<&'static str>> {
     crate::pads::held(&device)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn game(version: &str, update: Option<&str>) -> crate::core::library::Game {
+        crate::core::library::Game {
+            console: Console::Ps3,
+            title_id: "BLUS31076".to_string(),
+            title: "Skylanders SWAP Force".to_string(),
+            version: Some(version.to_string()),
+            update_version: update.map(str::to_string),
+            path: PathBuf::from("D:\\games\\BLUS31076"),
+            size_bytes: 1,
+        }
+    }
+
+    #[test]
+    fn a_stale_note_is_dropped_when_the_disc_runs() {
+        assert_eq!(shown_update(&game("01.00", Some("01.33")), Some("01.00")), None);
+    }
+
+    #[test]
+    fn the_version_that_runs_is_shown_as_the_update() {
+        assert_eq!(shown_update(&game("01.00", Some("01.33")), Some("01.05")), Some("01.05".to_string()));
+        assert_eq!(shown_update(&game("01.00", None), Some("01.05")), Some("01.05".to_string()));
+    }
+
+    #[test]
+    fn the_note_stands_when_the_emulator_has_no_answer() {
+        assert_eq!(shown_update(&game("01.00", Some("01.33")), None), Some("01.33".to_string()));
+    }
 }

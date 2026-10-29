@@ -638,14 +638,19 @@ impl super::EmulatorBackend for Rpcs3 {
         Some(("PS3 results from RPCS3", "https://rpcs3.net/compatibility"))
     }
 
+    /// What RPCS3 has in dev_hdd0, since that is what it matches patches by.
+    fn running_version(&self, app: &AppHandle, game: &crate::core::library::Game) -> Option<String> {
+        Some(updates::running_version(app, &game.title_id, Some(game))).filter(|v| !v.is_empty())
+    }
+
     fn apply_fixes(
         &self,
         app: &AppHandle,
         game: &crate::core::library::Game,
         applied: &[String],
     ) -> Vec<&'static str> {
-        let version = game.running_version().unwrap_or_default();
-        fixes::apply(app, &game.title_id, version, applied)
+        let version = self.running_version(app, game).unwrap_or_default();
+        fixes::apply(app, &game.title_id, &version, applied)
     }
 
     /// RPCS3's community patches, matched against the version that runs, so
@@ -656,13 +661,13 @@ impl super::EmulatorBackend for Rpcs3 {
         title_id: &str,
         game: Option<&crate::core::library::Game>,
     ) -> crate::core::community::Packs {
-        let version = game.and_then(|g| g.running_version()).unwrap_or_default();
+        let version = updates::running_version(app, title_id, game);
         crate::core::community::Packs {
             have_list: patches::have_catalogue(app),
             source: "the RPCS3 community".to_string(),
             waiting: None,
             with_emulator: false,
-            packs: patches::for_title(app, title_id, version).into_iter().map(patches::as_pack).collect(),
+            packs: patches::for_title(app, title_id, &version).into_iter().map(patches::as_pack).collect(),
         }
     }
 
@@ -672,12 +677,12 @@ impl super::EmulatorBackend for Rpcs3 {
         game: &crate::core::library::Game,
         change: &crate::core::community::PackChange,
     ) -> Result<(), String> {
-        let version = game.running_version().unwrap_or_default();
-        let patch = patches::for_title(app, &game.title_id, version)
+        let version = self.running_version(app, game).unwrap_or_default();
+        let patch = patches::for_title(app, &game.title_id, &version)
             .into_iter()
             .find(|patch| patches::pack_id(patch) == change.id)
             .ok_or("That patch isn't in the list any more. Download the latest patches.")?;
-        patches::set_enabled(app, &patch, &game.title_id, version, change.on)
+        patches::set_enabled(app, &patch, &game.title_id, &version, change.on)
     }
 
     fn refresh_community<'a>(
