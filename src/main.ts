@@ -20,7 +20,6 @@ import { renderBigPicture } from "./bigpicture/bigPicture";
 import { renderPlayingBar, showPlayingNote } from "./components/playingBar";
 import { openSetupIfNeeded } from "./components/setupSheet";
 import { updateEmulatorsInBackground } from "./components/emulatorUpdates";
-import { startUpdateChecks } from "./components/omoioUpdate";
 import { watchForDroppedGames } from "./components/dropZone";
 import { store, type ViewId } from "./state";
 import { renderTitlebar } from "./components/titlebar";
@@ -152,11 +151,7 @@ store.subscribe((state) => {
 
 getRpcs3Version().then((version) => store.setRpcs3Version(version));
 getFirmwareVersion().then((version) => store.setFirmwareVersion(version));
-// Omoio's own updates wait for the library, so the first moments after the
-// window opens go to showing it.
-listGames()
-  .then((games) => store.setGames(games))
-  .finally(startUpdateChecks);
+listGames().then((games) => store.setGames(games));
 
 // Whatever a load of the game list had to keep or couldn't open is said
 // each time the list comes in, not only at start-up, so a problem met while

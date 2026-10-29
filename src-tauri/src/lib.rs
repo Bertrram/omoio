@@ -73,8 +73,6 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
-            #[cfg(desktop)]
-            app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
             big_picture::start(app.handle());
             figure_pictures::tidy(app.handle());
             Ok(())

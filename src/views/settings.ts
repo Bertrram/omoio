@@ -29,7 +29,6 @@ import {
   type Places,
   type Settings,
 } from "../api";
-import { updateControls } from "../components/omoioUpdate";
 import { store } from "../state";
 import type { View } from "./view";
 
@@ -377,12 +376,6 @@ export async function renderSettings(): Promise<View> {
   );
 
   content.appendChild(section("Session logs", keep.row, logsRow.row));
-
-  // ---- Omoio itself ----
-  const versionRow = row("Omoio", "Looks for a new version when it starts and every few hours after.");
-  const [updateSaid, updateButton] = updateControls();
-  versionRow.right.append(updateSaid, value(version), updateButton);
-  content.appendChild(section("Updates", versionRow.row));
 
   // ---- library ----
   const count = store.get().games?.length ?? 0;
