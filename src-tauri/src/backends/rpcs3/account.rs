@@ -133,8 +133,10 @@ pub fn read(app: &AppHandle) -> Account {
 /// with German games would read as Germany, and Europe with Japanese ones as
 /// no region at all. So the region picked is remembered in Omoio's settings,
 /// and it is the answer while config.yml's License Area is still that
-/// region's. A region picked before Omoio remembered it, or an area changed
-/// in RPCS3's own settings since, is found by the pair, as before.
+/// region's. A region picked before Omoio remembered it is remembered as a
+/// Game language first changes the Language (`game_language_into`), and
+/// until then, or for an area changed in RPCS3's own settings since, the
+/// region is found by the pair, as before.
 fn region_of(config: &str, remembered: Option<&str>) -> String {
     let area = setting(config, K_AREA).unwrap_or_default();
     if let Some(region) = remembered.and_then(|id| REGIONS.iter().find(|r| r.id == id)) {
@@ -237,6 +239,12 @@ fn game_language_into(config_path: &Path, settings_path: &Path) {
     // value Omoio replaced is never lost on the way.
     if let Some(keep) = kept_after.filter(|_| kept.is_none()) {
         settings.language_kept.insert(KEPT.to_string(), keep.to_string());
+        // A region picked before Omoio remembered one is told only by the
+        // pair, which the Language about to be written breaks, so the region
+        // the pair names now is remembered first (`region_of`).
+        if settings.region.is_none() {
+            settings.region = Some(region_of(&config, None)).filter(|region| !region.is_empty());
+        }
         if settings.save(settings_path).is_err() {
             return;
         }
@@ -530,6 +538,52 @@ Video:
         pick(Some("de"));
         assert!(!config.exists());
         assert_eq!(kept(), None);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_region_picked_before_omoio_remembered_one_holds_once_a_game_language_is_set() {
+        let dir = std::env::temp_dir().join(format!("omoio-region-before-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let config = dir.join("config.yml");
+        let settings = dir.join("settings.json");
+        let region = || {
+            let text = std::fs::read_to_string(&config).unwrap();
+            region_of(&text, Settings::load(&settings).region.as_deref())
+        };
+        let pick = |id: &str| {
+            let mut chosen = Settings::load(&settings);
+            chosen.game_language = Some(id.to_string());
+            chosen.save(&settings).unwrap();
+            game_language_into(&config, &settings);
+        };
+
+        // Europe, picked in 0.3.4, which remembered no region.
+        std::fs::write(&config, config_set_to("SCEE", "English (UK)")).unwrap();
+        assert_eq!(region(), "eu-en");
+        pick("de");
+        assert!(std::fs::read_to_string(&config).unwrap().contains("  Language: German\n"));
+        assert_eq!(Settings::load(&settings).region.as_deref(), Some("eu-en"), "remembered before it changed");
+        assert_eq!(region(), "eu-en", "still Europe, not Germany");
+        pick("ja");
+        assert_eq!(region(), "eu-en", "and not no region at all");
+
+        // A region remembered already is left as it is.
+        let _ = std::fs::remove_file(&settings);
+        let mut chosen = Settings::load(&settings);
+        chosen.region = Some("eu-da".to_string());
+        chosen.save(&settings).unwrap();
+        std::fs::write(&config, config_set_to("SCEE", "Danish")).unwrap();
+        pick("de");
+        assert_eq!(Settings::load(&settings).region.as_deref(), Some("eu-da"));
+
+        // A pair that names no region of Omoio's is remembered as none.
+        let _ = std::fs::remove_file(&settings);
+        std::fs::write(&config, config_set_to("SCEA", "German")).unwrap();
+        pick("fr");
+        assert_eq!(Settings::load(&settings).region, None);
+        assert_eq!(Settings::load(&settings).language_kept.get(KEPT).map(String::as_str), Some("German"));
 
         let _ = std::fs::remove_dir_all(&dir);
     }
