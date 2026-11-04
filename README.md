@@ -38,6 +38,12 @@ issue.
   the portal from your controller, in Spyro's Adventure, Giants, SWAP Force and
   Trap Team on PS3, in SWAP Force, Trap Team, SuperChargers and Imaginators on
   Wii U and in Spyro's Adventure on Wii.
+- An Infinity Base menu for Disney Infinity and a Toy Pad menu for LEGO
+  Dimensions, on PS3, with each figure's own picture read from your copy of the
+  game.
+- One game language for every system. Games start in it when they have it.
+- When a game ends unexpectedly, the Logs screen says so, with what the
+  emulator and Windows reported.
 - Community packs: RPCS3's patches for PS3 games and Cemu's graphic packs for
   Wii U games, like 60 fps for Skylanders SWAP Force, downloaded with one
   press. Wii and GameCube games get the patches and cheat codes that come with
@@ -169,6 +175,28 @@ Trap Team and SuperChargers on Wii yet, and the other Skylanders games aren't
 supported. In the catalogue, Skylanders games show whether the portal menu works
 in them, and importing one where it doesn't warns you and names the version
 where it does.
+
+## Disney Infinity and LEGO Dimensions
+
+Disney Infinity and LEGO Dimensions on PS3 get menus of their own, through
+RPCS3: an Infinity Base and a Toy Pad, laid out as the real ones. They open
+with the same buttons as the portal menu. Pick a place on the base or the pad,
+then a figure, and it goes on. The first time, RPCS3's own figure maker makes
+it, and Omoio saves it so it keeps what it has earned.
+
+In Disney Infinity 1.0, 2.0 and 3.0, each place offers only what fits it in that
+game: characters on Player One and Player Two, power discs under them, and play
+sets and Toy Box discs on the hexagon. RPCS3 draws parts of these games too
+bright, a known RPCS3 problem.
+
+In LEGO Dimensions, minifigures go on any pad and can be moved from one pad to
+another when the game asks. For a vehicle or gadget, put a Blank Tag on the
+centre pad and build it in the game, which writes it to the tag. On PS3 Omoio
+can't see the colours the game lights the pads in.
+
+Get pictures in the game's panel reads the figures' pictures from your own copy
+of Disney Infinity 1.0 or LEGO Dimensions, as it does for Skylanders. The menus
+aren't on Wii U or Wii yet. They are new, so tell us how they go.
 
 ## Install
 
@@ -415,8 +443,9 @@ dumps of games you own. It doesn't crack anything: Wii U disc images need your
 own keys file, and Cemu does the decrypting, as Dolphin does for Wii discs and RPCS3 for
 an encrypted PS3 disc image with the .dkey that came with it. PS3 firmware comes from Sony's page,
 downloaded by you. Covers come only from RAWG or your own games and saves, and the
-Skylanders pictures only from your own copy of the game. Omoio has no connection with Activision, who
-publish Skylanders. RPCS3, Cemu and Dolphin are separate projects, and all
+Skylanders, Disney Infinity and LEGO Dimensions pictures only from your own copy of the game. Omoio has
+no connection with Activision, who publish Skylanders, Disney, or the LEGO Group and Warner Bros.,
+who make Disney Infinity and LEGO Dimensions. RPCS3, Cemu and Dolphin are separate projects, and all
 credit for the emulation goes to them. RPCS3 and Dolphin run as their official
 builds. Cemu runs as Omoio's build of Cemu 2.6, which only adds a portal server,
 Imaginators' last level pieces and Mystery Chests, and Trap Team's portal speaker;
