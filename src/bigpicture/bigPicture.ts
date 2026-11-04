@@ -9,6 +9,7 @@ import {
   listSessions,
   onGameRefused,
   onGameStopped,
+  onSessionKept,
   onPadNotFound,
   padsConnected,
   padInput,
@@ -1302,6 +1303,13 @@ export function renderBigPicture(): HTMLElement {
     } else if (why && store.get().bigPicture) {
       say(why);
     }
+    void readSessions().then(() => {
+      if (showing) render(false);
+    });
+  });
+
+  // The ended game's record comes a few seconds after it stops.
+  void onSessionKept(() => {
     void readSessions().then(() => {
       if (showing) render(false);
     });

@@ -215,6 +215,12 @@ export function onGameStopped(handler: () => void): Promise<UnlistenFn> {
   return listen("game-stopped", () => handler());
 }
 
+/// A session's record is written, a few seconds after "game-stopped" when
+/// Omoio waits for Windows' report of how the emulator ended.
+export function onSessionKept(handler: () => void): Promise<UnlistenFn> {
+  return listen("session-kept", () => handler());
+}
+
 export function onGameFullscreen(handler: (on: boolean) => void): Promise<UnlistenFn> {
   return listen<boolean>("game-fullscreen", (event) => handler(event.payload));
 }
@@ -248,7 +254,17 @@ export interface PlaySession {
   seconds: number;
   ending: "stopped" | "closed" | "crashed" | "refused";
   machine: Machine;
+  /// The lines worth reading from the emulator's own log.
   problems: string[];
+  /// The emulator's exit code, when Omoio read one. Its words are in notes.
+  exit_code?: number | null;
+  /// Omoio's own notes on how the session ended, a line each: the exit code
+  /// in words and what Windows logged. Empty in sessions kept before them.
+  notes?: string[];
+  /// The one line the Logs page shows for the session, in plain words.
+  /// Sessions kept before it was written have none, and the page works one
+  /// out from problems as it always did.
+  summary?: string | null;
   log_file: string;
 }
 

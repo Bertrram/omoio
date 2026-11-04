@@ -35,16 +35,24 @@ struct Ended {
     seconds: u64,
     stopped_by_us: bool,
     refused: Option<String>,
+    process: Option<crate::process_watch::Watched>,
+    began: std::time::SystemTime,
 }
 
 struct Running {
     pid: u32,
+    /// The emulator's process, held from the moment it started, for how
+    /// it ended. `None` when Windows wouldn't open it.
+    process: Option<crate::process_watch::Watched>,
     playing: Playing,
     window: Option<isize>,
     fullscreen: bool,
     /// Taken off the screen for Big Picture while the game carries on.
     hidden: bool,
     started: std::time::Instant,
+    /// The same moment by the clock, to tell the emulator's log of this
+    /// session from one an earlier session left.
+    began: std::time::SystemTime,
     /// Set by Stop, so a session we ended is never reported as a crash.
     stopped_by_us: bool,
     /// What Omoio did to the game's emulator or its windows on its own, with
@@ -56,14 +64,16 @@ struct Running {
 }
 
 impl Session {
-    pub fn begin(&self, pid: u32, playing: Playing) {
+    pub fn begin(&self, launched: crate::process_watch::Launched, playing: Playing) {
         *self.inner.lock().unwrap() = Some(Running {
-            pid,
+            pid: launched.pid,
+            process: launched.process,
             playing,
             window: None,
             fullscreen: false,
             hidden: false,
             started: std::time::Instant::now(),
+            began: std::time::SystemTime::now(),
             stopped_by_us: false,
             notes: Vec::new(),
             refused: None,
@@ -184,8 +194,8 @@ impl Session {
     }
 
     /// Ends the session of the game started as `pid`, and only that one,
-    /// under one lock: its watcher waits on tasklist between its look at the
-    /// pid and this, and a game started meanwhile keeps its own session.
+    /// under one lock: its watcher can wait on tasklist between its look at
+    /// the pid and this, and a game started meanwhile keeps its own session.
     fn end(&self, pid: u32) -> Option<Ended> {
         let mut inner = self.inner.lock().unwrap();
         if inner.as_ref().map(|r| r.pid) != Some(pid) {
@@ -197,7 +207,22 @@ impl Session {
             playing: r.playing,
             notes: r.notes,
             refused: r.refused,
+            process: r.process,
+            began: r.began,
         })
+    }
+
+    /// Whether the emulator started as `pid` has ended. Asked of the handle
+    /// Omoio holds to it, which costs nothing; tasklist, started every look
+    /// before, is the fallback for a process Windows wouldn't open.
+    fn has_ended(&self, pid: u32) -> bool {
+        {
+            let inner = self.inner.lock().unwrap();
+            if let Some(process) = inner.as_ref().filter(|r| r.pid == pid).and_then(|r| r.process.as_ref()) {
+                return !process.running();
+            }
+        }
+        !still_running(pid)
     }
 
     /// Ends the game if one is running. An emulator that writes out what it
@@ -292,22 +317,30 @@ pub fn watch(app: AppHandle, pid: u32) {
                 return;
             }
 
-            if !still_running(pid) {
-                // Read the log before anything else can overwrite it.
-                if let Some(Ended { playing, mut notes, seconds, stopped_by_us, refused: words }) = session.end(pid) {
+            if session.has_ended(pid) {
+                if let Some(mut ended) = session.end(pid) {
+                    let ended_at = std::time::SystemTime::now();
                     // Cemu says why it won't start a game only in a message,
                     // which Omoio read and closed (backends::cemu::start_errors).
                     let refused = crate::backends::cemu::start_errors::take(pid);
-                    notes.extend(
-                        crate::backends::for_console(playing.console)
+                    ended.notes.extend(
+                        crate::backends::for_console(ended.playing.console)
                             .map(|backend| backend.session_notes(pid))
                             .unwrap_or_default(),
                     );
-                    keep_session_log(&app, &playing, seconds, stopped_by_us, refused.as_ref(), words.as_deref(), &notes);
-                    if let Some(refused) = refused {
-                        let _ = app.emit("game-refused", refused.shown);
+                    // Read the log before anything else can overwrite it: a
+                    // game started again at once starts the same emulator,
+                    // which writes its log afresh.
+                    let log = read_emulator_log(&app, &ended, refused.as_ref());
+                    if let Some(refused) = &refused {
+                        let _ = app.emit("game-refused", refused.shown.clone());
                     }
-                    let _ = app.emit("game-stopped", playing);
+                    let _ = app.emit("game-stopped", ended.playing.clone());
+                    // Windows' report of a crash can take a few seconds to be
+                    // written, so it is waited for on a thread of its own,
+                    // and the window and the next game never wait on it.
+                    let app = app.clone();
+                    std::thread::spawn(move || keep_session_log(&app, ended, refused, log, ended_at));
                 }
                 return;
             }
@@ -768,49 +801,118 @@ fn learn_version(app: &AppHandle, title_id: &str, version: String) {
     }
 }
 
-/// Copies what the emulator said about this session somewhere it will survive,
-/// and records how it ended. Emulators overwrite their own log on the next
-/// launch, so this is the only chance to keep it, and to learn from it what
-/// the game's own files couldn't say.
-fn keep_session_log(
+/// The emulator's log of the session, read as it ended, and whether it is
+/// this session's: an emulator that ended before it wrote its log leaves the
+/// one an earlier session wrote. Cemu writes log.txt afresh only once a game
+/// has loaded (cemuLog_createLogFile, CemuLogging.cpp, called from
+/// CafeSystem.cpp line 208, Bertram's Cemu at v2.6-2, read 4 November 2026),
+/// so a Cemu ended while loading would otherwise hand on the last session's
+/// crashlog. A log is this session's when it was written after the
+/// emulator's process was made, or, where Omoio holds no handle to it, after
+/// the session began, with a few seconds for the launch. Read as bytes: a
+/// log carries text from games, drivers and Windows, and one byte that isn't
+/// UTF-8 would otherwise lose the whole of it.
+fn read_emulator_log(
     app: &AppHandle,
-    playing: &Playing,
-    seconds: u64,
-    stopped_by_us: bool,
+    ended: &Ended,
     refused: Option<&crate::backends::cemu::start_errors::Refusal>,
-    // Why another emulator wouldn't start the game, whose own log is kept.
-    words: Option<&str>,
-    notes: &[String],
-) {
-    use crate::core::playlog::{self, Ending, Session as LoggedSession};
-
-    let backend = crate::backends::for_console(playing.console);
+) -> (String, bool) {
     // Cemu starts no log for a game it refused, and the one there is the
     // game before's, so what it said in its message is kept in its place.
-    let mut log = match refused {
-        Some(refused) => refused.said.clone(),
-        None => backend
-            .as_ref()
-            .and_then(|backend| backend.log_file(app))
-            .and_then(|path| std::fs::read_to_string(path).ok())
-            .unwrap_or_default(),
-    };
-    for note in notes {
-        log.push_str(&format!("\n{note}\n"));
+    if let Some(refused) = refused {
+        return (refused.said.clone(), true);
     }
-    if let Some(version) = backend.as_ref().and_then(|backend| backend.version_from_log(&log)) {
-        learn_version(app, &playing.title_id, version);
+    let Some(path) = crate::backends::for_console(ended.playing.console).and_then(|backend| backend.log_file(app)) else {
+        return (String::new(), false);
+    };
+    let text = std::fs::read(&path)
+        .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+        .unwrap_or_default();
+    let since = match &ended.process {
+        Some(process) => process.started(),
+        None => ended.began - std::time::Duration::from_secs(5),
+    };
+    let fresh = std::fs::metadata(&path)
+        .and_then(|meta| meta.modified())
+        .is_ok_and(|written| written >= since);
+    (text, fresh)
+}
+
+/// How long before the end Windows' display driver events count as part of
+/// it. They name no process (event 4101 holds only the driver's name), so
+/// their time is all that ties them to the end.
+const DISPLAY_BEFORE_END: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// One writer at a time for sessions.json: a session's record is written a
+/// few seconds after it ends, and the next game's can end meanwhile.
+static SESSIONS: Mutex<()> = Mutex::new(());
+
+/// Keeps what the emulator said about this session somewhere it will
+/// survive, and records how it ended. Emulators overwrite their own log on
+/// the next launch, so this is the only chance to keep it, and to learn from
+/// it what the game's own files couldn't say.
+///
+/// An end Omoio didn't cause gets Omoio's note of the emulator's exit code,
+/// and of what Windows logged about the emulator's process as it ended,
+/// matched by its process id and the time it was made, never by its name.
+/// That takes a wait of a few seconds at most, so this runs on a thread of
+/// its own.
+fn keep_session_log(
+    app: &AppHandle,
+    ended: Ended,
+    refused: Option<crate::backends::cemu::start_errors::Refusal>,
+    (emulator_log, fresh): (String, bool),
+    ended_at: std::time::SystemTime,
+) {
+    use crate::core::ending::{self, Evidence};
+    use crate::core::playlog::{self, Session as LoggedSession};
+
+    let console = ended.playing.console;
+    let backend = crate::backends::for_console(console);
+    let emulator = backend.map(|backend| backend.name()).unwrap_or("The emulator");
+    if let Some(version) = backend.and_then(|backend| backend.version_from_log(&emulator_log)) {
+        learn_version(app, &ended.playing.title_id, version);
     }
 
-    let ending = if refused.is_some() || words.is_some() {
-        Ending::Refused
-    } else if stopped_by_us {
-        Ending::Stopped
-    } else if playlog::has_fatal(&log) {
-        Ending::Crashed
+    let refusal = refused.as_ref().map(|refused| refused.shown.clone()).or(ended.refused.clone());
+    let ours = refusal.is_some() || ended.stopped_by_us;
+    // A log an earlier session left says nothing about this one.
+    let (crash_line, problems) = if refusal.is_some() || !fresh {
+        (None, Vec::new())
     } else {
-        Ending::Closed
+        (ending::log_crash(console, &emulator_log), ending::log_problems(console, &emulator_log, 40))
     };
+    let exit_code = ended.process.as_ref().and_then(|process| process.exit_code());
+    let events = match ended.process.as_ref().filter(|_| !ours) {
+        Some(process) => {
+            let (pid, created, started) = (process.pid, process.created, process.started());
+            let about_it = crate::event_log::wait_for_events(started, ended_at, |xml| {
+                ending::parse_event(xml).is_some_and(|event| ending::is_about(&event, pid, created))
+            });
+            let display = crate::event_log::events_since(ended_at - DISPLAY_BEFORE_END)
+                .into_iter()
+                .filter(|xml| ending::parse_event(xml).is_some_and(|event| ending::is_display_event(&event)));
+            about_it.into_iter().chain(display).filter_map(|xml| ending::parse_event(&xml)).collect()
+        }
+        None => Vec::new(),
+    };
+    let evidence = Evidence {
+        refusal,
+        stopped_by_us: ended.stopped_by_us,
+        exit_code,
+        crash_line,
+        events,
+    };
+    let how = ending::decide(&evidence);
+    let end_notes = ending::notes(emulator, &evidence);
+    let summary = ending::summary(console, emulator, how, &evidence, &problems);
+
+    // Omoio's notes go after the emulator's own lines, where nothing reads
+    // them for the emulator's marks.
+    let mut log = emulator_log;
+    for note in ended.notes.iter().chain(&end_notes) {
+        log.push_str(&format!("\n{note}\n"));
+    }
 
     let Ok(data_dir) = app.path().data_dir() else {
         return;
@@ -823,43 +925,48 @@ fn keep_session_log(
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    let log_file = logs.join(format!("{}-{stamp}.log", playing.title_id));
+    let log_file = logs.join(format!("{}-{stamp}.log", ended.playing.title_id));
     let _ = std::fs::write(&log_file, &log);
 
     let session = LoggedSession {
-        console: playing.console,
-        title_id: playing.title_id.clone(),
-        title: playing.title.clone(),
+        console,
+        title_id: ended.playing.title_id.clone(),
+        title: ended.playing.title.clone(),
         started: stamp.to_string(),
-        seconds,
-        ending,
+        seconds: ended.seconds,
+        ending: how,
         machine: playlog::read_machine(&log),
-        problems: match (refused, words) {
-            (Some(refused), _) => vec![refused.shown.clone()],
-            (None, Some(words)) => vec![words.to_string()],
-            (None, None) => playlog::read_problems(&log, 40),
-        },
+        problems,
         log_file: log_file.to_string_lossy().into_owned(),
+        exit_code,
+        notes: end_notes,
+        summary: Some(summary),
     };
 
-    let index = logs.join("sessions.json");
-    let mut all: Vec<LoggedSession> = std::fs::read_to_string(&index)
-        .ok()
-        .and_then(|t| serde_json::from_str(&t).ok())
-        .unwrap_or_default();
-    all.insert(0, session);
+    {
+        let _one_writer = SESSIONS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let index = logs.join("sessions.json");
+        let mut all: Vec<LoggedSession> = std::fs::read_to_string(&index)
+            .ok()
+            .and_then(|t| serde_json::from_str(&t).ok())
+            .unwrap_or_default();
+        all.insert(0, session);
 
-    // Keep as many as the user asked for and take the old logs with them, so
-    // this never grows without bound on someone's disk.
-    let keep = crate::core::settings::Settings::load(&data_dir.join("Omoio").join("settings.json"))
-        .keep_sessions;
-    for old in all.iter().skip(keep) {
-        let _ = std::fs::remove_file(&old.log_file);
+        // Keep as many as the user asked for and take the old logs with them,
+        // so this never grows without bound on someone's disk.
+        let keep = crate::core::settings::Settings::load(&data_dir.join("Omoio").join("settings.json"))
+            .keep_sessions;
+        for old in all.iter().skip(keep) {
+            let _ = std::fs::remove_file(&old.log_file);
+        }
+        all.truncate(keep);
+        if let Ok(text) = serde_json::to_string_pretty(&all) {
+            let _ = std::fs::write(&index, text);
+        }
     }
-    all.truncate(keep);
-    if let Ok(text) = serde_json::to_string_pretty(&all) {
-        let _ = std::fs::write(&index, text);
-    }
+    // The record is written a few seconds after "game-stopped", so whatever
+    // shows the last sessions reads them again now.
+    let _ = app.emit("session-kept", ());
 }
 
 /// Fills the content area, or the whole screen when the user asked for that

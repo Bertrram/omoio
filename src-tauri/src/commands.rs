@@ -710,10 +710,11 @@ fn launch(app: AppHandle, title_id: &str) -> Result<(), String> {
     backend.prepare(&app, game)?;
     let unwritten = crate::controllers::before_launch(&app, backend, &game.title_id).is_err();
     tune_picture(&app, backend);
-    let pid = backend.launch(&app, game)?;
+    let launched = backend.launch(&app, game)?;
+    let pid = launched.pid;
     let session = app.state::<Session>();
     session.begin(
-        pid,
+        launched,
         Playing {
             title_id: game.title_id.clone(),
             title: game.title.clone(),

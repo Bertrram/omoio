@@ -416,7 +416,7 @@ impl super::EmulatorBackend for Dolphin {
     /// another Dolphin's in the registry can send it elsewhere
     /// (`UICommon::SetUserDirectory`). A Wii game starts with the GameCube
     /// ports Omoio drives empty (controllers.rs, `gamecube_ports_off`).
-    fn launch(&self, app: &AppHandle, game: &Game) -> Result<u32, String> {
+    fn launch(&self, app: &AppHandle, game: &Game) -> Result<crate::process_watch::Launched, String> {
         let exe = install::exe_path(app)?;
         if !exe.is_file() {
             return Err("Install Dolphin from the Emulators screen first, then you can play.".to_string());
@@ -456,11 +456,13 @@ impl super::EmulatorBackend for Dolphin {
             command.arg("--exec").arg(disc);
         }
         let child = command.spawn().map_err(|e| e.to_string())?;
-        let pid = child.id();
+        // Before `child` is dropped as this returns, which closes the
+        // handle the spawn gave it.
+        let launched = crate::process_watch::Launched::from_child(&child);
         if portal {
-            portal::prepare(pid);
+            portal::prepare(launched.pid);
         }
-        Ok(pid)
+        Ok(launched)
     }
 
     /// Dolphin writes a figure on the portal through a buffer it never

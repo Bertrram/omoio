@@ -17,6 +17,7 @@ use crate::core::import_warning::Imported;
 use crate::core::library::Game;
 use crate::core::figures::Character;
 use crate::core::pad_layout::{Pad, Player};
+use crate::process_watch::Launched;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
@@ -218,8 +219,10 @@ pub trait EmulatorBackend: Sync {
         graphics_memory: u64,
     ) -> Result<Option<u32>, String>;
 
-    /// Starts the game and returns the emulator's process id.
-    fn launch(&self, app: &AppHandle, game: &Game) -> Result<u32, String>;
+    /// Starts the game and returns the emulator's process: its id, and a
+    /// handle to it opened while the spawned child still held its own
+    /// (`Launched::from_child`), so the session reads how it ended.
+    fn launch(&self, app: &AppHandle, game: &Game) -> Result<Launched, String>;
 
     /// Whether a game is stopped by asking the emulator to close the way its
     /// own Stop does (`ask_to_close`), rather than by ending its process at

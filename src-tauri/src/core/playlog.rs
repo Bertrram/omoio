@@ -7,15 +7,15 @@
 
 use serde::{Deserialize, Serialize};
 
-/// What RPCS3 writes in front of every line. Taken from its own logs.cpp
-/// rather than guessed, because the whole reading of a session rests on it.
-const FATAL: &str = "·F";
-const ERROR: &str = "·E";
+/// What RPCS3 writes in front of a warning. Taken from its own logs.cpp
+/// rather than guessed. Its fatals and errors are read in core/ending.rs.
 const WARNING: &str = "·W";
 
 /// How a session ended. Only `Crashed` claims a crash, and only on evidence:
-/// a fatal line or a bad exit. Closing a game is not a crash, and telling
-/// someone their game crashed when they closed it is worse than saying nothing.
+/// an exception exit code, the emulator's own crash mark, or Windows' report
+/// of the crash (`decide` in core/ending.rs). Closing a game is not a crash,
+/// and telling someone their game crashed when they closed it is worse than
+/// saying nothing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Ending {
@@ -60,10 +60,24 @@ pub struct Session {
     pub seconds: u64,
     pub ending: Ending,
     pub machine: Machine,
-    /// The lines worth reading. A session runs to thousands of lines and a
-    /// handful matter.
+    /// The lines worth reading from the emulator's own log. A session runs
+    /// to thousands of lines and a handful matter.
     pub problems: Vec<String>,
     pub log_file: String,
+    /// The emulator's exit code, when Omoio read one. Sessions kept before
+    /// Omoio read it have none.
+    #[serde(default)]
+    pub exit_code: Option<u32>,
+    /// Omoio's own notes about how it ended: the exit code in words and
+    /// what Windows logged about the emulator (`core::ending::notes`). They
+    /// are in the kept log too.
+    #[serde(default)]
+    pub notes: Vec<String>,
+    /// The line the Logs page shows for the session, in plain words
+    /// (`core::ending::summary`). Sessions kept before it was written have
+    /// none, and the page works theirs out as it always did.
+    #[serde(default)]
+    pub summary: Option<String>,
 }
 
 /// RPCS3's header is the first few lines, before any timestamped entry.
@@ -95,32 +109,6 @@ fn after_colon(line: &str) -> String {
     line.split_once(':')
         .map(|(_, rest)| rest.trim().to_string())
         .unwrap_or_else(|| line.trim().to_string())
-}
-
-/// Fatals and errors, in order, deduplicated. RPCS3 repeats the same failure
-/// for every frame it happens on, and fifty copies of one line is not fifty
-/// problems.
-pub fn read_problems(log: &str, limit: usize) -> Vec<String> {
-    let mut seen = std::collections::HashSet::new();
-    let mut problems = Vec::new();
-    for line in log.lines() {
-        if !line.starts_with(FATAL) && !line.starts_with(ERROR) {
-            continue;
-        }
-        // The timestamp differs every time; compare on what was said.
-        let body = line.splitn(3, ' ').nth(2).unwrap_or(line).to_string();
-        if seen.insert(body.clone()) {
-            problems.push(line.trim().to_string());
-            if problems.len() >= limit {
-                break;
-            }
-        }
-    }
-    problems
-}
-
-pub fn has_fatal(log: &str) -> bool {
-    log.lines().any(|line| line.starts_with(FATAL))
 }
 
 pub fn count_warnings(log: &str) -> usize {
@@ -259,42 +247,6 @@ Qt version: Compiled against Qt 6.11.2\n\
     }
 
     #[test]
-    fn keeps_errors_and_fatals_and_leaves_the_noise() {
-        let log = "·! 0:00:01.0 SYS: starting\n\
-·W 0:00:02.0 sys_fs: a warning\n\
-·E 0:00:03.0 sys_fs: could not open thing\n\
-·T 0:00:04.0 trace noise\n\
-·F 0:00:05.0 RSX: it fell over\n";
-        let problems = read_problems(log, 20);
-        assert_eq!(problems.len(), 2);
-        assert!(problems[0].contains("could not open thing"));
-        assert!(problems[1].contains("it fell over"));
-    }
-
-    #[test]
-    fn one_failure_repeated_every_frame_is_still_one_problem() {
-        let log = "·E 0:00:01.0 RSX: same thing\n\
-·E 0:00:02.5 RSX: same thing\n\
-·E 0:00:09.9 RSX: same thing\n\
-·E 0:00:11.0 RSX: a different thing\n";
-        assert_eq!(read_problems(log, 20).len(), 2);
-    }
-
-    #[test]
-    fn stops_collecting_at_the_limit() {
-        let log: String = (0..50).map(|i| format!("·E 0:00:0{i}.0 problem {i}\n")).collect();
-        assert_eq!(read_problems(&log, 10).len(), 10);
-    }
-
-    #[test]
-    fn a_crash_is_only_claimed_when_something_fatal_was_logged() {
-        assert!(has_fatal("·! fine\n·F 0:00:01.0 RSX: it fell over\n"));
-        // A session full of errors that still ended cleanly is not a crash.
-        assert!(!has_fatal("·E 0:00:01.0 sys_fs: missing optional file\n·W 0:00:02.0 warning\n"));
-        assert!(!has_fatal(""));
-    }
-
-    #[test]
     fn counts_warnings_without_counting_anything_else() {
         assert_eq!(count_warnings("·W a\n·E b\n·W c\n·! d\n"), 2);
     }
@@ -311,6 +263,9 @@ Qt version: Compiled against Qt 6.11.2\n\
             machine: read_machine(HEADER),
             problems: vec!["·F 0:00:05.0 RSX: it fell over".into()],
             log_file: "logs/BCES00850-1.log".into(),
+            exit_code: None,
+            notes: Vec::new(),
+            summary: None,
         };
         let applied = [("Video / Renderer".to_string(), "OpenGL".to_string())];
         let prompt = troubleshooting_prompt(&session, &applied);
@@ -341,6 +296,9 @@ Qt version: Compiled against Qt 6.11.2\n\
             machine: Machine::default(),
             problems: vec!["·F 0:00:05.0 RSX: it fell over".into()],
             log_file: "logs/x.log".into(),
+            exit_code: None,
+            notes: Vec::new(),
+            summary: None,
         };
         let prompt = troubleshooting_prompt(&session, &[]);
 
@@ -366,6 +324,9 @@ Qt version: Compiled against Qt 6.11.2\n\
             machine: Machine::default(),
             problems: vec![],
             log_file: "logs/x.log".into(),
+            exit_code: None,
+            notes: Vec::new(),
+            summary: None,
         };
         assert!(troubleshooting_prompt(&session, &[]).contains("logged no warnings or errors"));
     }

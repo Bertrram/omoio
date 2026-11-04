@@ -610,7 +610,7 @@ impl super::EmulatorBackend for Rpcs3 {
         graphics::apply(app, display_height, graphics_memory)
     }
 
-    fn launch(&self, app: &AppHandle, game: &crate::core::library::Game) -> Result<u32, String> {
+    fn launch(&self, app: &AppHandle, game: &crate::core::library::Game) -> Result<crate::process_watch::Launched, String> {
         launch::launch(app, game)
     }
 

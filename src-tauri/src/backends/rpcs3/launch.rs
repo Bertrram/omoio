@@ -1,6 +1,7 @@
 //! Telling RPCS3 about a game and starting it.
 
 use crate::core::library::Game;
+use crate::process_watch::Launched;
 use std::path::{Path, PathBuf};
 use tauri::AppHandle;
 
@@ -290,7 +291,7 @@ fn switch_off(app: &AppHandle, key: &str) {
     }
 }
 
-pub fn launch(app: &AppHandle, game: &Game) -> Result<u32, String> {
+pub fn launch(app: &AppHandle, game: &Game) -> Result<Launched, String> {
     let exe = super::exe_path(app)?;
     if !exe.exists() {
         return Err("Install RPCS3 first, then you can play.".to_string());
@@ -336,7 +337,9 @@ pub fn launch(app: &AppHandle, game: &Game) -> Result<u32, String> {
     if skylanders {
         super::portal::prepare(child.id());
     }
-    Ok(child.id())
+    // Before `child` is dropped as this returns, which closes the handle
+    // the spawn gave it.
+    Ok(Launched::from_child(&child))
 }
 
 #[cfg(test)]

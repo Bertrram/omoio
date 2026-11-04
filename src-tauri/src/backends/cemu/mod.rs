@@ -44,7 +44,7 @@ fn exe_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(install_dir(app)?.join("Cemu.exe"))
 }
 
-fn start(app: &AppHandle, game: &Game) -> Result<u32, String> {
+fn start(app: &AppHandle, game: &Game) -> Result<crate::process_watch::Launched, String> {
     let exe = exe_path(app)?;
     if !exe.is_file() {
         return Err("Install Cemu from the Emulators screen first, then you can play.".to_string());
@@ -67,13 +67,17 @@ fn start(app: &AppHandle, game: &Game) -> Result<u32, String> {
         .arg(&game.path)
         .spawn()
         .map_err(|e| e.to_string())?;
-    let pid = child.id();
+    // Taken before the child goes to start_errors, whose thread lets it go,
+    // and with it the handle the spawn gave it, a minute in at most
+    // (`start_errors::WATCH`).
+    let launched = crate::process_watch::Launched::from_child(&child);
+    let pid = launched.pid;
     crate::dsu::follow(pid);
     start_errors::watch(child, game.path.to_string_lossy().into_owned());
     if is_skylanders(&game.title) {
         portal::prepare(pid);
     }
-    Ok(pid)
+    Ok(launched)
 }
 
 pub fn detect_version(app: &AppHandle) -> Option<String> {
@@ -1303,7 +1307,7 @@ impl super::EmulatorBackend for Cemu {
         Err("Omoio does not size Cemu's picture.".to_string())
     }
 
-    fn launch(&self, app: &AppHandle, game: &Game) -> Result<u32, String> {
+    fn launch(&self, app: &AppHandle, game: &Game) -> Result<crate::process_watch::Launched, String> {
         let started = start(app, game);
         if started.is_err() {
             // The pad `prepare` served was for this start. Left alone, it
