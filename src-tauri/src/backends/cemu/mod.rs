@@ -7,6 +7,7 @@ pub mod compat;
 pub mod controllers;
 pub mod convert;
 pub mod game_profile;
+pub mod infinity;
 pub mod keys;
 pub mod own_cemu;
 pub mod packs;
@@ -20,6 +21,7 @@ use crate::core::console::{Console, Features};
 use crate::core::import_warning::Imported;
 use crate::core::library::Game;
 use crate::core::settings::Settings;
+use crate::core::toys::{Toy, ToyFigure};
 use crate::core::types::Progress;
 use futures_util::StreamExt;
 use sha2::{Digest, Sha256};
@@ -74,7 +76,9 @@ fn start(app: &AppHandle, game: &Game) -> Result<crate::process_watch::Launched,
     let pid = launched.pid;
     crate::dsu::follow(pid);
     start_errors::watch(child, game.path.to_string_lossy().into_owned());
-    if is_skylanders(&game.title) {
+    // Any toy's figures go through the server, and so does keeping the game
+    // deaf behind a menu (portal.rs, `hush`).
+    if toy(game).is_some() {
         portal::prepare(pid);
     }
     Ok(launched)
@@ -354,10 +358,12 @@ fn product_code(image: &Path) -> Option<String> {
 }
 
 /// The game's English name, where the disc's product code says which
-/// Skylanders game it is and the name it was given doesn't
-/// (`figures::disc_english_name`).
+/// Skylanders or Disney Infinity game it is and the name it was given
+/// doesn't (`figures::disc_english_name`, `infinity::disc_english_name`).
 fn named_by_disc(image: &Path, title: &str) -> Option<&'static str> {
-    crate::core::figures::disc_english_name(&product_code(image)?, title)
+    let code = product_code(image)?;
+    crate::core::figures::disc_english_name(&code, title)
+        .or_else(|| crate::core::infinity::disc_english_name(&code, title))
 }
 
 fn identify_disc(image: &Path) -> Game {
@@ -848,10 +854,21 @@ const FIRST_SETTINGS: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
 \x20   </Graphic>\n\
 </content>\n";
 
-/// The Wii U's Skylanders games, by name: each needs the portal, and nothing
-/// else uses it.
-fn is_skylanders(title: &str) -> bool {
-    title.to_lowercase().contains("skylanders")
+/// The toy a game is played with, which Cemu emulates for it and for no
+/// other game (`toys::toy_of`): a Skylanders game is one by name, as it
+/// always was, and a Disney Infinity game by its title id or its name.
+fn toy(game: &Game) -> Option<Toy> {
+    crate::core::toys::toy_of(Console::WiiU, &game.title_id, &game.title)
+}
+
+/// The trait's toy calls reach the Infinity Base, whose commands Cemu's
+/// server takes (infinity.rs). The portal has calls of its own.
+fn infinity_only(toy: Toy) -> Result<(), String> {
+    if toy == Toy::Infinity {
+        Ok(())
+    } else {
+        Err(super::NO_TOY.to_string())
+    }
 }
 
 /// Where the inside of the element nested as `parents` sits in settings.xml,
@@ -947,6 +964,14 @@ const ENGLISH: &str = "175";
 ///   windows and buttons by.
 /// - The Skylanders portal is plugged in for a Skylanders game only. Cemu
 ///   leaves it out, and a game finds only a portal that is there.
+/// - So are the Infinity Base, for a Disney Infinity game only, and the
+///   Toy Pad, for a LEGO Dimensions game only. Cemu attaches each of the
+///   three by its own setting alone as the game starts (`AttachVisibleDevices`,
+///   BackendEmulated.cpp lines 22 to 45), and reads and saves the three side
+///   by side in `<EmulatedUsbDevices>` (CemuConfig.cpp lines 347 to 350 and
+///   553 to 556; each off unless set, CemuConfig.h lines 523 to 525;
+///   Bertrram/Cemu v2.6-2, read 4 November 2026). All three are written for
+///   every game, so a toy plugged in for one game is out for the next.
 /// - Cemu starts windowed. Omoio places the picture itself, and Cemu keeps
 ///   its own fullscreen from the last time F11 was pressed in it.
 /// - Cemu opens its window far off the screen. It puts the window where
@@ -962,25 +987,32 @@ const ENGLISH: &str = "175";
 ///   level at 20 and 0.353 at 100. Only that starting value is raised, so a
 ///   volume someone set in Cemu stays.
 /// - The portal server of the build of Cemu made for Omoio (portal.rs) is
-///   on for a Skylanders game, listening on `port`, and off for any other,
-///   so no port is held for a game that has no portal. Off is the build's
-///   default, so a file that never had the element is left without it for
-///   a game with no portal. The build reads `<SkylandersIPC>` as it starts
-///   and saves it with its other settings (its CemuConfig.cpp lines 352 to
-///   355 and 558 to 561, commit 4607241, read 22 October 2026). Cemu 2.6
-///   reads only the settings it knows (`CemuConfig::Load`, CemuConfig.cpp
-///   lines 20 to 351) and makes the file afresh from them whenever it saves
-///   (`XMLConfig::Save`, XMLConfig.h lines 389 to 438, as from its settings
-///   window, GeneralSettings2.cpp line 1075), so there the element does
-///   nothing and is gone after Cemu's next save, until it is written again
-///   before the next game.
-fn tune_settings(settings: &Path, skylanders: bool, port: u16) -> std::io::Result<()> {
+///   on for a game played with any of the three, listening on `port`, and
+///   off for any other, so no port is held for a game that has no toy. It
+///   fills the Infinity Base as well as the portal (infinity.rs). Off is
+///   the build's default, so a file that never had the element is left
+///   without it for a game with no toy. The build reads `<SkylandersIPC>`
+///   as it starts and saves it with its other settings (its CemuConfig.cpp
+///   lines 352 to 355 and 558 to 561, commit 4607241, read 22 October
+///   2026). Cemu 2.6 reads only the settings it knows (`CemuConfig::Load`,
+///   CemuConfig.cpp lines 20 to 351) and makes the file afresh from them
+///   whenever it saves (`XMLConfig::Save`, XMLConfig.h lines 389 to 438, as
+///   from its settings window, GeneralSettings2.cpp line 1075), so there the
+///   element does nothing and is gone after Cemu's next save, until it is
+///   written again before the next game.
+fn tune_settings(settings: &Path, toy: Option<Toy>, port: u16) -> std::io::Result<()> {
+    let on = |wanted: bool| if wanted { "true" } else { "false" };
     let before = std::fs::read_to_string(settings)?;
-    let portal = if skylanders { "true" } else { "false" };
     let mut text = set_setting(&before, &[], "language", ENGLISH);
-    text = set_setting(&text, &["EmulatedUsbDevices"], "EmulateSkylanderPortal", portal);
-    if skylanders || setting(&text, &["SkylandersIPC"], "enabled").is_some() {
-        text = set_setting(&text, &["SkylandersIPC"], "enabled", portal);
+    for (device, plugged) in [
+        ("EmulateSkylanderPortal", Toy::Skylanders),
+        ("EmulateInfinityBase", Toy::Infinity),
+        ("EmulateDimensionsToypad", Toy::ToyPad),
+    ] {
+        text = set_setting(&text, &["EmulatedUsbDevices"], device, on(toy == Some(plugged)));
+    }
+    if toy.is_some() || setting(&text, &["SkylandersIPC"], "enabled").is_some() {
+        text = set_setting(&text, &["SkylandersIPC"], "enabled", on(toy.is_some()));
         text = set_setting(&text, &["SkylandersIPC"], "port", &port.to_string());
     }
     text = set_setting(&text, &[], "fullscreen", "false");
@@ -1060,6 +1092,13 @@ impl super::EmulatorBackend for Cemu {
             // player turns a stick with the mouse (controllers.rs,
             // `serve_keyboard`).
             mouse_aims: true,
+            // Cemu emulates the Infinity Base and the Toy Pad beside the
+            // portal (`tune_settings`), and Omoio fills them through the
+            // portal server alone (infinity.rs). A Cemu without their
+            // commands is found out once the game runs, and the menu says
+            // so.
+            infinity: true,
+            toypad: true,
             ..Features::default()
         }
     }
@@ -1115,9 +1154,9 @@ impl super::EmulatorBackend for Cemu {
         }
         let portable = dir.join("portable");
         let _ = write_first_settings(&portable);
-        let skylanders = is_skylanders(&game.title);
-        let _ = tune_settings(&portable.join("settings.xml"), skylanders, portal::server_port(skylanders));
-        if skylanders {
+        let toy = toy(game);
+        let _ = tune_settings(&portable.join("settings.xml"), toy, portal::server_port(toy.is_some()));
+        if toy == Some(Toy::Skylanders) {
             if let Ok(data) = app.path().data_dir() {
                 portal::know_kept_names(&data.join("Omoio").join(crate::core::figures::characters_file(Console::WiiU)));
             }
@@ -1254,6 +1293,38 @@ impl super::EmulatorBackend for Cemu {
 
     fn ready_portal(&self, pid: u32) {
         portal::ready(pid)
+    }
+
+    fn toy_places(&self, pid: u32, toy: Toy) -> Result<Vec<String>, String> {
+        infinity_only(toy)?;
+        infinity::places(pid)
+    }
+
+    fn toy_load(&self, pid: u32, toy: Toy, place: usize, figure: &Path) -> Result<Vec<String>, String> {
+        infinity_only(toy)?;
+        infinity::load(pid, place, figure)
+    }
+
+    fn toy_remove(&self, pid: u32, toy: Toy, place: usize) -> Result<Vec<String>, String> {
+        infinity_only(toy)?;
+        infinity::remove(pid, place)
+    }
+
+    fn toy_list(&self, _app: &AppHandle, pid: u32, toy: Toy) -> Result<Vec<ToyFigure>, String> {
+        infinity_only(toy)?;
+        infinity::list(pid)
+    }
+
+    fn toy_create(
+        &self,
+        pid: u32,
+        toy: Toy,
+        place: usize,
+        figure: &ToyFigure,
+        file: &Path,
+    ) -> Result<Vec<String>, String> {
+        infinity_only(toy)?;
+        infinity::create(pid, place, figure, file)
     }
 
     /// Imaginators turns away the Senseis and Creation Crystals Cemu makes
@@ -1450,7 +1521,7 @@ Deluxe");
         let (title_id, title, _) = read_meta(&japanese).unwrap();
         assert_eq!(title_id, "0005000010142D00");
         assert_eq!(title, "Skylanders Spyro's Adventure");
-        assert!(is_skylanders(&title));
+        assert_eq!(crate::core::toys::toy_of(Console::WiiU, &title_id, &title), SKYLANDERS);
         // Any other game keeps the name its meta.xml gives.
         assert_eq!(read_meta(META).unwrap().1, "Example Game & Friends Deluxe");
     }
@@ -1835,7 +1906,7 @@ Deluxe");
         let file = dir.join("settings.xml");
 
         write_first_settings(&dir).unwrap();
-        tune_settings(&file, true, 28014).unwrap();
+        tune_settings(&file, SKYLANDERS, 28014).unwrap();
         let text = std::fs::read_to_string(&file).unwrap();
         assert!(text.contains("<EmulateSkylanderPortal>true</EmulateSkylanderPortal>"), "{text}");
         assert!(text.contains("<api>1</api>"), "the rest is left alone");
@@ -1847,7 +1918,7 @@ Deluxe");
         assert!(text.contains("<y>-30000</y>"), "{text}");
         assert_eq!(text.matches("<language>175</language>").count(), 1, "{text}");
 
-        tune_settings(&file, false, 28014).unwrap();
+        tune_settings(&file, None, 28014).unwrap();
         let text = std::fs::read_to_string(&file).unwrap();
         assert!(text.contains("<EmulateSkylanderPortal>false</EmulateSkylanderPortal>"));
         assert_eq!(text.matches("<EmulatedUsbDevices>").count(), 1, "switched, not added twice");
@@ -1855,8 +1926,110 @@ Deluxe");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// What Omoio wrote for a Skylanders game before the other toys came,
+    /// made by that code from `CEMU_SETTINGS` (4 November 2026).
+    const SKYLANDERS_BEFORE: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<content>
+    <fullscreen_menubar>false</fullscreen_menubar>
+    <fullscreen>false</fullscreen>
+    <Graphic>
+        <api>1</api>
+        <Notification>
+            <ControllerProfiles>false</ControllerProfiles>
+            <ControllerBattery>true</ControllerBattery>
+        <ShaderCompiling>false</ShaderCompiling>
+<FriendService>false</FriendService>
+</Notification>
+    </Graphic>
+    <Audio>
+        <api>0</api>
+        <TVDevice>default</TVDevice>
+    <TVVolume>100</TVVolume>
+</Audio>
+<language>175</language>
+<EmulatedUsbDevices><EmulateSkylanderPortal>true</EmulateSkylanderPortal></EmulatedUsbDevices>
+<SkylandersIPC><enabled>true</enabled><port>28014</port>
+</SkylandersIPC>
+<window_maximized>false</window_maximized>
+<window_position><x>-30000</x><y>-30000</y>
+</window_position>
+</content>
+"#;
+
+    fn devices(text: &str) -> [Option<String>; 3] {
+        ["EmulateSkylanderPortal", "EmulateInfinityBase", "EmulateDimensionsToypad"]
+            .map(|device| setting(text, &["EmulatedUsbDevices"], device))
+    }
+
+    fn tuned(dir: &Path, before: &str, toy: Option<Toy>) -> String {
+        let file = dir.join("settings.xml");
+        std::fs::write(&file, before).unwrap();
+        tune_settings(&file, toy, 28014).unwrap();
+        std::fs::read_to_string(&file).unwrap()
+    }
+
     #[test]
-    fn the_portal_server_is_on_for_a_skylanders_game_only() {
+    fn a_skylanders_game_gets_what_it_got_before_and_the_other_toys_left_out() {
+        let dir = scratch("skylanders-before");
+        let text = tuned(&dir, CEMU_SETTINGS, SKYLANDERS);
+        let others = "<EmulateInfinityBase>false</EmulateInfinityBase>\n\
+                      <EmulateDimensionsToypad>false</EmulateDimensionsToypad>\n";
+        let with_others = format!("</EmulateSkylanderPortal>{others}");
+        assert_eq!(text, SKYLANDERS_BEFORE.replace("</EmulateSkylanderPortal>", &with_others));
+        // Once Cemu has saved its own, with all three in, nothing changes
+        // at all.
+        let saved = SKYLANDERS_BEFORE.replace(
+            "<EmulateSkylanderPortal>true</EmulateSkylanderPortal>",
+            "<EmulateSkylanderPortal>true</EmulateSkylanderPortal>\
+             <EmulateInfinityBase>false</EmulateInfinityBase>\
+             <EmulateDimensionsToypad>false</EmulateDimensionsToypad>",
+        );
+        assert_eq!(tuned(&dir, &saved, SKYLANDERS), saved);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn each_toy_is_plugged_in_for_its_own_games_only() {
+        let dir = scratch("toys");
+        let server = |text: &str| setting(text, &["SkylandersIPC"], "enabled");
+        let (yes, no) = (Some("true".to_string()), Some("false".to_string()));
+
+        let text = tuned(&dir, FIRST_SETTINGS, SKYLANDERS);
+        assert_eq!(devices(&text), [yes.clone(), no.clone(), no.clone()], "{text}");
+        assert_eq!(server(&text), yes);
+
+        let text = tuned(&dir, FIRST_SETTINGS, Some(Toy::Infinity));
+        assert_eq!(devices(&text), [no.clone(), yes.clone(), no.clone()], "{text}");
+        assert_eq!(server(&text), yes, "the base's figures go through the server too");
+        assert_eq!(setting(&text, &["SkylandersIPC"], "port").as_deref(), Some("28014"));
+
+        let text = tuned(&dir, FIRST_SETTINGS, Some(Toy::ToyPad));
+        assert_eq!(devices(&text), [no.clone(), no.clone(), yes.clone()], "{text}");
+        assert_eq!(server(&text), yes);
+
+        let text = tuned(&dir, FIRST_SETTINGS, None);
+        assert_eq!(devices(&text), [no.clone(), no.clone(), no.clone()], "{text}");
+        assert!(!text.contains("SkylandersIPC"), "no server for a game with no toy: {text}");
+
+        // The base left in from a Disney Infinity game, as Cemu saves it,
+        // is taken out for the next game, a Skylanders one.
+        let saved = CEMU_SETTINGS.replace(
+            "</content>",
+            "    <EmulatedUsbDevices>\n        <EmulateSkylanderPortal>false</EmulateSkylanderPortal>\n\
+             \x20       <EmulateInfinityBase>true</EmulateInfinityBase>\n\
+             \x20       <EmulateDimensionsToypad>false</EmulateDimensionsToypad>\n    </EmulatedUsbDevices>\n</content>",
+        );
+        let text = tuned(&dir, &saved, SKYLANDERS);
+        assert_eq!(devices(&text), [yes.clone(), no.clone(), no.clone()], "{text}");
+        assert_eq!(text.matches("EmulateInfinityBase>").count(), 2, "switched, not added twice: {text}");
+        assert!(text.contains("\n        <EmulateInfinityBase>false</EmulateInfinityBase>\n"), "{text}");
+        let text = tuned(&dir, &saved, None);
+        assert_eq!(devices(&text), [no.clone(), no.clone(), no], "{text}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_portal_server_is_on_for_a_game_with_a_toy_only() {
         let dir = scratch("portal-server");
         let file = dir.join("settings.xml");
         let server = |text: &str| {
@@ -1868,11 +2041,11 @@ Deluxe");
 
         // Another game first: a file that never had the element stays so.
         write_first_settings(&dir).unwrap();
-        tune_settings(&file, false, 28014).unwrap();
+        tune_settings(&file, None, 28014).unwrap();
         let text = std::fs::read_to_string(&file).unwrap();
         assert!(!text.contains("SkylandersIPC"), "{text}");
 
-        tune_settings(&file, true, 28014).unwrap();
+        tune_settings(&file, SKYLANDERS, 28014).unwrap();
         let text = std::fs::read_to_string(&file).unwrap();
         assert!(
             text.contains("<SkylandersIPC><enabled>true</enabled><port>28014</port>\n</SkylandersIPC>\n</content>"),
@@ -1880,15 +2053,21 @@ Deluxe");
         );
 
         // Another port, when another program has Omoio's.
-        tune_settings(&file, true, 51234).unwrap();
+        tune_settings(&file, SKYLANDERS, 51234).unwrap();
         let text = std::fs::read_to_string(&file).unwrap();
         assert_eq!(server(&text), (Some("true".to_string()), Some("51234".to_string())));
         assert_eq!(text.matches("<SkylandersIPC>").count(), 1, "replaced, not added twice: {text}");
         assert_eq!(text.matches("<port>").count(), 1, "{text}");
 
-        tune_settings(&file, false, 28014).unwrap();
+        tune_settings(&file, None, 28014).unwrap();
         let text = std::fs::read_to_string(&file).unwrap();
         assert_eq!(server(&text), (Some("false".to_string()), Some("28014".to_string())));
+        assert_eq!(text.matches("<SkylandersIPC>").count(), 1, "{text}");
+
+        // On again for a Disney Infinity game.
+        tune_settings(&file, Some(Toy::Infinity), 28014).unwrap();
+        let text = std::fs::read_to_string(&file).unwrap();
+        assert_eq!(server(&text), (Some("true".to_string()), Some("28014".to_string())));
         assert_eq!(text.matches("<SkylandersIPC>").count(), 1, "{text}");
 
         // As Cemu saves it, with its own layout, and the element written
@@ -1898,7 +2077,7 @@ Deluxe");
             "    <SkylandersIPC>\n        <enabled>false</enabled>\n        <port>28014</port>\n    </SkylandersIPC>\n</content>",
         );
         std::fs::write(&file, &saved).unwrap();
-        tune_settings(&file, true, 28014).unwrap();
+        tune_settings(&file, SKYLANDERS, 28014).unwrap();
         let text = std::fs::read_to_string(&file).unwrap();
         assert_eq!(server(&text), (Some("true".to_string()), Some("28014".to_string())));
         assert!(text.contains("<SkylandersIPC>\n        <enabled>true</enabled>\n        <port>28014</port>"), "{text}");
@@ -1936,23 +2115,50 @@ Deluxe");
             "<TVDevice>{0.0.0.00000000}.{abc}</TVDevice><TVVolume>55</TVVolume>",
         );
         std::fs::write(&file, &chosen).unwrap();
-        tune_settings(&file, true, 28014).unwrap();
+        tune_settings(&file, SKYLANDERS, 28014).unwrap();
         let text = std::fs::read_to_string(&file).unwrap();
         assert!(text.contains("<TVDevice>{0.0.0.00000000}.{abc}</TVDevice>"), "{text}");
         assert!(text.contains("<TVVolume>55</TVVolume>"), "a volume someone chose stays: {text}");
 
         std::fs::write(&file, CEMU_SETTINGS).unwrap();
-        tune_settings(&file, true, 28014).unwrap();
+        tune_settings(&file, SKYLANDERS, 28014).unwrap();
         let text = std::fs::read_to_string(&file).unwrap();
         assert!(text.contains("<TVDevice>default</TVDevice>"), "an empty one is filled in");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    const SKYLANDERS: Option<Toy> = Some(Toy::Skylanders);
+
+    fn wii_u_game(title_id: &str, title: &str) -> Game {
+        Game {
+            console: Console::WiiU,
+            title_id: title_id.to_string(),
+            title: title.to_string(),
+            version: None,
+            update_version: None,
+            path: PathBuf::new(),
+            size_bytes: 0,
+        }
+    }
+
     #[test]
-    fn only_skylanders_games_get_the_portal() {
-        assert!(is_skylanders("Skylanders SWAP Force"));
-        assert!(is_skylanders("Skylanders Imaginators"));
-        assert!(!is_skylanders("Mario Kart 8"));
+    fn each_game_is_played_with_its_own_toy() {
+        assert_eq!(toy(&wii_u_game("0005000010139200", "Skylanders SWAP Force")), SKYLANDERS);
+        assert_eq!(toy(&wii_u_game("00050000101F4D00", "Skylanders Imaginators")), SKYLANDERS);
+        // A disc image, whose id is made from its file's name.
+        assert_eq!(toy(&wii_u_game(&disc_id("Skylanders Trap Team.wud"), "Skylanders Trap Team")), SKYLANDERS);
+        assert_eq!(toy(&wii_u_game("00050000101AC900", "Disney Infinity 3.0 Edition")), Some(Toy::Infinity));
+        // The Japanese 3.0, whose meta.xml names it in Japanese (WiiUBrew,
+        // read 4 November 2026).
+        assert_eq!(toy(&wii_u_game("00050000101DDC00", "ディズニーインフィニティ3.0")), Some(Toy::Infinity));
+        assert_eq!(toy(&wii_u_game("000500001010EC00", "Mario Kart 8")), None);
+    }
+
+    #[test]
+    fn the_trait_reaches_the_base_alone_of_the_toys_that_arent_skylanders() {
+        assert_eq!(infinity_only(Toy::Infinity), Ok(()));
+        assert!(infinity_only(Toy::ToyPad).is_err());
+        assert!(infinity_only(Toy::Skylanders).is_err());
     }
 
     #[test]

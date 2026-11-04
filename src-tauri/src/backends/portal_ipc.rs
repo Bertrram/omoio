@@ -23,8 +23,13 @@ const CONNECT_WAIT: Duration = Duration::from_millis(200);
 /// A server answers at once, unless another connection holds its one
 /// listener for up to the second it allows each.
 const ANSWER_WAIT: Duration = Duration::from_secs(2);
-/// More than any answer: sixteen status lines and `ok`.
-const LONGEST_ANSWER: u64 = 8192;
+/// More than any answer. The longest is the list of Disney Infinity figures
+/// from the build of Cemu made for Omoio (cemu/infinity.rs): one line for
+/// each of the 322 figures its figure maker knows, 10,933 bytes in all
+/// (`s_listFigures`, Infinity.cpp lines 21 to 343, v2.6-2, measured 4
+/// November 2026). A read ends as soon as the server has closed, so the room
+/// costs a short answer such as `status` nothing.
+const LONGEST_ANSWER: u64 = 64 * 1024;
 
 /// Why a command didn't do what it asked.
 #[derive(Debug, PartialEq, Eq)]
@@ -235,6 +240,29 @@ mod tests {
         assert_eq!(reply(b"error cannot open file\n"), Err(Failed::Refused("cannot open file".to_string())));
         assert_eq!(reply(b"slot0 empty\n"), Err(Failed::NoAnswer));
         assert_eq!(reply(b""), Err(Failed::NoAnswer));
+    }
+
+    /// As long as Cemu's list of Disney Infinity figures, which an answer cut
+    /// at the old 8 KB would have lost the end of.
+    #[test]
+    fn a_long_answer_comes_back_whole() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let mut answer: String = (1..=322).map(|n| format!("figure {} 1 Figure number {n}\n", 1_000_000 + n)).collect();
+        answer.push_str("ok\n");
+        assert!(answer.len() > 8192);
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut line = String::new();
+            std::io::BufReader::new(&stream).read_line(&mut line).unwrap();
+            stream.write_all(answer.as_bytes()).unwrap();
+            line
+        });
+        let lines = Server::new(port, 16).ask("infinity list").unwrap();
+        assert_eq!(server.join().unwrap(), "infinity list\n");
+        assert_eq!(lines.len(), 323);
+        assert_eq!(lines[321], "figure 1000322 1 Figure number 322");
+        assert_eq!(lines[322], "ok");
     }
 
     #[test]

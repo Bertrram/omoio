@@ -213,6 +213,9 @@ fn ours() -> Server {
 /// answered.
 static ANSWERED: Mutex<Option<(u32, bool)>> = Mutex::new(None);
 
+/// The Cemu `prepare` began asking for its server, and when.
+static ASKED: Mutex<Option<(u32, Instant)>> = Mutex::new(None);
+
 /// Cemu's characters with each figure's id and variant, as its figure maker
 /// lists them. The server gives only the numbers, and the menu knows a
 /// figure by the name Cemu's window would show for it.
@@ -231,6 +234,7 @@ static NAMES: Mutex<Vec<Character>> = Mutex::new(Vec::new());
 /// errand it can for the rest of the game.
 pub fn prepare(pid: u32) {
     *ANSWERED.lock().unwrap_or_else(PoisonError::into_inner) = Some((pid, false));
+    *ASKED.lock().unwrap_or_else(PoisonError::into_inner) = Some((pid, Instant::now()));
     std::thread::spawn(move || {
         let until = Instant::now() + SERVER_WAIT;
         let server = ours();
@@ -258,9 +262,26 @@ fn says_hello(server: &Server) -> bool {
     server.ask("hello").is_ok_and(|lines| lines == [HELLO])
 }
 
-/// The portal server of `pid`, when it answered.
-fn answered(pid: u32) -> Option<Server> {
+/// The portal server of `pid`, when it answered. The Infinity Base goes
+/// through it too (infinity.rs), with no Skylanders names to wait for.
+pub(super) fn answered(pid: u32) -> Option<Server> {
     (*ANSWERED.lock().unwrap_or_else(PoisonError::into_inner) == Some((pid, true))).then(ours)
+}
+
+/// Whether `prepare` asked the Cemu started as `pid` for its server for all
+/// of `SERVER_WAIT` and heard nothing back: a Cemu without the server, or
+/// one that starts it only for the Skylanders portal, as v2.6-2 does
+/// (`Start`, the build's SkylanderPortalIPC.cpp line 426, read 4 November
+/// 2026), in a game played with another toy.
+pub(super) fn never_answered(pid: u32) -> bool {
+    let asked = *ASKED.lock().unwrap_or_else(PoisonError::into_inner);
+    let answered = *ANSWERED.lock().unwrap_or_else(PoisonError::into_inner);
+    gave_up(answered, asked, pid, Instant::now())
+}
+
+fn gave_up(answered: Option<(u32, bool)>, asked: Option<(u32, Instant)>, pid: u32, now: Instant) -> bool {
+    answered == Some((pid, false))
+        && asked.is_some_and(|(seen, since)| seen == pid && now.saturating_duration_since(since) >= SERVER_WAIT)
 }
 
 /// The server, when it answered and the figures it reports can be named.
@@ -1634,6 +1655,19 @@ mod tests {
         // Gone, and forgotten.
         assert!(quiet.settled(told, |_| false));
         assert!(!quiet.told_to_close(1));
+    }
+
+    #[test]
+    fn a_cemu_is_given_the_whole_wait_to_answer_before_it_is_taken_for_one_without_a_server() {
+        let asked = Instant::now();
+        let waiting = (Some((7, false)), Some((7, asked)));
+        assert!(!gave_up(waiting.0, waiting.1, 7, asked + SERVER_WAIT / 2));
+        assert!(gave_up(waiting.0, waiting.1, 7, asked + SERVER_WAIT));
+        // One that answered, or another Cemu, isn't.
+        assert!(!gave_up(Some((7, true)), waiting.1, 7, asked + SERVER_WAIT));
+        assert!(!gave_up(waiting.0, waiting.1, 8, asked + SERVER_WAIT));
+        assert!(!gave_up(Some((8, false)), Some((8, asked)), 7, asked + SERVER_WAIT));
+        assert!(!gave_up(None, None, 7, asked + SERVER_WAIT));
     }
 
     /// Needs a Cemu running and a figure file, so it runs only by hand:
