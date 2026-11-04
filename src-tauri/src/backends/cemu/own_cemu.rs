@@ -214,23 +214,48 @@ fn state(from: &Path, to_saves: &Path, title_id: &str) -> SaveState {
     }
 }
 
+const CANT_READ_THEIR_KEYS: &str = "Couldn't read your keys.txt, so your keys were left out. \
+Close any program that has it open, then choose the folder again.";
+
+/// A keys.txt `keys::plain_text` refuses that still holds keys, saved as
+/// ANSI with an accent in a comment or as UTF-16 with no mark, reads once
+/// it is saved again as UTF-8.
+const THEIR_KEYS_NOT_TEXT: &str = "Your keys.txt isn't plain text, so your keys were left out. \
+Save it as UTF-8 in Notepad, then choose the folder again.";
+
+/// The text of the user's keys.txt, read the way a keys file they add is
+/// read (`keys::plain_text`). Read as UTF-8 only, one saved as UTF-16
+/// showed no keys and no reason, and one with a byte order mark was turned
+/// down at line 1. None when their Cemu has no keys.txt.
+fn their_keys(file: &Path) -> Result<Option<String>, String> {
+    match std::fs::read(file) {
+        Ok(bytes) => their_keys_text(&bytes).map(Some),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(_) => Err(CANT_READ_THEIR_KEYS.to_string()),
+    }
+}
+
+/// `their_keys`, from the file's bytes, or why its keys are left out.
+fn their_keys_text(bytes: &[u8]) -> Result<String, String> {
+    let text = super::keys::plain_text(bytes).ok_or_else(|| THEIR_KEYS_NOT_TEXT.to_string())?;
+    if let (_, Some(line)) = super::keys::read(&text) {
+        return Err(format!(
+            "Line {line} of your keys.txt isn't a key, so your keys were left out."
+        ));
+    }
+    Ok(text)
+}
+
 pub(super) fn survey(from: &Places, to: &Places) -> Found {
-    let (keys, keys_problem) = match std::fs::read_to_string(&from.keys) {
-        Err(_) => (0, None),
-        Ok(text) => match super::keys::read(&text) {
-            (_, Some(line)) => (
-                0,
-                Some(format!(
-                    "Line {line} of your keys.txt isn't a key, so your keys were left out."
-                )),
-            ),
-            (new, None) => {
-                let have = std::fs::read_to_string(&to.keys)
-                    .map(|t| super::keys::read(&t).0)
-                    .unwrap_or_default();
-                (new.iter().filter(|key| !have.contains(key)).count(), None)
-            }
-        },
+    let (keys, keys_problem) = match their_keys(&from.keys) {
+        Ok(None) => (0, None),
+        Err(problem) => (0, Some(problem)),
+        Ok(Some(text)) => {
+            // Should Omoio's own keys.txt not read, bringing them says so.
+            let have = super::keys::in_cemus(&to.keys).unwrap_or_default();
+            let new = super::keys::read(&text).0;
+            (new.iter().filter(|key| !have.contains(key)).count(), None)
+        }
     };
     let saves = game_saves(&from.saves)
         .into_iter()
@@ -287,9 +312,8 @@ fn put_in_place(from: &Path, there: &Path) -> Result<(), String> {
 /// holds: replacing one is asked for one game at a time.
 pub(super) fn bring(from: &Places, to: &Places) -> Result<Brought, String> {
     let mut brought = Brought::default();
-    if let Ok(text) = std::fs::read_to_string(&from.keys) {
-        let (keys, bad) = super::keys::read(&text);
-        if bad.is_none() && !keys.is_empty() {
+    if let Ok(Some(text)) = their_keys(&from.keys) {
+        if !super::keys::read(&text).0.is_empty() {
             brought.keys = super::keys::merged(&to.keys, &text)?;
         }
     }
@@ -575,6 +599,91 @@ mod tests {
         assert_eq!(bring(&from, &to).unwrap().keys, 0);
         assert!(!to.keys.exists());
         assert_eq!(bring(&from, &to).unwrap().saves, 0, "saves came across the first time");
+    }
+
+    fn utf16_le(text: &str) -> Vec<u8> {
+        let mut bytes = b"\xFF\xFE".to_vec();
+        bytes.extend(text.encode_utf16().flat_map(u16::to_le_bytes));
+        bytes
+    }
+
+    #[test]
+    fn a_keys_txt_is_read_with_or_without_a_mark() {
+        let text = format!("# my keys\r\n{KEY} # a disc\r\n");
+        assert_eq!(their_keys_text(text.as_bytes()), Ok(text.clone()));
+        let marked = [b"\xEF\xBB\xBF".as_slice(), text.as_bytes()].concat();
+        assert_eq!(their_keys_text(&marked), Ok(text.clone()), "UTF-8 with the mark");
+        assert_eq!(their_keys_text(&utf16_le(&text)), Ok(text), "UTF-16");
+
+        let zip = b"PK\x03\x04\x14\x00\x00\x00\x08\x00";
+        assert_eq!(their_keys_text(zip), Err(THEIR_KEYS_NOT_TEXT.to_string()));
+        let ansi = [b"# caf\xE9\r\n".as_slice(), KEY.as_bytes()].concat();
+        assert_eq!(their_keys_text(&ansi), Err(THEIR_KEYS_NOT_TEXT.to_string()), "ANSI");
+        assert!(their_keys_text(b"not a key\r\n").unwrap_err().contains("Line 1"));
+    }
+
+    #[test]
+    fn a_keys_txt_saved_as_utf16_is_brought_over_as_utf8() {
+        let scratch = Scratch::new("utf16-keys");
+        let (_, from, to) = two_cemus(&scratch);
+        std::fs::write(&from.keys, utf16_le(&format!("# my keys\r\n{KEY}\r\n"))).unwrap();
+        let found = survey(&from, &to);
+        assert_eq!((found.keys, found.keys_problem), (1, None));
+        assert_eq!(bring(&from, &to).unwrap(), Brought { keys: 1, saves: 2 });
+        let written = String::from_utf8(std::fs::read(&to.keys).unwrap()).unwrap();
+        assert!(written.starts_with('#') && written.contains(KEY), "UTF-8 with no mark, as Cemu reads it");
+    }
+
+    #[test]
+    fn a_keys_txt_that_isnt_text_says_why_and_the_saves_still_come() {
+        let scratch = Scratch::new("binary-keys");
+        let (_, from, to) = two_cemus(&scratch);
+        std::fs::write(&from.keys, b"PK\x03\x04\x14\x00\x00\x00\x08\x00").unwrap();
+        let found = survey(&from, &to);
+        assert_eq!((found.keys, found.keys_problem), (0, Some(THEIR_KEYS_NOT_TEXT.to_string())));
+        assert_eq!(bring(&from, &to).unwrap(), Brought { keys: 0, saves: 2 });
+        assert!(!to.keys.exists(), "Omoio's keys.txt untouched");
+    }
+
+    #[test]
+    fn no_keys_txt_in_their_cemu_is_no_problem() {
+        let scratch = Scratch::new("no-keys");
+        let (_, from, to) = two_cemus(&scratch);
+        std::fs::remove_file(&from.keys).unwrap();
+        let found = survey(&from, &to);
+        assert_eq!((found.keys, found.keys_problem), (0, None));
+        assert_eq!(bring(&from, &to).unwrap(), Brought { keys: 0, saves: 2 });
+    }
+
+    /// Held open by a program that shares nothing, it can't be read.
+    #[cfg(windows)]
+    #[test]
+    fn a_keys_txt_of_theirs_that_cant_be_read_says_so() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let scratch = Scratch::new("held-keys");
+        let (_, from, to) = two_cemus(&scratch);
+        let held = std::fs::OpenOptions::new().read(true).share_mode(0).open(&from.keys).unwrap();
+        let found = survey(&from, &to);
+        assert_eq!((found.keys, found.keys_problem), (0, Some(CANT_READ_THEIR_KEYS.to_string())));
+        assert_eq!(bring(&from, &to).unwrap(), Brought { keys: 0, saves: 2 }, "the saves still come");
+        drop(held);
+        assert_eq!(survey(&from, &to).keys, 1);
+    }
+
+    /// Omoio's own keys.txt that can't be read stops the keys being
+    /// brought, rather than being written over.
+    #[cfg(windows)]
+    #[test]
+    fn omoios_keys_txt_that_cant_be_read_is_kept() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let scratch = Scratch::new("held-omoio-keys");
+        let (_, from, to) = two_cemus(&scratch);
+        write(&to.keys, &format!("{OTHER_KEY}\r\n"));
+        let held = std::fs::OpenOptions::new().read(true).share_mode(0).open(&to.keys).unwrap();
+        assert_eq!(survey(&from, &to).keys, 1, "the look still shows their key");
+        assert!(bring(&from, &to).unwrap_err().starts_with("Couldn't read the keys Omoio's Cemu already has"));
+        drop(held);
+        assert_eq!(std::fs::read_to_string(&to.keys).unwrap(), format!("{OTHER_KEY}\r\n"));
     }
 
     #[test]

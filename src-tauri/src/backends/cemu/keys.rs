@@ -22,6 +22,9 @@ const HEADER: &str = "# this file contains keys needed for decryption of disc fi
 
 const NOT_TEXT: &str = "That file isn't plain text. Save your keys as a .txt file and add it again.";
 
+const CANT_READ_CEMUS: &str = "Couldn't read the keys Omoio's Cemu already has, so nothing was changed. \
+Close any program that has its keys.txt open, then try again.";
+
 /// U+FEFF, the byte order mark, as each encoding scheme writes it at the
 /// start of a file (the Unicode Standard 18.0, section 3.10, D95 and D98,
 /// https://www.unicode.org/versions/Unicode18.0.0/core-spec/chapter-3/#G28070,
@@ -79,6 +82,34 @@ fn keys_in_cemus(bytes: &[u8]) -> Vec<String> {
     }
 }
 
+/// Cemu's keys.txt, empty when there is none yet. Any other error is
+/// refused: taken for empty, `merged` would then write the header and the
+/// new keys in place of the keys already there. It is not Cemu holding the
+/// file. Cemu opens keys.txt only to read it, sharing reading and writing
+/// (`FileStream::openFile`, src/Common/windows/FileStream_win32.cpp lines
+/// 13 and 21), once a run (`sKeyCachePrepared`, src/Cafe/Filesystem/FST/KeyCache.cpp
+/// lines 55 to 60), and closes it when done (KeyCache.cpp line 127,
+/// FileStream_win32.cpp line 180; Bertram's Cemu at tag v2.6-2, read 4
+/// November 2026), so a second read goes through while it is open
+/// ("Creating and Opening Files", the table of valid second calls,
+/// https://learn.microsoft.com/en-us/windows/win32/fileio/creating-and-opening-files,
+/// read 4 November 2026). What stops the read is some other program that
+/// has it open, or the folder's permissions, so closing Cemu would not help
+/// and the message doesn't ask for it.
+fn cemus_bytes(file: &Path) -> Result<Vec<u8>, String> {
+    match std::fs::read(file) {
+        Ok(bytes) => Ok(bytes),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(_) => Err(CANT_READ_CEMUS.to_string()),
+    }
+}
+
+/// The keys in the keys.txt of a Cemu Omoio runs, as `count` and `merged`
+/// read them.
+pub(super) fn in_cemus(file: &Path) -> Result<Vec<String>, String> {
+    cemus_bytes(file).map(|bytes| keys_in_cemus(&bytes))
+}
+
 /// The keys in a keys file, read the way Cemu reads them: anything after `#`
 /// or `;` is a comment, spaces, tabs, `-` and `_` are dropped, and a line of
 /// 32 hex characters is a key. Other lengths Cemu ignores, and so does this.
@@ -118,8 +149,8 @@ fn path(app: &AppHandle) -> Result<PathBuf, String> {
 pub fn count(app: &AppHandle) -> usize {
     path(app)
         .ok()
-        .and_then(|file| std::fs::read(file).ok())
-        .map(|bytes| keys_in_cemus(&bytes).len())
+        .and_then(|file| in_cemus(&file).ok())
+        .map(|keys| keys.len())
         .unwrap_or(0)
 }
 
@@ -168,7 +199,7 @@ pub(super) fn merged(file: &Path, text: &str) -> Result<usize, String> {
             "That file has no keys in it.".to_string()
         });
     }
-    let existing = std::fs::read(file).unwrap_or_default();
+    let existing = cemus_bytes(file)?;
     let have = keys_in_cemus(&existing);
     let fresh: Vec<String> = new.into_iter().filter(|key| !have.contains(key)).collect();
     if fresh.is_empty() {
@@ -365,6 +396,43 @@ mod tests {
         assert_eq!(merged(&file, OTHER), Ok(1));
         let after = std::fs::read(&file).unwrap();
         assert_eq!(after, [before.as_slice(), b"\r\n", OTHER.as_bytes(), b"\r\n"].concat(), "kept, keys after");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A program that has keys.txt open to read, sharing only writing, is
+    /// the case in the table in "Creating and Opening Files" where a second
+    /// read fails and a second write goes through
+    /// (https://learn.microsoft.com/en-us/windows/win32/fileio/creating-and-opening-files,
+    /// read 4 November 2026). Taken for empty, the keys in it were lost.
+    #[cfg(windows)]
+    #[test]
+    fn a_keys_txt_that_cant_be_read_is_left_as_it_was() {
+        use std::os::windows::fs::OpenOptionsExt;
+        use windows::Win32::Storage::FileSystem::FILE_SHARE_WRITE;
+
+        let (dir, file) = cemus_file("held");
+        let before = format!("{HEADER}{KEY}\r\n");
+        std::fs::write(&file, &before).unwrap();
+        let held = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(FILE_SHARE_WRITE.0)
+            .open(&file)
+            .unwrap();
+        assert!(std::fs::read(&file).is_err(), "it can't be read");
+        assert!(std::fs::OpenOptions::new().write(true).open(&file).is_ok(), "but it can be written");
+        assert_eq!(merged(&file, OTHER), Err(CANT_READ_CEMUS.to_string()));
+        assert!(in_cemus(&file).is_err());
+        drop(held);
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), before, "its keys kept");
+        assert_eq!(merged(&file, OTHER), Ok(1), "added once it reads");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn no_keys_txt_yet_reads_as_empty() {
+        let (dir, file) = cemus_file("none");
+        assert_eq!(in_cemus(&file), Ok(Vec::new()));
+        assert_eq!(in_cemus(&dir.join("portable").join("keys.txt")), Ok(Vec::new()), "nor its folder");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
