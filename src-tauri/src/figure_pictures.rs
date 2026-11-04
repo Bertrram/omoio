@@ -35,8 +35,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager};
 
-const READER_URL: &str = "https://github.com/Bertrram/omoio-portraits/releases/download/v0.3.0/omoio-portraits.exe";
-const READER_SHA256: &str = "3a0f3937d165eb63844004343d9039e777baed8996e535b7784f156bdb32d538";
+const READER_URL: &str = "https://github.com/Bertrram/omoio-portraits/releases/download/v0.4.0/omoio-portraits.exe";
+const READER_SHA256: &str = "5d507d2d47f67b29ed63fab25401e56f78b12d1f49d5734eb10d3ec727464926";
 const READER: &str = "omoio-portraits.exe";
 
 /// The games, on the consoles whose disc images need a copy, whose pictures
@@ -54,7 +54,7 @@ const COPIES_FOR: [(Console, figures::Game); 5] = [
 /// The games played with a toy other than Skylanders whose pictures the
 /// reader knows, by console, toy and, for Disney Infinity, release:
 /// Disney Infinity 1.0 and LEGO Dimensions, from the PS3 game's folder
-/// (omoio-portraits' README, commits a581d09 and 782f0ed, read 4 November
+/// (omoio-portraits v0.4.0's README, commits a581d09 and 782f0ed, read 4 November
 /// 2026). The reader tells them by the PS3 title ids core/infinity.rs and
 /// core/dimensions.rs know them by.
 const TOYS_READ: [(Console, Toy, Option<InfinityGame>); 2] = [
