@@ -85,12 +85,14 @@ function playedNote(played: Played): HTMLElement {
 }
 
 /// The words of a game's toy menu section, by its toy. Skylanders' are the
-/// ones it has always had.
-const MENU_SECTION: Record<Toy, { heading: string; help: string; button: string; about: string }> = {
+/// ones it has always had. `pictures` says what the figure pictures are for
+/// while the game has none.
+const MENU_SECTION: Record<Toy, { heading: string; help: string; button: string; about: string; pictures: string }> = {
   skylanders: {
     heading: "Skylanders",
     help: "How the portal menu works",
     button: "Portal menu button",
+    pictures: "Shows each figure's own picture in the portal menu, read from your copy of the game.",
     about:
       "Skylanders games need a toy portal, and the emulator pretends one is plugged in. While playing, press this button to open the portal menu over the game. Insert or Tab on the keyboard opens and closes it too, and Portal in the bar over the game opens it. Pick any character under its element, or an item or adventure pack, and it goes on the portal and is saved with its progress. Several can be on at once. It all works with the pad. The home button is the best choice, since games don't use it. If Windows' Game Bar opens instead, switch off its controller button in Windows Settings, under Gaming, Xbox Game Bar.",
   },
@@ -98,6 +100,7 @@ const MENU_SECTION: Record<Toy, { heading: string; help: string; button: string;
     heading: "Disney Infinity",
     help: "How the base menu works",
     button: "Base menu button",
+    pictures: "Shows each character's and Power Disc's own picture in the base menu, read from your copy of the game.",
     about:
       "Disney Infinity games need an Infinity Base, and the emulator pretends one is plugged in. While playing, press this button to open the base menu over the game. Insert or Tab on the keyboard opens and closes it too, and Infinity Base in the bar over the game opens it. Pick a character, a play set or a power disc, and it goes where it fits on the base and is saved with its progress. It all works with the pad. The same button opens the portal menu in a Skylanders game. The home button is the best choice, since games don't use it. If Windows' Game Bar opens instead, switch off its controller button in Windows Settings, under Gaming, Xbox Game Bar.",
   },
@@ -105,6 +108,7 @@ const MENU_SECTION: Record<Toy, { heading: string; help: string; button: string;
     heading: "LEGO Dimensions",
     help: "How the Toy Pad menu works",
     button: "Toy Pad menu button",
+    pictures: "Shows each minifigure's and vehicle's own picture in the Toy Pad menu, read from your copy of the game.",
     about:
       "LEGO Dimensions games need a Toy Pad, and the emulator pretends one is plugged in. While playing, press this button to open the Toy Pad menu over the game. Insert or Tab on the keyboard opens and closes it too, and Toy Pad in the bar over the game opens it. Pick a minifigure and the place it goes on, and move it to another pad when the game asks. For a vehicle or gadget, put a Blank Tag on the centre pad and build it in the game, which writes it to the tag. It all works with the pad. The same button opens the portal menu in a Skylanders game. The home button is the best choice, since games don't use it. If Windows' Game Bar opens instead, switch off its controller button in Windows Settings, under Gaming, Xbox Game Bar.",
   },
@@ -280,8 +284,8 @@ function fill(body: HTMLElement, hero: HTMLElement, game: Game): void {
     const about = body.querySelector<HTMLElement>("#detail-portal-about")!;
     const picturesNote = body.querySelector<HTMLElement>("#detail-pictures-note")!;
     about.textContent = words.about;
-    // The figures' pictures are read for Skylanders games alone.
-    if (!game.portal_menu) body.querySelector("#detail-pictures")!.classList.add("gone");
+    // Only for a game whose figures' pictures Omoio can read.
+    if (!game.figure_pictures) body.querySelector("#detail-pictures")!.classList.add("gone");
     help.onclick = () => {
       const open = !about.classList.toggle("gone");
       help.setAttribute("aria-expanded", String(open));
@@ -325,8 +329,10 @@ function fill(body: HTMLElement, hero: HTMLElement, game: Game): void {
 
   // Each figure's own picture, read out of the user's copy of the game by
   // a small program Omoio fetches the first time. The menu works without
-  // them, so the row only offers. Skylanders games only.
-  if (game.portal_menu && game.set_up) {
+  // them, so the row only offers. Skylanders games, and the Disney Infinity
+  // and LEGO Dimensions games the program knows.
+  if (game.figure_pictures && game.set_up) {
+    const forMenu = MENU_SECTION[game.toy ?? "skylanders"].pictures;
     const picturesNote = body.querySelector<HTMLElement>("#detail-pictures-note")!;
     const pictures = body.querySelector<HTMLButtonElement>("#detail-pictures")!;
     const picturesValue = pictures.querySelector<HTMLElement>(".d-row-v")!;
@@ -336,10 +342,7 @@ function fill(body: HTMLElement, hero: HTMLElement, game: Game): void {
       picturesValue.className = count > 0 ? "d-row-v" : "d-row-v ask";
       picturesValue.textContent = count > 0 ? `${count} pictures` : "Get pictures";
       pictures.title = count > 0 ? "Read them again" : "";
-      picturesNote.textContent =
-        count > 0
-          ? ""
-          : "Shows each figure's own picture in the portal menu, read from your copy of the game.";
+      picturesNote.textContent = count > 0 ? "" : forMenu;
     };
     const countPictures = () =>
       figurePictures(game.title_id)

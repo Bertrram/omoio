@@ -76,6 +76,11 @@ pub struct GameEntry {
     /// Big Picture's button setting. The same as `portal_menu` for a
     /// Skylanders game, which keeps its own Skylanders things on that.
     pub toy_menu: bool,
+    /// Whether the game's page offers to get its figures' pictures
+    /// (`figure_pictures::offered`): a Skylanders game's where `portal_menu`
+    /// is, and a Disney Infinity or LEGO Dimensions game's where its menu
+    /// works and the picture reader knows the game.
+    pub figure_pictures: bool,
     /// For a game played in Omoio, what its pages say beside the list's
     /// rating, with or without one shown (`tested::played`).
     pub tested: Option<crate::core::tested::Played>,

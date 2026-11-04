@@ -399,6 +399,7 @@ fn entry(app: &AppHandle, game: crate::core::library::Game) -> GameEntry {
         figures_note: crate::core::figures::made_figures_note(game.console, &game.title),
         toy: crate::core::toys::toy_of(game.console, &game.title_id, &game.title),
         toy_menu: crate::core::toys::offers_menu(features, game.console, &game.title_id, &game.title),
+        figure_pictures: crate::figure_pictures::offered(features, game.console, &game.title_id, &game.title),
         tested: crate::core::tested::played(game.console, &game.title),
         game,
     }
@@ -2215,7 +2216,8 @@ pub fn delete_toy_figure(app: AppHandle, path: String) -> Result<(), String> {
 }
 
 /// The figures' pictures a game has so far: the running game's when no
-/// title id is given, which is how the portal menu asks.
+/// title id is given, which is how the portal menu asks, and the base and
+/// Toy Pad menus.
 #[tauri::command]
 pub fn figure_pictures(app: AppHandle, title_id: Option<String>) -> Result<crate::figure_pictures::Pictures, String> {
     let title_id = match title_id {

@@ -117,6 +117,10 @@ export interface Game {
   /// The same as `portal_menu` for a Skylanders game, which keeps its own
   /// Skylanders things on that.
   toy_menu: boolean;
+  /// Whether the game's page offers to get its figures' pictures: a
+  /// Skylanders game's where `portal_menu` is, and a Disney Infinity or LEGO
+  /// Dimensions game's where its menu works and the picture reader knows it.
+  figure_pictures: boolean;
   /// For a game played in Omoio, what its pages say beside the list's
   /// rating. Null for any other game.
   tested: Played | null;
@@ -1245,7 +1249,9 @@ export function toypadLights(): Promise<PadLight[] | null> {
 /// The figures' pictures a game has so far: where they are, and each one's
 /// name without `.png`, `<id>-<variant>` with the variant as four hex digits.
 /// The game's element symbols are `element-<element>`, its Swap Zone badges
-/// `movement-<movement>` and a kind of figure's badge `class-<kind>`.
+/// `movement-<movement>` and a kind of figure's badge `class-<kind>`. A
+/// Disney Infinity piece's and a LEGO Dimensions tag's is its number alone,
+/// as the emulators' lists number them.
 export interface FigurePictures {
   folder: string;
   names: string[];
@@ -1254,7 +1260,7 @@ export interface FigurePictures {
   elsewhere: Record<string, string>;
 }
 
-/// Without a title id, the running game's, which is how the portal menu asks.
+/// Without a title id, the running game's, which is how the toys' menus ask.
 export function figurePictures(titleId?: string): Promise<FigurePictures> {
   return invoke("figure_pictures", { titleId: titleId ?? null });
 }

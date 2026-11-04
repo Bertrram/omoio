@@ -14,11 +14,18 @@
 //! fits with room to spare, and only for a game the reader knows. Nothing of
 //! it is kept but the pictures, and a copy left by a run that never finished
 //! goes the next time Omoio starts.
+//!
+//! The Disney Infinity base menu and the LEGO Dimensions Toy Pad menu show
+//! their pieces' pictures the same way, read by the same program from the
+//! player's own copy and never downloaded or shipped (Bertram, 4 November
+//! 2026).
 
 use crate::backends::EmulatorBackend;
-use crate::core::console::Console;
+use crate::core::console::{Console, Features};
 use crate::core::figures;
+use crate::core::infinity::InfinityGame;
 use crate::core::library::Game;
+use crate::core::toys::{self, Toy};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Read};
@@ -34,14 +41,25 @@ const READER: &str = "omoio-portraits.exe";
 
 /// The games, on the consoles whose disc images need a copy, whose pictures
 /// the reader at `READER_URL` knows (its README). A copy of a disc image is
-/// made only for one of these: for any other the minutes and gigabytes would
-/// come to nothing.
+/// made only for one of these, or one of `TOYS_READ`: for any other the
+/// minutes and gigabytes would come to nothing.
 const COPIES_FOR: [(Console, figures::Game); 5] = [
     (Console::WiiU, figures::Game::SwapForce),
     (Console::WiiU, figures::Game::TrapTeam),
     (Console::WiiU, figures::Game::SuperChargers),
     (Console::WiiU, figures::Game::Imaginators),
     (Console::Wii, figures::Game::Spyro),
+];
+
+/// The games played with a toy other than Skylanders whose pictures the
+/// reader knows, by console, toy and, for Disney Infinity, release:
+/// Disney Infinity 1.0 and LEGO Dimensions, from the PS3 game's folder
+/// (omoio-portraits' README, commits a581d09 and 782f0ed, read 4 November
+/// 2026). The reader tells them by the PS3 title ids core/infinity.rs and
+/// core/dimensions.rs know them by.
+const TOYS_READ: [(Console, Toy, Option<InfinityGame>); 2] = [
+    (Console::Ps3, Toy::Infinity, Some(InfinityGame::One)),
+    (Console::Ps3, Toy::ToyPad, None),
 ];
 
 /// Room left free on the drive on top of the copy, so it is never filled to
@@ -206,8 +224,33 @@ pub enum Got {
     Copy { need: u64, free: u64 },
 }
 
+/// Whether the reader knows the pictures of a game played with a toy other
+/// than Skylanders: its toy as `toys::toy_of` says, and for Disney Infinity
+/// its release as `InfinityGame::of` says.
+fn reads_toy(console: Console, title_id: &str, title: &str) -> bool {
+    let Some(toy) = toys::toy_of(console, title_id, title).filter(|&toy| toy != Toy::Skylanders) else {
+        return false;
+    };
+    let release = if toy == Toy::Infinity { InfinityGame::of(console, title_id, title) } else { None };
+    TOYS_READ.contains(&(console, toy, release))
+}
+
+/// Whether a game's page offers to get its figures' pictures: a Skylanders
+/// game wherever its portal menu works, as it always has, and a Disney
+/// Infinity or LEGO Dimensions game where its menu works and the reader
+/// knows it. The pictures are only for the menu, and a reader that doesn't
+/// know the game would be fetched for nothing.
+pub fn offered(features: Features, console: Console, title_id: &str, title: &str) -> bool {
+    match toys::toy_of(console, title_id, title) {
+        Some(Toy::Skylanders) => figures::offers_portal_menu(features, console, title),
+        Some(_) => toys::offers_menu(features, console, title_id, title) && reads_toy(console, title_id, title),
+        None => false,
+    }
+}
+
 fn copies_for(game: &Game) -> bool {
     figures::game_from_title(&game.title).is_some_and(|which| COPIES_FOR.contains(&(game.console, which)))
+        || reads_toy(game.console, &game.title_id, &game.title)
 }
 
 fn local_dir(app: &AppHandle) -> Result<PathBuf, String> {
@@ -347,6 +390,12 @@ pub async fn get(app: AppHandle, backend: &'static dyn EmulatorBackend, game: Ga
         return Err("Pictures can't be read from a PS3 disc image yet. A game imported as its folder gives them."
             .to_string());
     }
+    // Nor is it fetched for a Disney Infinity or LEGO Dimensions release it
+    // doesn't know.
+    let toy = toys::toy_of(game.console, &game.title_id, &game.title);
+    if toy.is_some_and(|toy| toy != Toy::Skylanders) && !reads_toy(game.console, &game.title_id, &game.title) {
+        return Err(NOT_YET.to_string());
+    }
     let reader = reader(&app).await?;
     let folder = folder(&app, &game.title_id)?;
     tauri::async_runtime::spawn_blocking(move || {
@@ -453,5 +502,115 @@ mod tests {
         assert_eq!(copying(), Some("Dolphin"));
         drop(copy);
         assert_eq!(copying(), None);
+    }
+
+    use Console::*;
+
+    fn game(console: Console, title_id: &str, title: &str) -> Game {
+        Game {
+            console,
+            title_id: title_id.to_string(),
+            title: title.to_string(),
+            version: None,
+            update_version: None,
+            path: PathBuf::new(),
+            size_bytes: 0,
+        }
+    }
+
+    #[test]
+    fn the_reader_knows_disney_infinity_1_0_and_lego_dimensions_on_the_ps3() {
+        // The title ids the reader tells the two games by (omoio-portraits'
+        // src/infinity.rs and src/dimensions.rs, `TITLE_IDS`, 4 November
+        // 2026), whatever the name says.
+        for id in ["BLUS30977", "BLES01842", "BLES01843", "BLES01844", "BLES02105", "BLUS31473"] {
+            assert!(reads_toy(Ps3, id, ""), "{id}");
+        }
+        assert!(reads_toy(Ps3, "BLES01844", "Disney Infinity"));
+        assert!(reads_toy(Ps3, "BLUS31473", "LEGO® DIMENSIONS™"));
+        for (console, id, title) in [
+            (Ps3, "BLUS31418", "Disney Infinity: Marvel Super Heroes"),
+            (Ps3, "BLES02064", "Disney Infinity [2.0]"),
+            (Ps3, "BLUS31522", "Disney Infinity 3.0"),
+            (Ps3, "NPUB31657", "Disney Infinity 3.0"),
+            (WiiU, "0005000010136F00", "Disney Infinity"),
+            (WiiU, "0005000010195D00", "LEGO® DIMENSIONS™"),
+            (WiiU, "WUD0123456789ABC", "LEGO Dimensions"),
+            (Wii, "SQIE4Q", "Disney Infinity"),
+        ] {
+            assert!(!reads_toy(console, id, title), "{title} {id}");
+        }
+        // A Skylanders game goes by its title, as it always has, and a game
+        // with no toy isn't one of these.
+        assert!(!reads_toy(Ps3, "BLES01844", "Skylanders Giants"));
+        assert!(!reads_toy(Ps3, "BLES02055", "LittleBigPlanet 3"));
+    }
+
+    #[test]
+    fn a_toy_games_page_offers_its_pictures_where_its_menu_works_and_the_reader_knows_it() {
+        let base = Features { infinity: true, ..Features::default() };
+        let pad = Features { toypad: true, ..Features::default() };
+        assert!(offered(base, Ps3, "BLES01844", "Disney Infinity"));
+        assert!(offered(base, Ps3, "BLUS30977", ""));
+        assert!(offered(pad, Ps3, "BLES02105", "LEGO® DIMENSIONS™"));
+        assert!(offered(pad, Ps3, "BLUS31473", ""));
+        // Not where the emulator doesn't fill the toy.
+        assert!(!offered(Features::default(), Ps3, "BLES01844", "Disney Infinity"));
+        assert!(!offered(pad, Ps3, "BLES01844", "Disney Infinity"));
+        assert!(!offered(base, Ps3, "BLES02105", "LEGO® DIMENSIONS™"));
+        // Not where the menu works and the reader doesn't know the game.
+        assert!(!offered(base, Ps3, "BLUS31418", "Disney Infinity: Marvel Super Heroes"));
+        assert!(!offered(base, Ps3, "BLUS31522", "Disney Infinity 3.0"));
+        // Not where the menu isn't offered.
+        assert!(!offered(pad, WiiU, "0005000010195D00", "LEGO® DIMENSIONS™"));
+        assert!(!offered(base, WiiU, "0005000010136F00", "Disney Infinity"));
+    }
+
+    #[test]
+    fn every_other_games_page_offers_its_pictures_exactly_where_it_always_did() {
+        let titles = [
+            "Skylanders: Spyro's Adventure",
+            "Skylanders Giants",
+            "Skylanders SWAP Force",
+            "Skylanders Trap Team",
+            "Skylanders SuperChargers",
+            "Skylanders Imaginators",
+            "Skylanders Battlecast",
+            "LittleBigPlanet 3",
+            "Infinity Runner",
+            "LEGO Marvel Super Heroes",
+            "",
+        ];
+        let every = Features { portal: true, infinity: true, toypad: true, ..Features::default() };
+        for features in [Features::default(), Features { portal: true, ..Features::default() }, every] {
+            for console in Console::ALL {
+                for id in ["BLES02055", "0005000010142D00", "WUD0123456789ABC", "SX7P52", ""] {
+                    for title in titles {
+                        let before = figures::offers_portal_menu(features, console, title);
+                        assert_eq!(offered(features, console, id, title), before, "{title} {id}");
+                    }
+                }
+            }
+        }
+        // A Skylanders game stays one whatever its id, a toy's among them.
+        assert!(offered(every, Ps3, "BLES01844", "Skylanders Giants"));
+    }
+
+    #[test]
+    fn copies_are_made_for_the_games_they_always_were() {
+        let copies = |console, title| copies_for(&game(console, "WUD0123456789ABC", title));
+        for title in ["Skylanders SWAP Force", "Skylanders Trap Team", "Skylanders SuperChargers", "Skylanders Imaginators"] {
+            assert!(copies(WiiU, title), "{title}");
+            assert!(!copies(Wii, title), "{title}");
+        }
+        assert!(copies(Wii, "Skylanders: Spyro's Adventure"));
+        assert!(!copies(WiiU, "Skylanders Giants"));
+        assert!(!copies(Ps3, "Skylanders Giants"));
+        // The reader doesn't know the Wii U's and the Wii's toy games, so no
+        // copy of one is made.
+        assert!(!copies(WiiU, "Disney Infinity"));
+        assert!(!copies(WiiU, "LEGO Dimensions"));
+        assert!(!copies(Wii, "Disney Infinity"));
+        assert!(!copies(Ps3, "LittleBigPlanet 3"));
     }
 }
