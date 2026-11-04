@@ -394,10 +394,26 @@ fn readable_time(time: &str) -> String {
     }
 }
 
+/// The fields of an Application Error or Application Hang worth a note:
+/// what crashed or hung, where, how, and the process it was. The rest are
+/// time stamps, report ids and paths, which say nothing a player or a helper
+/// can act on (the fields as this PC's own events hold them, 4 November
+/// 2026).
+const NOTED_FIELDS: &[&str] = &[
+    "AppName",
+    "AppVersion",
+    "ModuleName",
+    "ModuleVersion",
+    "ExceptionCode",
+    "FaultingOffset",
+    "ProcessId",
+    "HangType",
+];
+
 /// Omoio's note of one of Windows' events, in Windows' own words: the
 /// event's own field names and values, which aren't translated, or for a
-/// display event its sentence. Empty fields are left out, and a path is cut
-/// to its file name.
+/// display event its sentence. Only `NOTED_FIELDS` are kept when the event
+/// has them, empty fields are left out, and a path is cut to its file name.
 pub fn event_note(event: &WinEvent) -> String {
     let display = DISPLAY_SAYS
         .iter()
@@ -410,7 +426,10 @@ pub fn event_note(event: &WinEvent) -> String {
         None => event
             .data
             .iter()
-            .filter(|(_, value)| !value.is_empty())
+            .filter(|(name, value)| {
+                let known = event.data.iter().any(|(name, _)| NOTED_FIELDS.contains(&name.as_str()));
+                !value.is_empty() && (!known || NOTED_FIELDS.contains(&name.as_str()))
+            })
             .map(|(name, value)| {
                 if name.is_empty() {
                     file_name(value)
@@ -766,10 +785,14 @@ fn crash_words(console: Console, emulator: &str, evidence: &Evidence) -> String 
     }
 }
 
-fn errors_logged(count: usize) -> String {
+/// RPCS3's are its error and fatal lines. Cemu's and Dolphin's are lines
+/// picked by their words and levels, Dolphin's warnings among them, so they
+/// are counted as problems, not errors.
+fn errors_logged(console: Console, count: usize) -> String {
+    let what = if console == Console::Ps3 { "error" } else { "problem" };
     match count {
-        1 => "1 error logged.".to_string(),
-        n => format!("{n} errors logged."),
+        1 => format!("1 {what} logged."),
+        n => format!("{n} {what}s logged."),
     }
 }
 
@@ -805,12 +828,12 @@ pub fn summary(console: Console, emulator: &str, ending: Ending, evidence: &Evid
             said.push(format!("{emulator}'s log shows no crash."));
         }
         if !crashlog && !problems.is_empty() {
-            said.push(errors_logged(problems.len()));
+            said.push(errors_logged(console, problems.len()));
         }
     } else if problems.is_empty() {
         said.push(format!("{emulator} logged no errors."));
     } else {
-        said.push(errors_logged(problems.len()));
+        said.push(errors_logged(console, problems.len()));
     }
     if evidence.events.iter().any(is_display_event) {
         said.push("Windows reported a display driver problem during the game.".to_string());
@@ -989,22 +1012,23 @@ mod tests {
     }
 
     #[test]
-    fn an_events_note_is_in_windows_words_with_paths_cut_to_file_names() {
+    fn an_events_note_is_in_windows_words_and_keeps_only_what_says_something() {
         let note = event_note(&parse_event(APP_ERROR).unwrap());
         assert!(note.starts_with(
             "Omoio's note: Windows logged event 1000 (Application Error) in its Application log at 2026-10-29 16:05:12 UTC: "
         ));
         assert!(note.contains("AppName=ShadowLogger.exe, AppVersion=2.2.5.0"));
         assert!(note.contains("ExceptionCode=c0000005"));
-        assert!(note.contains("ProcessCreationTime=0x1dd67b64620c924"));
-        assert!(note.contains("AppPath=ShadowLogger.exe"));
+        assert!(note.contains("ProcessId=0x1018"));
+        // Time stamps, report ids and paths are left out.
+        for left_out in ["ProcessCreationTime", "AppTimeStamp", "IntegratorReportId", "AppPath", "ModulePath"] {
+            assert!(!note.contains(left_out), "{left_out}");
+        }
         assert!(!note.contains("Program Files") && !note.contains(":\\"));
-        // Empty fields say nothing.
-        assert!(!note.contains("PackageFullName"));
 
         let hang = event_note(&parse_event(APP_HANG).unwrap());
-        assert!(hang.contains("ExeFileName=conhost.exe"));
-        assert!(!hang.contains("System32"));
+        assert!(hang.contains("AppName=conhost.exe, AppVersion=10.0.22621.3672, ProcessId=0x4e50"), "{hang}");
+        assert!(!hang.contains("System32") && !hang.contains("ExeFileName"));
 
         assert_eq!(
             event_note(&parse_event(DISPLAY_RESET).unwrap()),
@@ -1311,14 +1335,14 @@ Further errors will be sent to the Video Backend log and Dolphin will now likely
         let reported = Evidence { exit_code: Some(0xC000_0409), events: vec![crash_event()], ..Default::default() };
         assert_eq!(summary_of(Console::WiiU, "Cemu", &reported, &[]), "Windows reported that Cemu crashed.");
         let trouble = vec!["[20:31:39.880] Unrecoverable error in Vulkan renderer".to_string(), "[20:31:39.880] Msg: x".to_string()];
-        assert_eq!(summary_of(Console::WiiU, "Cemu", &reported, &trouble), "Windows reported that Cemu crashed. 2 errors logged.");
+        assert_eq!(summary_of(Console::WiiU, "Cemu", &reported, &trouble), "Windows reported that Cemu crashed. 2 problems logged.");
 
         let exception = Evidence { exit_code: Some(0xC000_0374), ..Default::default() };
         assert_eq!(summary_of(Console::WiiU, "Cemu", &exception, &[]), "Cemu ended unexpectedly.");
 
         let closed = Evidence { exit_code: Some(0), ..Default::default() };
         assert_eq!(summary_of(Console::WiiU, "Cemu", &closed, &[]), "Cemu's log shows no crash.");
-        assert_eq!(summary_of(Console::WiiU, "Cemu", &closed, &trouble), "Cemu's log shows no crash. 2 errors logged.");
+        assert_eq!(summary_of(Console::WiiU, "Cemu", &closed, &trouble), "Cemu's log shows no crash. 2 problems logged.");
 
         // Stopped by the player while Cemu was stuck after its crashlog.
         let stopped = Evidence { stopped_by_us: true, crash_line: Some("Crashlog for Cemu c170da5".into()), ..Default::default() };
@@ -1342,7 +1366,7 @@ Further errors will be sent to the Video Backend log and Dolphin will now likely
             "Windows reported that Dolphin crashed. Dolphin logged no errors."
         );
         let exception = Evidence { exit_code: Some(0xC000_0005), ..Default::default() };
-        assert_eq!(summary_of(Console::Wii, "Dolphin", &exception, &three), "Dolphin ended unexpectedly. 3 errors logged.");
+        assert_eq!(summary_of(Console::Wii, "Dolphin", &exception, &three), "Dolphin ended unexpectedly. 3 problems logged.");
     }
 
     #[test]

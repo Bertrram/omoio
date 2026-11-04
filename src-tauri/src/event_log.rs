@@ -7,9 +7,9 @@
 //! process by its id and its start time. "Application Error" also writes
 //! event 1005 for a program Windows closed because a file it was reading
 //! went away, as a game drive unplugged does, naming the program by name
-//! only. The System log has the display driver's resets (source Display:
-//! 4097, 4101, 4109 and 4113), which name no process at all. Those two can
-//! only be placed by their time. (Each event's fields as seen in this PC's
+//! only, so it isn't read. The System log has the display driver's resets
+//! (source Display: 4097, 4101, 4109 and 4113), which name no process at
+//! all and can only be placed by their time. (Each event's fields as seen in this PC's
 //! own logs, and its words in its publisher's metadata or message file,
 //! Windows 11 22621, 4 November 2026; "Timeout detection and recovery
 //! (TDR)", Microsoft Learn, read the same day.)
@@ -32,8 +32,11 @@ use windows::Win32::System::EventLog::{
 };
 
 /// Each log, the source in it, and the source's events worth reading.
+/// Application Error's 1005, for a file a program couldn't read, holds no
+/// process id or start time, so it could be tied to the emulator only by
+/// name, and isn't asked for (core::ending::is_about).
 const WANTED: [(&str, &str, &[u32]); 3] = [
-    ("Application", "Application Error", &[1000, 1005]),
+    ("Application", "Application Error", &[1000]),
     ("Application", "Application Hang", &[1002]),
     ("System", "Display", &[4097, 4101, 4109, 4113]),
 ];

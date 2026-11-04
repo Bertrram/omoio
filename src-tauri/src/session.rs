@@ -939,7 +939,12 @@ fn keep_session_log(
         problems,
         log_file: log_file.to_string_lossy().into_owned(),
         exit_code,
-        notes: end_notes,
+        // The page lists them under a heading of their own, so the label
+        // each carries in the kept log isn't repeated there.
+        notes: end_notes
+            .iter()
+            .map(|note| note.strip_prefix("Omoio's note: ").unwrap_or(note).to_string())
+            .collect(),
         summary: Some(summary),
     };
 
