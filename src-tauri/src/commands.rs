@@ -399,6 +399,7 @@ fn entry(app: &AppHandle, game: crate::core::library::Game) -> GameEntry {
         figures_note: crate::core::figures::made_figures_note(game.console, &game.title),
         toy: crate::core::toys::toy_of(game.console, &game.title_id, &game.title),
         toy_menu: crate::core::toys::offers_menu(features, game.console, &game.title_id, &game.title),
+        toy_note: crate::core::toys::page_note(game.console, &game.title_id, &game.title),
         figure_pictures: crate::figure_pictures::offered(features, game.console, &game.title_id, &game.title),
         tested: crate::core::tested::played(game.console, &game.title),
         game,

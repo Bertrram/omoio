@@ -111,13 +111,27 @@ pub fn toy_of(console: Console, title_id: &str, title: &str) -> Option<Toy> {
     dimensions::is_dimensions(console, title_id, title).then_some(Toy::ToyPad)
 }
 
+/// The toy plugged in for a game as it starts, which its emulator is readied
+/// for: a Skylanders game's portal, as it always was, and another toy only
+/// where its menu works in the game (`has_menu`). Nothing but the menu fills
+/// a toy other than the portal, so a release whose menu is left out of this
+/// release starts as it did in 0.3.4, with no toy (Bertram, 4 November
+/// 2026). Every emulator asks this, so the rule is the same for all three.
+pub fn plugged_in(console: Console, title_id: &str, title: &str) -> Option<Toy> {
+    toy_of(console, title_id, title).filter(|&toy| toy == Toy::Skylanders || has_menu(toy, console, title_id, title))
+}
+
 /// Where the base menu is offered: every Disney Infinity release, on each
-/// console whose emulator fills the base. None has been played with the menu
-/// in Omoio yet, and each is offered so players can say how it goes. What
-/// is known of each game in each emulator was read on 4 November 2026.
+/// console whose emulator fills the base, offered so players can say how it
+/// goes. What is known of each game in each emulator was read on 4 November
+/// 2026.
 const INFINITY_MENU: [(Console, InfinityGame); 3] = [
-    // Untested in Omoio until Bertram has played it. RPCS3's list rates it
-    // Ingame (BLUS30977 and BLES01842, 22 January 2023). The three games
+    // Untested by Bertram, who hasn't played it himself. It was tried once
+    // on his PC on 4 November 2026, with the European disc, BLES01844: the
+    // menu made Agent P on Player One, took him off and put him back,
+    // each through RPCS3's Infinity Manager, but the game wasn't seen to
+    // take him, since RPCS3 draws its opening washed out. RPCS3's list rates
+    // it Ingame (BLUS30977 and BLES01842, 22 January 2023). The three games
     // show blocky pictures in RPCS3 (RPCS3 issue 14572, open); a player
     // found 1.0 playable with Vsync on Full and Strict Rendering Mode on (7
     // July 2026), which Omoio doesn't set.
@@ -154,14 +168,17 @@ const INFINITY_MENU: [(Console, InfinityGame); 3] = [
 /// emulator fills the Toy Pad, every release there, known by its id or its
 /// name (dimensions.rs). Of the consoles Omoio runs, the game came out on
 /// the PS3 and the Wii U alone (Wikipedia and GameTDB), and Dolphin has no
-/// Toy Pad. It hasn't been played with the menu in Omoio yet, and it is
-/// offered so players can say how it goes. All of it, and what is known of
-/// the game in each emulator, was read on 4 November 2026.
+/// Toy Pad. It is offered so players can say how it goes. All of it, and
+/// what is known of the game in each emulator, was read on 4 November 2026.
 const TOYPAD_MENU: [Console; 1] = [
-    // Untested in Omoio until Bertram has played it. RPCS3's list rates
-    // both discs, BLES02105 and BLUS31473, Playable (4 August 2024, build
-    // f6b5511). The US disc crashes in the Phantom Zone level as the Zod
-    // battle changes phase (RPCS3 issue 19156, open since August 2026).
+    // Untested by Bertram, who hasn't played it himself. It was tried once
+    // with the menu on his PC on 4 November 2026, with the European disc,
+    // BLES02105: the menu made Batman on the centre pad, moved him to the
+    // left pad, took him off and put him back, and the game took him and
+    // Gandalf. RPCS3's list rates both discs, BLES02105 and BLUS31473,
+    // Playable (4 August 2024, build f6b5511). The US disc crashes in the
+    // Phantom Zone level as the Zod battle changes phase (RPCS3 issue
+    // 19156, open since August 2026).
     // RPCS3 keeps none of the lights the game sets on the pads
     // (rpcs3/Emu/Io/Dimensions.cpp lines 647 to 659, master b2e52d6), so
     // the menu can't show them there.
@@ -210,13 +227,31 @@ pub fn menu_note(features: Features, console: Console, title_id: &str, title: &s
     if offers_menu(features, console, title_id, title) {
         return None;
     }
+    Some(not_here(toy, console, title_id, title))
+}
+
+/// The line the page of a game played with a toy other than Skylanders
+/// shows when the toy's menu doesn't work in it, which says where it does:
+/// "The base menu doesn't work in this version yet. It works in the PS3
+/// version." The same words as the menu's key over the game (`menu_note`),
+/// asked of the game alone, as a Skylanders game's page asks
+/// `figures::portal_menu_note`, so the catalogue can say it too. `None`
+/// where the menu works, for a Skylanders game, whose page keeps its own
+/// line, and for a game with no toy.
+pub fn page_note(console: Console, title_id: &str, title: &str) -> Option<String> {
+    let toy = toy_of(console, title_id, title).filter(|&toy| toy != Toy::Skylanders)?;
+    (!has_menu(toy, console, title_id, title)).then(|| not_here(toy, console, title_id, title))
+}
+
+/// That the toy's menu doesn't work in this game, and where it does.
+fn not_here(toy: Toy, console: Console, title_id: &str, title: &str) -> String {
     let menu = if toy == Toy::ToyPad { "The Toy Pad menu" } else { "The base menu" };
     let elsewhere = elsewhere(toy, console, title_id, title);
-    Some(if elsewhere.is_empty() {
+    if elsewhere.is_empty() {
         format!("{menu} doesn't work in this game yet.")
     } else {
         format!("{menu} doesn't work in this version yet. It works in {}.", figures::versions(&elsewhere))
-    })
+    }
 }
 
 /// The other consoles whose version of the game has the menu, for a game
@@ -528,6 +563,68 @@ mod tests {
                 for title in TITLES {
                     let Some(note) = menu_note(features, console, "", title) else { continue };
                     assert!(note.ends_with('.') && !note.contains('!') && !note.contains('\u{2014}'), "{note}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_toy_is_plugged_in_only_where_its_menu_works() {
+        use Console::*;
+        for title in TITLES {
+            for console in Console::ALL {
+                for id in IDS {
+                    let toy = toy_of(console, id, title);
+                    let plugged = plugged_in(console, id, title);
+                    if toy == Some(Toy::Skylanders) {
+                        assert_eq!(plugged, toy, "every Skylanders game as before: {title} {id}");
+                    } else {
+                        let works = toy.is_some_and(|toy| has_menu(toy, console, id, title));
+                        assert_eq!(plugged, toy.filter(|_| works), "{title} {id}");
+                    }
+                }
+            }
+        }
+        assert_eq!(plugged_in(Ps3, "BLES01844", "Disney Infinity"), Some(Toy::Infinity));
+        assert_eq!(plugged_in(Ps3, "BLES02064", "Disney Infinity [2.0]"), Some(Toy::Infinity));
+        assert_eq!(plugged_in(Ps3, "BLUS31522", "Disney Infinity 3.0"), Some(Toy::Infinity));
+        assert_eq!(plugged_in(Ps3, "BLES02105", "LEGO® DIMENSIONS™"), Some(Toy::ToyPad));
+        assert_eq!(plugged_in(Ps3, "BLUS31545", "Skylanders SuperChargers"), Some(Toy::Skylanders));
+        // Left out of this release (Bertram, 4 November 2026), so they start
+        // as they did in 0.3.4.
+        assert_eq!(plugged_in(WiiU, "00050000101AC900", "Disney Infinity 3.0 Edition"), None);
+        assert_eq!(plugged_in(WiiU, "0005000010195D00", "LEGO® DIMENSIONS™"), None);
+        assert_eq!(plugged_in(Wii, "SQIE4Q", "Disney Infinity"), None);
+        assert_eq!(plugged_in(Ps3, "BLES01784", "Batman: Arkham Origins"), None);
+    }
+
+    #[test]
+    fn a_toy_games_page_says_where_its_menu_works() {
+        use Console::*;
+        let base = "The base menu doesn't work in this version yet. It works in the PS3 version.";
+        let toy_pad = "The Toy Pad menu doesn't work in this version yet. It works in the PS3 version.";
+        assert_eq!(page_note(WiiU, "00050000101AC900", "Disney Infinity 3.0 Edition").as_deref(), Some(base));
+        assert_eq!(page_note(WiiU, "0005000010136F00", "Disney Infinity").as_deref(), Some(base));
+        assert_eq!(page_note(Wii, "SQIE4Q", "Disney Infinity").as_deref(), Some(base));
+        assert_eq!(page_note(WiiU, "0005000010195D00", "LEGO® DIMENSIONS™").as_deref(), Some(toy_pad));
+        assert_eq!(page_note(Ps3, "BLES01844", "Disney Infinity"), None);
+        assert_eq!(page_note(Ps3, "BLES02105", "LEGO® DIMENSIONS™"), None);
+        // A Skylanders game's page keeps its own line, and a game with no toy
+        // has none.
+        assert_eq!(page_note(Ps3, "BLUS31545", "Skylanders SuperChargers"), None);
+        assert_eq!(page_note(Ps3, "BLES01784", "Batman: Arkham Origins"), None);
+        // The page and the menu's key over the game say the same, wherever
+        // the emulator fills the toy.
+        let filled = Features { portal: true, infinity: true, toypad: true, ..Features::default() };
+        for title in TITLES {
+            for console in Console::ALL {
+                for id in IDS {
+                    let page = page_note(console, id, title);
+                    if matches!(toy_of(console, id, title), Some(Toy::Infinity | Toy::ToyPad)) {
+                        assert_eq!(page, menu_note(filled, console, id, title), "{title} {id}");
+                    } else {
+                        assert_eq!(page, None, "{title} {id}");
+                    }
                 }
             }
         }

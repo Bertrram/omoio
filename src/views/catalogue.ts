@@ -52,12 +52,14 @@ function card(listing: Listing, covers: boolean, region: string, selected: boole
   // A game's own name, so never through innerHTML.
   card.querySelector<HTMLElement>(".card-name")!.textContent = listing.name;
 
-  // A Skylanders game can't be played without figures on the portal, so
-  // whether Omoio's portal menu works in this version is said on its tile.
-  if (listing.portal_menu !== null) {
-    const works = listing.portal_menu;
+  // A game played with a toy can't be played without figures on it, so
+  // whether Omoio's menu for the toy works in this version is said on its
+  // tile. A Skylanders game's answer is the portal menu's own, as before.
+  const works = listing.portal_menu ?? listing.toy_menu;
+  if (works !== null) {
     const mark = tag(works ? "badge go" : "badge warn", works ? "Works in Omoio" : "Not in Omoio yet");
-    if (listing.portal_note) mark.title = listing.portal_note;
+    const menuNote = listing.portal_note ?? listing.toy_note;
+    if (menuNote) mark.title = menuNote;
     card.querySelector<HTMLElement>(".art")!.appendChild(mark);
   }
 

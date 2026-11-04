@@ -298,7 +298,9 @@ fn switch_off(app: &AppHandle, key: &str) {
 /// RPCS3 fills its Skylanders portal, its Infinity Base and its Toy Pad only
 /// from their managers, which open from that window's Manage menu
 /// (portal.rs, infinity.rs and dimensions.rs), so a game played with any of
-/// them starts with it, and Omoio hides it.
+/// them starts with it, and Omoio hides it. The toy is the one plugged in
+/// (`toys::plugged_in`), as for Cemu and Dolphin: every PS3 release has its
+/// toy's menu, so every toy game on the PS3 starts with the window.
 fn with_main_window(toy: Option<Toy>) -> bool {
     matches!(toy, Some(Toy::Skylanders | Toy::Infinity | Toy::ToyPad))
 }
@@ -336,7 +338,7 @@ pub fn launch(app: &AppHandle, game: &Game) -> Result<Launched, String> {
     super::account::start_in_game_language(app);
 
     // Spawned rather than waited on, so Omoio stays usable while the game runs.
-    let toy = toys::toy_of(Console::Ps3, &game.title_id, &game.title);
+    let toy = toys::plugged_in(Console::Ps3, &game.title_id, &game.title);
     let mut command = super::command(&exe);
     if with_main_window(toy) {
         command.env("QT_QPA_PLATFORM", super::portal::QT_PLATFORM);
@@ -552,7 +554,7 @@ mod tests {
 
     #[test]
     fn a_game_played_with_a_toy_starts_with_rpcs3s_window() {
-        let toy = |title_id: &str, title: &str| toys::toy_of(Console::Ps3, title_id, title);
+        let toy = |title_id: &str, title: &str| toys::plugged_in(Console::Ps3, title_id, title);
         assert!(with_main_window(toy("BLUS31006", "Skylanders Giants")));
         assert!(with_main_window(toy("BLUS30977", "Disney Infinity")));
         assert!(with_main_window(toy("BLES02064", "Disney Infinity [2.0]")));

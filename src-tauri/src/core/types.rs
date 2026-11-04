@@ -76,6 +76,11 @@ pub struct GameEntry {
     /// Big Picture's button setting. The same as `portal_menu` for a
     /// Skylanders game, which keeps its own Skylanders things on that.
     pub toy_menu: bool,
+    /// For a Disney Infinity or LEGO Dimensions game the menu doesn't work
+    /// in, the line its page shows: "The base menu doesn't work in this
+    /// version yet. It works in the PS3 version." (`toys::page_note`). A
+    /// Skylanders game's line is `portal_note`.
+    pub toy_note: Option<String>,
     /// Whether the game's page offers to get its figures' pictures
     /// (`figure_pictures::offered`): a Skylanders game's where `portal_menu`
     /// is, and a Disney Infinity or LEGO Dimensions game's where its menu

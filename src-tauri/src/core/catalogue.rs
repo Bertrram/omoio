@@ -87,6 +87,10 @@ pub struct Listing {
     /// portal menu among them, which its tile says. `None` for any other
     /// game. The same as `portal_menu` for a Skylanders game.
     pub toy_menu: Option<bool>,
+    /// For a Disney Infinity or LEGO Dimensions game the menu doesn't work
+    /// in, the line saying where it does, as a game's page says it
+    /// (`toys::page_note`). A Skylanders game's is `portal_note`.
+    pub toy_note: Option<String>,
     /// For a game played in Omoio, what its card and page say beside
     /// `status`, which stays the list's own (`tested::played`).
     pub tested: Option<Played>,
@@ -324,6 +328,7 @@ fn listing_of(mut entries: Vec<Entry>) -> Listing {
         .iter()
         .find_map(|entry| Some((toys::toy_of(entry.console, &entry.title_id, &entry.name)?, entry)));
     let toy_menu = toy.map(|(toy, entry)| toys::has_menu(toy, entry.console, &entry.title_id, &entry.name));
+    let toy_note = toy.and_then(|(_, entry)| toys::page_note(entry.console, &entry.title_id, &entry.name));
 
     let first = &entries[0];
     Listing {
@@ -344,6 +349,7 @@ fn listing_of(mut entries: Vec<Entry>) -> Listing {
         figures_note: crate::core::figures::made_figures_note(first.console, &first.name),
         toy: toy.map(|(toy, _)| toy),
         toy_menu,
+        toy_note,
         tested: played(first.console, &first.name),
     }
 }
@@ -471,16 +477,23 @@ mod tests {
             assert_eq!(skylanders.toy_menu, skylanders.portal_menu, "the portal menu's own answer");
         }
         let ps3 = find(Console::Ps3, "Disney Infinity 3.0");
-        assert_eq!((ps3.toy, ps3.toy_menu), (Some(Toy::Infinity), Some(true)));
+        assert_eq!((ps3.toy, ps3.toy_menu, ps3.toy_note.as_deref()), (Some(Toy::Infinity), Some(true), None));
         // This release offers the base menu on the PS3 only (Bertram, 4
-        // November 2026).
+        // November 2026), which the Wii U version's tile and page say.
         let wii_u = find(Console::WiiU, "Disney Infinity 3.0 Edition");
         assert_eq!((wii_u.toy, wii_u.toy_menu), (Some(Toy::Infinity), Some(false)));
+        assert_eq!(
+            wii_u.toy_note.as_deref(),
+            Some("The base menu doesn't work in this version yet. It works in the PS3 version.")
+        );
         for infinity in [ps3, wii_u] {
             assert_eq!((infinity.portal_menu, infinity.portal_note.as_deref()), (None, None), "no Skylanders words");
         }
+        let superchargers = find(Console::Ps3, "Skylanders SuperChargers");
+        assert!(superchargers.portal_note.is_some(), "Skylanders keeps its own line");
+        assert_eq!(superchargers.toy_note, None);
         let batman = find(Console::Ps3, "Batman: Arkham Origins");
-        assert_eq!((batman.toy, batman.toy_menu), (None, None));
+        assert_eq!((batman.toy, batman.toy_menu, batman.toy_note.as_deref()), (None, None, None));
     }
 
     #[test]

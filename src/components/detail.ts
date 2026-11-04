@@ -256,11 +256,13 @@ function fill(body: HTMLElement, hero: HTMLElement, game: Game): void {
     }
   };
 
-  // A Skylanders game the menu doesn't work in says so, and which version
-  // it works in, since without figures on the portal it can't be played.
-  if (game.portal_note) {
+  // A game played with a toy says when the toy's menu doesn't work in it,
+  // and which version it works in, since without figures on the toy it
+  // can't be played. A Skylanders game's line is its own.
+  const menuNote = game.portal_note ?? game.toy_note;
+  if (menuNote) {
     const noPortal = body.querySelector<HTMLElement>("#detail-no-portal")!;
-    noPortal.textContent = game.portal_note;
+    noPortal.textContent = menuNote;
     noPortal.classList.remove("gone");
   }
   if (game.figures_note) {
@@ -634,9 +636,10 @@ function fillListing(body: HTMLElement, hero: HTMLElement, { listing }: Catalogu
   badge.className = `status ${listing.status.tone || "mute"}`;
   compatNote.textContent = listing.status.explanation || "Nobody has reported on this game yet.";
   if (listing.tested) compatNote.after(playedNote(listing.tested));
-  if (listing.portal_note) {
+  const menuNote = listing.portal_note ?? listing.toy_note;
+  if (menuNote) {
     const noPortal = body.querySelector<HTMLElement>("#listing-no-portal")!;
-    noPortal.textContent = listing.portal_note;
+    noPortal.textContent = menuNote;
     noPortal.classList.remove("gone");
   }
   if (listing.figures_note) {

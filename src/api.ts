@@ -117,6 +117,10 @@ export interface Game {
   /// The same as `portal_menu` for a Skylanders game, which keeps its own
   /// Skylanders things on that.
   toy_menu: boolean;
+  /// For a Disney Infinity or LEGO Dimensions game the menu doesn't work
+  /// in: "The base menu doesn't work in this version yet. It works in the
+  /// PS3 version." A Skylanders game's line is `portal_note`.
+  toy_note: string | null;
   /// Whether the game's page offers to get its figures' pictures: a
   /// Skylanders game's where `portal_menu` is, and a Disney Infinity or LEGO
   /// Dimensions game's where its menu works and the picture reader knows it.
@@ -754,6 +758,9 @@ export interface Listing {
   /// For a game played with a toy, whether its menu works in it, the
   /// portal menu among them. Null for any other game.
   toy_menu: boolean | null;
+  /// For a Disney Infinity or LEGO Dimensions game the menu doesn't work
+  /// in, where it does. A Skylanders game's is `portal_note`.
+  toy_note: string | null;
   /// For a game played in Omoio, what its card and page say beside `status`,
   /// which stays the list's own. Null for any other game.
   tested: Played | null;

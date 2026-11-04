@@ -858,11 +858,12 @@ const FIRST_SETTINGS: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
 </content>\n";
 
 /// The toy a game is played with, which Cemu emulates for it and for no
-/// other game (`toys::toy_of`): a Skylanders game is one by name, as it
-/// always was, and a Disney Infinity or LEGO Dimensions game by its title
-/// id or its name.
+/// other game: a Skylanders game is one by name, as it always was, and a
+/// Disney Infinity or LEGO Dimensions game by its title id or its name, once
+/// its menu works in it. Until then the game starts as in 0.3.4, with no toy
+/// and no portal server (`toys::plugged_in`).
 fn toy(game: &Game) -> Option<Toy> {
-    crate::core::toys::toy_of(Console::WiiU, &game.title_id, &game.title)
+    crate::core::toys::plugged_in(Console::WiiU, &game.title_id, &game.title)
 }
 
 /// Where the inside of the element nested as `parents` sits in settings.xml,
@@ -2314,15 +2315,23 @@ Deluxe");
         assert_eq!(toy(&wii_u_game("00050000101F4D00", "Skylanders Imaginators")), SKYLANDERS);
         // A disc image, whose id is made from its file's name.
         assert_eq!(toy(&wii_u_game(&disc_id("Skylanders Trap Team.wud"), "Skylanders Trap Team")), SKYLANDERS);
-        assert_eq!(toy(&wii_u_game("00050000101AC900", "Disney Infinity 3.0 Edition")), Some(Toy::Infinity));
-        // The Japanese 3.0, whose meta.xml names it in Japanese (WiiUBrew,
-        // read 4 November 2026).
-        assert_eq!(toy(&wii_u_game("00050000101DDC00", "ディズニーインフィニティ3.0")), Some(Toy::Infinity));
-        // LEGO Dimensions, US and Europe, named as WiiUBrew's title database
-        // names them (read 4 November 2026).
-        assert_eq!(toy(&wii_u_game("0005000010194200", "LEGO® Dimensions™")), Some(Toy::ToyPad));
-        assert_eq!(toy(&wii_u_game("0005000010195D00", "LEGO® DIMENSIONS™")), Some(Toy::ToyPad));
         assert_eq!(toy(&wii_u_game("000500001010EC00", "Mario Kart 8")), None);
+        // The Wii U's base and Toy Pad menus are left out of this release
+        // (Bertram, 4 November 2026), so these start as they did in 0.3.4,
+        // with no toy, though each is known for the game it is. The Japanese
+        // 3.0's meta.xml names it in Japanese, and LEGO Dimensions, US and
+        // Europe, is named as WiiUBrew's title database names it (read 4
+        // November 2026).
+        let left_out = [
+            ("00050000101AC900", "Disney Infinity 3.0 Edition", Toy::Infinity),
+            ("00050000101DDC00", "ディズニーインフィニティ3.0", Toy::Infinity),
+            ("0005000010194200", "LEGO® Dimensions™", Toy::ToyPad),
+            ("0005000010195D00", "LEGO® DIMENSIONS™", Toy::ToyPad),
+        ];
+        for (title_id, title, known) in left_out {
+            assert_eq!(crate::core::toys::toy_of(Console::WiiU, title_id, title), Some(known), "{title}");
+            assert_eq!(toy(&wii_u_game(title_id, title)), None, "{title}");
+        }
     }
 
     #[test]

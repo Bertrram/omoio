@@ -197,10 +197,11 @@ fn language_args(console: Console, game_language: Option<&str>) -> Vec<String> {
 impl Dolphin {
     /// The toy a Wii game is played with, which is plugged in for it, its
     /// window ready to be filled: the Skylanders portal for a Skylanders
-    /// game, as it always was (`toys::toy_of` asks `figures::is_skylanders`
-    /// first), and the Infinity Base for Disney Infinity, whose first game
-    /// alone came out on the Wii (core/infinity.rs). Dolphin has no Toy Pad:
-    /// its emulated USB devices are the portal, the base, Wii Speak and
+    /// game, as it always was, and the Infinity Base for Disney Infinity,
+    /// whose first game alone came out on the Wii (core/infinity.rs), once
+    /// the base menu works in it. Until then the game starts in batch mode,
+    /// as in 0.3.4 (`toys::plugged_in`). Dolphin has no Toy Pad: its
+    /// emulated USB devices are the portal, the base, Wii Speak and
     /// Logitech's USB microphone (Core/Config/MainSettings.cpp lines 626 to
     /// 648, Dolphin 2609a, read 4 November 2026). The GameCube has none of
     /// these games.
@@ -208,7 +209,7 @@ impl Dolphin {
         if self.console != Console::Wii {
             return None;
         }
-        toys::toy_of(self.console, &game.title_id, &game.title).filter(|&toy| toy != Toy::ToyPad)
+        toys::plugged_in(self.console, &game.title_id, &game.title).filter(|&toy| toy != Toy::ToyPad)
     }
 
     /// The base's errands are for the Wii's Infinity Base alone.
@@ -768,7 +769,11 @@ mod tests {
         };
         assert_eq!(WII.toy(&game(Console::Wii, "SSPE52", "Skylanders Spyro's Adventure")), Some(Toy::Skylanders));
         assert_eq!(WII.toy(&game(Console::Wii, "SKYE52", "Skylanders Giants")), Some(Toy::Skylanders));
-        assert_eq!(WII.toy(&game(Console::Wii, "SQIE4Q", "Disney Infinity")), Some(Toy::Infinity));
+        // The base menu is left out on the Wii in this release (Bertram, 4
+        // November 2026), so Disney Infinity starts as it did in 0.3.4, with
+        // no base, though it is known for the game it is.
+        assert_eq!(toys::toy_of(Console::Wii, "SQIE4Q", "Disney Infinity"), Some(Toy::Infinity));
+        assert_eq!(WII.toy(&game(Console::Wii, "SQIE4Q", "Disney Infinity")), None);
         assert_eq!(WII.toy(&game(Console::Wii, "RMCE01", "Mario Kart Wii")), None);
         assert_eq!(GAMECUBE.toy(&game(Console::GameCube, "GALE01", "Super Smash Bros. Melee")), None);
     }
