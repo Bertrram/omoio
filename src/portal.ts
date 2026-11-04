@@ -10,8 +10,6 @@ import {
   figures as listFigures,
   onCommunityProgress,
   onPortalMenu,
-  padsConnected,
-  padsHeld,
   portalClear,
   portalCreate,
   portalFigures,
@@ -31,16 +29,17 @@ import {
   type MadeFigures,
   type Movement,
   type Offer,
-  type Pad,
-  type PadFamily,
   type SkylandersGame,
   type Terrain,
   type Villain,
 } from "./api";
-import { nameOf } from "./components/padNames";
 import adventureIcon from "./icons/adventures.svg";
 import itemIcon from "./icons/items.svg";
 import swapperIcon from "./icons/swappers.svg";
+import { image, node, svg } from "./menu/dom";
+import { bumper, drive, hintRow, HOLD, keyHeld, MOVES, named, openedBy, skipHeld, type Move } from "./menu/input";
+import { notice, NOTICE_SHAPES, notify, problem, type Notice } from "./menu/notices";
+import { act, acting, inTurn } from "./menu/turns";
 
 /// The Skylanders menu, drawn by Omoio over the running game and used with
 /// the pad alone. The shoulder buttons go through the tabs, in the order the
@@ -61,49 +60,6 @@ import swapperIcon from "./icons/swappers.svg";
 
 /// How many tiles sit side by side, which is also how far up or down moves.
 const COLUMNS = 5;
-
-/// The keyboard key that opens and closes the menu, as Omoio reads it
-/// (SECOND_MENU_KEY in src-tauri/src/portal_menu.rs; Insert works too, but not
-/// every keyboard has one). The page itself does nothing
-/// with it: Omoio reads it from wherever it is pressed.
-const MENU_KEY = "Tab";
-
-/// Holding the top face button on a saved figure, which deletes it, named as
-/// a place of its own: the keyboard holds Y for it, since its top face
-/// button, P, pairs.
-const HOLD = "North held";
-
-/// The keys that do each place's job, as the page's own key handler maps
-/// them (the keydown listener at the end of this file), named as Big
-/// Picture names the same keys (src/bigpicture/keys.ts). Backspace and
-/// Delete both take a figure off; Backspace is the one named, since
-/// "Delete" beside "Take off" would read as deleting the figure.
-const KEYS: Record<string, string> = {
-  South: "Enter",
-  East: "Esc",
-  West: "Backspace",
-  North: "P",
-  [HOLD]: "Y",
-  LB: "PgUp",
-  RB: "PgDn",
-};
-
-/// A direction held down keeps moving after a pause, as on a console.
-const REPEAT_AFTER = 380;
-const REPEAT_EVERY = 140;
-
-type Move = "up" | "down" | "left" | "right";
-
-const MOVES: Record<string, Move> = {
-  Up: "up",
-  "LS Y+": "up",
-  Down: "down",
-  "LS Y-": "down",
-  Left: "left",
-  "LS X-": "left",
-  Right: "right",
-  "LS X+": "right",
-};
 
 const ELEMENTS: [FigureElement, string][] = [
   ["air", "Air"],
@@ -373,13 +329,6 @@ const root = document.getElementById("portal")!;
 
 /// The game running, which decides the order of the tabs.
 let game: SkylandersGame | null = null;
-/// The kind of pad whose buttons the menu names, as printed on it: the one
-/// that opened the menu. `null` while only keys have opened it.
-let family: PadFamily | null = null;
-/// Whether the menu names the keyboard's keys instead of a pad's buttons:
-/// it was opened with Insert, Tab or the Portal button, or a key was pressed
-/// since.
-let keysNamed = false;
 let shown = false;
 let asking = false;
 let onPortal: string[] = [];
@@ -427,41 +376,6 @@ let pictures: {
   firstOf: Map<number, string>;
   elsewhere: Record<string, string>;
 } | null = null;
-
-/// A place on the pad, such as "South", as the menu names it to the player:
-/// the key that does its job, or the button as printed on the pad.
-function named(place: string): string {
-  if (keysNamed) return KEYS[place] ?? place;
-  return nameOf(family ?? "generic", place === HOLD ? "North" : place);
-}
-
-/// Takes in what opened the menu, as Omoio tells it (`family` in
-/// src-tauri/src/portal_menu.rs): a kind of pad, or "keyboard" for Insert,
-/// Tab and the Portal button. The kind of pad that opened it last is kept
-/// for when a pad is pressed in a menu a key opened.
-function openedBy(opener: string) {
-  keysNamed = opener === "keyboard";
-  if (!keysNamed) family = opener as PadFamily;
-}
-
-/// The names follow what was pressed last, as Big Picture's hints do (`act`
-/// in src/bigpicture/bigPicture.ts): a key the menu takes names the keys.
-function pressedKey() {
-  if (keysNamed) return;
-  keysNamed = true;
-  render();
-}
-
-/// A pad pressed names the pad's buttons again. Omoio reads only what is
-/// held on the pads, not on which one, so in a menu only keys have opened
-/// the first pad plugged in stands for it, as in Big Picture (`readPads`
-/// there).
-async function pressedPad() {
-  if (!keysNamed) return;
-  if (!family) family = (await padsConnected().catch((): Pad[] => []))[0]?.family ?? "generic";
-  keysNamed = false;
-  render();
-}
 
 /// A figure's picture, or its plain version's when its variant has none of
 /// its own, or failing that any version's: Trap Team names its pictures by
@@ -887,13 +801,6 @@ function settle() {
   chip = Math.max(0, Math.min(chip, on - 1));
 }
 
-function node<K extends keyof HTMLElementTagNameMap>(tag: K, className: string, text?: string): HTMLElementTagNameMap[K] {
-  const made = document.createElement(tag);
-  made.className = className;
-  if (text !== undefined) made.textContent = text;
-  return made;
-}
-
 function drawing(element: FigureElement | null, kind: FigureKind | null): string {
   const shape = element ?? (kind && kind in MARKS ? kind : "figure");
   return `<svg viewBox="0 0 24 24" aria-hidden="true">${MARKS[shape]}</svg>`;
@@ -943,18 +850,6 @@ function cornerFace(id: number, className: string): HTMLElement {
   if (face) corner.appendChild(image(face));
   else corner.innerHTML = svg(MARKS.figure);
   return corner;
-}
-
-function svg(shape: string): string {
-  return `<svg viewBox="0 0 24 24" aria-hidden="true">${shape}</svg>`;
-}
-
-function image(source: string): HTMLImageElement {
-  const made = node("img", "");
-  made.src = source;
-  made.alt = "";
-  made.decoding = "async";
-  return made;
 }
 
 /// A shape painted in a colour through it, as the game's element symbols
@@ -1286,23 +1181,6 @@ function renderTabs(): HTMLElement {
   });
   nav.append(bumper("LB", "Previous tab"), bar, bumper("RB", "Next tab"));
   return nav;
-}
-
-/// The label at an end of the tab bar names the button or key that goes to
-/// the tab before or after, and a click on it does the same, through the
-/// same `press`. It goes on pointer-down, as all of Omoio's feedback does, and the
-/// press is kept from taking the focus: the menu keeps its selection itself,
-/// and the keys and the pad move it.
-function bumper(place: "LB" | "RB", words: string): HTMLElement {
-  const label = node("button", "portal-bumper", named(place));
-  label.tabIndex = -1;
-  label.setAttribute("aria-label", words);
-  label.onpointerdown = (event) => {
-    if (event.button !== 0) return;
-    event.preventDefault();
-    press(place);
-  };
-  return label;
 }
 
 function renderBody(): HTMLElement {
@@ -2176,23 +2054,6 @@ function renderFoot(): HTMLElement {
   return foot;
 }
 
-/// The buttons and what each does. With `closing`, East closes the menu.
-function hintRow(hints: [string, string][], closing: boolean): HTMLElement {
-  const row = node("div", "portal-hints");
-  for (const [input, words] of hints) {
-    const hint = node("span", "portal-hint");
-    hint.append(node("kbd", "", named(input)));
-    // The keyboard's Tab, on every keyboard, opens and closes the menu as
-    // the pad's button does, and so does Insert (MENU_KEY and
-    // SECOND_MENU_KEY in src-tauri/src/portal_menu.rs), for a player whose
-    // pad Omoio can't read, so it is named where the menu says how to close.
-    if (input === "East" && closing) hint.append(node("span", "portal-or", "or"), node("kbd", "", MENU_KEY));
-    hint.append(words);
-    row.appendChild(hint);
-  }
-  return row;
-}
-
 /// Over a game the menu isn't offered in, only why, and how to close.
 function renderUnavailable(note: string) {
   const panel = node("div", "portal-panel portal-unavailable");
@@ -2233,75 +2094,6 @@ function render() {
     ?.scrollIntoView({ block: "nearest" });
   panel.querySelector(".portal-tab.sel")?.scrollIntoView({ block: "nearest", inline: "nearest" });
   drawHold();
-}
-
-// ---- notices ----
-
-/// What the menu is doing or has done, shown as a card in the corner of the
-/// screen like a Windows notification, large enough to read from a sofa.
-/// Work under way and hints stay until something replaces them; a finished
-/// job, a problem and a word about why nothing happened go by themselves.
-interface Notice {
-  kind: "working" | "done" | "problem" | "hint" | "info";
-  title: string;
-  detail?: string;
-  /// The figure it is about, its picture's layers bottom first: a swapper
-  /// is two. Left out when Omoio has no picture of a layer.
-  picture?: (string | null)[];
-  /// A vehicle SuperCharged: done, with the lightning for its mark.
-  cheer?: true;
-}
-
-const NOTICE_LASTS: Partial<Record<Notice["kind"], number>> = { done: 3500, problem: 8000, info: 5000 };
-
-const NOTICE_SHAPES: Record<Exclude<Notice["kind"], "working">, string> = {
-  done: BADGES.on[1],
-  problem: `<path d="M12 6v7.5M12 18h.01" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>`,
-  hint: BADGES.picked[1],
-  info: `<path d="M12 11v6.5M12 6.5h.01" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>`,
-};
-
-const card = node("div", "portal-notice");
-card.setAttribute("role", "status");
-document.body.appendChild(card);
-let notice: Notice | null = null;
-let noticeTimer = 0;
-
-/// The kind's mark: a spinner while working, a shape otherwise.
-function noticeMark(kind: Notice["kind"], cheer = false): HTMLElement {
-  if (kind === "working") return node("span", "portal-spinner");
-  const mark = node("span", "portal-notice-shape");
-  mark.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${cheer ? MARKS.supercharged : NOTICE_SHAPES[kind]}</svg>`;
-  return mark;
-}
-
-/// Shows a notice in place of the one up now, or with `null` takes it away.
-function notify(next: Notice | null) {
-  window.clearTimeout(noticeTimer);
-  notice = next;
-  if (!next) {
-    card.classList.remove("shown");
-    return;
-  }
-  const art = node("span", "portal-notice-art");
-  const layers = next.picture ?? [];
-  if (layers.length > 0 && layers.every(Boolean)) {
-    for (const source of layers) art.appendChild(image(source!));
-    art.appendChild(node("span", "portal-notice-corner")).appendChild(noticeMark(next.kind, next.cheer));
-  } else {
-    art.appendChild(noticeMark(next.kind, next.cheer));
-  }
-  const words = node("span", "portal-notice-words");
-  words.append(node("strong", "", next.title));
-  if (next.detail) words.append(node("span", "", next.detail));
-  card.replaceChildren(art, words);
-  card.className = `portal-notice ${next.kind}${next.cheer ? " cheer" : ""} shown`;
-  const lasts = NOTICE_LASTS[next.kind];
-  if (lasts) noticeTimer = window.setTimeout(() => notify(null), lasts);
-}
-
-function problem(err: unknown, otherwise: string): Notice {
-  return { kind: "problem", title: typeof err === "string" ? err : otherwise };
 }
 
 /// The picture of a figure on the portal, by the name the portal gives it.
@@ -2425,38 +2217,10 @@ function movePortal(move: Move) {
   render();
 }
 
-/// Calls to the emulator's portal under way or waiting their turn. They go
-/// one at a time, in the order asked: each works in the emulator's own
-/// window, and two at once would close it under each other. The menu can
-/// close and open again while one runs.
-let pending = 0;
-let line: Promise<unknown> = Promise.resolve();
 /// What the change under way says, said again if the menu opens again
-/// before it is done.
+/// before it is done. The calls to the portal go one at a time, in their
+/// turn (src/menu/turns.ts).
 let working: Notice | null = null;
-/// Whether something the user asked for is under way. Putting a trap on can
-/// take two changes, and a press in between would pick the same free slot.
-let acting = false;
-
-function inTurn<T>(call: () => Promise<T>): Promise<T> {
-  pending += 1;
-  const run = line.then(() => call()).finally(() => {
-    pending -= 1;
-  });
-  line = run.catch(() => undefined);
-  return run;
-}
-
-/// Does what the user asked for, unless the portal is busy.
-async function act(what: () => Promise<unknown>) {
-  if (acting || pending > 0) return;
-  acting = true;
-  try {
-    await what();
-  } finally {
-    acting = false;
-  }
-}
 
 /// What a change gives back: the portal afterwards, and the file put in a
 /// slot when one was.
@@ -2601,7 +2365,7 @@ function tellDriving(id: number, leaving: string[]) {
     const vehicle = onPortal[pair.vehicle];
     return notify({
       kind: "done",
-      cheer: true,
+      cheer: MARKS.supercharged,
       title: `${vehicle} is SuperCharged with ${onPortal[pair.driver]}`,
       detail: cameOff(leaving),
       picture: pictureNamed(vehicle),
@@ -2860,19 +2624,6 @@ async function takeLists(before: Set<number> | null) {
 
 // ---- the pad ----
 
-let held = new Set<string>();
-const downSince = new Map<string, number>();
-let lastRepeat = 0;
-let reading = false;
-
-async function readPads(): Promise<Set<string>> {
-  try {
-    return new Set(await padsHeld());
-  } catch {
-    return new Set();
-  }
-}
-
 function press(input: string) {
   // Over a game the menu isn't offered in, only closing does anything.
   if (unavailable) {
@@ -2908,38 +2659,6 @@ function press(input: string) {
   }
 }
 
-window.setInterval(async () => {
-  if (!shown || reading) return;
-  reading = true;
-  try {
-    const now = await readPads();
-    const time = Date.now();
-    for (const input of now) {
-      if (!held.has(input)) {
-        downSince.set(input, time);
-        if (keysNamed) await pressedPad();
-        press(input);
-      } else if (
-        MOVES[input] &&
-        time - (downSince.get(input) ?? time) > REPEAT_AFTER &&
-        time - lastRepeat > REPEAT_EVERY
-      ) {
-        lastRepeat = time;
-        press(input);
-      }
-    }
-    held = now;
-    if (holding) {
-      const still = holding.by === "pad" ? now.has("North") : keyHeld;
-      if (!still) stopHold();
-      else if (time - holding.since >= HOLD_TO_DELETE) void finishHold();
-      else drawHold();
-    }
-  } finally {
-    reading = false;
-  }
-}, 50);
-
 // ---- deleting a saved figure ----
 
 /// How long the top face button is held on a saved figure to delete it:
@@ -2950,7 +2669,6 @@ const HOLD_TO_DELETE = 5000;
 /// A saved figure being held to be deleted: its file, since when, and what
 /// holds it, the pad or the keyboard's Y.
 let holding: { path: string; name: string; since: number; by: "pad" | "key" } | null = null;
-let keyHeld = false;
 
 /// Whether holding the top face button deletes the selected tile's figure:
 /// one of the user's own, in the Saved tab or among their crystals, where
@@ -3015,46 +2733,21 @@ async function finishHold() {
   });
 }
 
-document.addEventListener("keyup", (event) => {
-  if (event.key === "y" || event.key === "Y") keyHeld = false;
-});
-
-document.addEventListener("keydown", (event) => {
-  // Y held deletes a saved figure, as the pad's top face button does.
-  if (event.key === "y" || event.key === "Y") {
-    event.preventDefault();
-    if (!event.repeat) {
-      keyHeld = true;
-      pressedKey();
-      if (deletable(tabs[tab]?.entries[at])) startHold("key");
+drive({
+  press,
+  render,
+  shown: () => shown,
+  tick(now, time) {
+    if (holding) {
+      const still = holding.by === "pad" ? now.has("North") : keyHeld;
+      if (!still) stopHold();
+      else if (time - holding.since >= HOLD_TO_DELETE) void finishHold();
+      else drawHold();
     }
-    return;
-  }
-  // KEYS at the top names these keys to the player, so it changes with them.
-  const keys: Record<string, () => void> = {
-    ArrowUp: () => press("Up"),
-    ArrowDown: () => press("Down"),
-    ArrowLeft: () => press("Left"),
-    ArrowRight: () => press("Right"),
-    PageUp: () => press("LB"),
-    PageDown: () => press("RB"),
-    Enter: () => press("South"),
-    Delete: () => press("West"),
-    Backspace: () => press("West"),
-    Escape: () => press("East"),
-    // P for pair: a SuperCharger and its vehicle together.
-    p: () => press("North"),
-    P: () => press("North"),
-  };
-  const act = keys[event.key];
-  if (act) {
-    event.preventDefault();
-    // A key held down repeats; only moving through the menu should, the
-    // arrows and the page keys, so a held Enter never makes a second figure.
-    if (event.repeat && !event.key.startsWith("Arrow") && !event.key.startsWith("Page")) return;
-    pressedKey();
-    act();
-  }
+  },
+  hold() {
+    if (deletable(tabs[tab]?.entries[at])) startHold("key");
+  },
 });
 
 /// Shown again: what is already held down, such as the button that opened
@@ -3066,7 +2759,7 @@ async function show() {
     // Nothing is asked of the portal over a game the menu isn't offered in.
     unavailable = await portalMenuNote().catch(() => null);
     if (unavailable) {
-      held = await readPads();
+      await skipHeld();
       shown = true;
       ready = true;
       render();
@@ -3074,7 +2767,7 @@ async function show() {
     }
     game = await portalGame().catch(() => null);
     made = await portalMadeFigures().catch(() => null);
-    held = await readPads();
+    await skipHeld();
     zone = "grid";
     shown = true;
     // Read again each time, since pictures can be got while the game runs.
