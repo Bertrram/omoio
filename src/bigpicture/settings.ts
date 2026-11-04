@@ -35,6 +35,7 @@ import {
   type RegionChoice,
   type SaveBackup,
   type Settings,
+  type Toy,
 } from "../api";
 import { GROUP_TITLES } from "../components/gameSettingsSheet";
 import { store } from "../state";
@@ -44,6 +45,19 @@ import { padScreen } from "./pad";
 /// Settings in Big Picture: the ones a controller can change. Anything that
 /// needs typing, a folder or a file stays on the desktop, and says so rather
 /// than being left out without a word.
+
+/// Each toy's menu as the button setting names it, in the order they are
+/// named together. Skylanders' keeps the words it has always had.
+const TOY_MENUS: { toy: Toy; label: string; short: string; opens: string }[] = [
+  { toy: "skylanders", label: "Skylanders portal menu", short: "portal", opens: "the portal menu during a Skylanders game" },
+  { toy: "infinity", label: "Disney Infinity base menu", short: "base", opens: "the base menu during a Disney Infinity game" },
+  { toy: "toypad", label: "LEGO Dimensions Toy Pad menu", short: "Toy Pad", opens: "the Toy Pad menu during a LEGO Dimensions game" },
+];
+
+/// "a", "a and b", "a, b and c".
+function together(parts: string[]): string {
+  return parts.length < 2 ? parts.join("") : `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
+}
 
 function problem(err: unknown, fallback: string): string {
   return typeof err === "string" ? err : fallback;
@@ -236,16 +250,22 @@ export function settingsScreen(kit: Kit, cap: (input: string) => string, start: 
     chord.innerHTML = `${cap("Back")}<span>+</span>${cap("Start")}`;
     rows.push(row("pad:chord", "Back to Big Picture from a game", chord, undefined, "Press both together while playing."));
 
-    const portalMenu = (store.get().games ?? []).some((game) => game.portal_menu);
-    if (portalMenu && controllers) {
+    // One button opens every toy's menu, so the row names the menus of the
+    // games in the library.
+    const games = store.get().games ?? [];
+    const menus = TOY_MENUS.filter(({ toy }) => games.some((game) => game.toy_menu && game.toy === toy));
+    if (menus.length > 0 && controllers) {
       const known = controllers;
       const current = h("span", "bp-row-value bp-caps");
       current.innerHTML = cap(known.portal);
+      // "Portal and base menus" for a library with more than one.
+      const names = together(menus.map((menu) => menu.short));
+      const label = menus.length === 1 ? menus[0].label : `${names.charAt(0).toUpperCase()}${names.slice(1)} menus`;
       rows.push(
-        row("pad:portal", "Skylanders portal menu", current, async () => {
+        row("pad:portal", label, current, async () => {
           const pressed = await kit.record(
             "Press a button",
-            "It opens the portal menu during a Skylanders game. The Home button is the best choice, since games don't use it."
+            `It opens ${together(menus.map((menu) => menu.opens))}. The Home button is the best choice, since games don't use it.`
           );
           if (!pressed) return;
           try {

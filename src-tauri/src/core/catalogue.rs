@@ -7,6 +7,7 @@
 use crate::core::console::{Console, Features};
 use crate::core::figures::{has_portal_menu, is_skylanders, portal_menu_note};
 use crate::core::tested::{played, Played};
+use crate::core::toys::{self, Toy};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -80,6 +81,12 @@ pub struct Listing {
     /// For Imaginators, what works of the figures an emulator makes
     /// (`figures::made_figures_note`).
     pub figures_note: Option<&'static str>,
+    /// The toy the game is played with. `None` for a game with no toy.
+    pub toy: Option<Toy>,
+    /// For a game played with a toy, whether its menu works in it, the
+    /// portal menu among them, which its tile says. `None` for any other
+    /// game. The same as `portal_menu` for a Skylanders game.
+    pub toy_menu: Option<bool>,
     /// For a game played in Omoio, what its card and page say beside
     /// `status`, which stays the list's own (`tested::played`).
     pub tested: Option<Played>,
@@ -311,6 +318,13 @@ fn listing_of(mut entries: Vec<Entry>) -> Listing {
         .min_by_key(|status| tone_rank(status.tone))
         .unwrap_or_default();
 
+    // By any release's id, since a list may have none for some, then by the
+    // name they share.
+    let toy = entries
+        .iter()
+        .find_map(|entry| Some((toys::toy_of(entry.console, &entry.title_id, &entry.name)?, entry)));
+    let toy_menu = toy.map(|(toy, entry)| toys::has_menu(toy, entry.console, &entry.title_id, &entry.name));
+
     let first = &entries[0];
     Listing {
         console: first.console,
@@ -328,6 +342,8 @@ fn listing_of(mut entries: Vec<Entry>) -> Listing {
         portal_menu: is_skylanders(&first.name).then(|| has_portal_menu(first.console, &first.name)),
         portal_note: portal_menu_note(first.console, &first.name),
         figures_note: crate::core::figures::made_figures_note(first.console, &first.name),
+        toy: toy.map(|(toy, _)| toy),
+        toy_menu,
         tested: played(first.console, &first.name),
     }
 }
@@ -436,6 +452,30 @@ mod tests {
         assert_eq!((on_wii_u.portal_menu, on_wii_u.portal_note.as_deref()), (Some(true), None));
         let batman = find(Console::Ps3, "Batman: Arkham Origins");
         assert_eq!((batman.portal_menu, batman.portal_note.as_deref()), (None, None));
+    }
+
+    #[test]
+    fn a_toy_listing_says_its_toy_and_whether_its_menu_works() {
+        let listings = group(vec![
+            ps3("BLUS31545", "Skylanders SuperChargers", "US", "warn"),
+            ps3("BLES02055", "Skylanders Trap Team", "EU", "warn"),
+            ps3("BLUS31522", "Disney Infinity 3.0", "US", "warn"),
+            titled(Console::WiiU, "infinity3", "Disney Infinity 3.0 Edition", vec!["US"], "warn"),
+            ps3("BLES01784", "Batman: Arkham Origins", "EU", "go"),
+        ]);
+        let find = |console: Console, name: &str| {
+            listings.iter().find(|l| l.console == console && l.name == name).unwrap()
+        };
+        for skylanders in [find(Console::Ps3, "Skylanders SuperChargers"), find(Console::Ps3, "Skylanders Trap Team")] {
+            assert_eq!(skylanders.toy, Some(Toy::Skylanders));
+            assert_eq!(skylanders.toy_menu, skylanders.portal_menu, "the portal menu's own answer");
+        }
+        for infinity in [find(Console::Ps3, "Disney Infinity 3.0"), find(Console::WiiU, "Disney Infinity 3.0 Edition")] {
+            assert_eq!((infinity.toy, infinity.toy_menu), (Some(Toy::Infinity), Some(true)));
+            assert_eq!((infinity.portal_menu, infinity.portal_note.as_deref()), (None, None), "no Skylanders words");
+        }
+        let batman = find(Console::Ps3, "Batman: Arkham Origins");
+        assert_eq!((batman.toy, batman.toy_menu), (None, None));
     }
 
     #[test]

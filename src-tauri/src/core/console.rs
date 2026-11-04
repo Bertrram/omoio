@@ -50,6 +50,12 @@ pub struct Features {
     pub compatibility: bool,
     /// The toy portal of a Skylanders game, filled from Omoio's portal menu.
     pub portal: bool,
+    /// The Infinity Base of a Disney Infinity game, filled from Omoio's base
+    /// menu.
+    pub infinity: bool,
+    /// The Toy Pad of a LEGO Dimensions game, filled from Omoio's Toy Pad
+    /// menu.
+    pub toypad: bool,
     /// The game stops reading the pad while one of Omoio's menus is over it,
     /// so presses in Big Picture or the portal menu never reach the game.
     pub quiet_behind: bool,

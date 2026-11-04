@@ -20,6 +20,7 @@ mod saves;
 pub mod session;
 mod sony_pad;
 mod switch_pro;
+mod toy_menu;
 mod vc_runtime;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -172,6 +173,14 @@ pub fn run() {
             commands::portal_create,
             commands::portal_button,
             commands::set_portal_button,
+            commands::toy_game,
+            commands::toy_places,
+            commands::toy_load,
+            commands::toy_remove,
+            commands::toy_offers,
+            commands::toy_create,
+            commands::toy_files,
+            commands::delete_toy_figure,
             commands::get_settings,
             commands::set_start_fullscreen,
             commands::set_keep_sessions,

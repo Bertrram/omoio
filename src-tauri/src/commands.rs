@@ -397,6 +397,8 @@ fn entry(app: &AppHandle, game: crate::core::library::Game) -> GameEntry {
         portal_menu: crate::core::figures::offers_portal_menu(features, game.console, &game.title),
         portal_note: crate::core::figures::portal_menu_note(game.console, &game.title),
         figures_note: crate::core::figures::made_figures_note(game.console, &game.title),
+        toy: crate::core::toys::toy_of(game.console, &game.title_id, &game.title),
+        toy_menu: crate::core::toys::offers_menu(features, game.console, &game.title_id, &game.title),
         tested: crate::core::tested::played(game.console, &game.title),
         game,
     }
@@ -2072,6 +2074,108 @@ pub async fn portal_clear(app: AppHandle, slot: usize) -> Result<Vec<String>, St
     crate::portal_menu::take_front(&app);
     let names = names.map_err(|e| e.to_string())?;
     names
+}
+
+/// The running game's toy, and for Disney Infinity which game it is, so the
+/// toy's menu lays itself out for it. `None` while nothing runs and for a
+/// game played without a toy.
+#[tauri::command]
+pub fn toy_game(app: AppHandle) -> Option<crate::toy_menu::ToyGame> {
+    crate::toy_menu::game(&app)
+}
+
+/// What each place of the running game's toy holds, by place, empty where
+/// nothing is. Like the portal's errands, each of these takes a moment, as
+/// the emulator's own window may do the work, so they run off the interface
+/// thread, and the menu takes the front back after.
+#[tauri::command]
+pub async fn toy_places(app: AppHandle) -> Result<Vec<String>, String> {
+    let crate::toy_menu::Running { backend, pid, game } = crate::toy_menu::running(&app)?;
+    let toy = game.toy;
+    let places = tauri::async_runtime::spawn_blocking(move || backend.toy_places(pid, toy)).await;
+    // Even when the errand panicked, so the game is let hear again.
+    crate::portal_menu::take_front(&app);
+    places.map_err(|e| e.to_string())?
+}
+
+/// Puts one of the player's figures in `place`, counted from 0. A copy of
+/// it is kept first, before the emulator opens it. A figure that went on is
+/// remembered as used, so the menu lists it first next time.
+#[tauri::command]
+pub async fn toy_load(app: AppHandle, place: usize, path: String) -> Result<Vec<String>, String> {
+    let crate::toy_menu::Running { backend, pid, game } = crate::toy_menu::running(&app)?;
+    crate::toy_menu::before_load(&app, &game, place, Path::new(&path))?;
+    let (toy, file) = (game.toy, PathBuf::from(&path));
+    let places = tauri::async_runtime::spawn_blocking(move || backend.toy_load(pid, toy, place, &file)).await;
+    // Even when the errand panicked, so the game is let hear again.
+    crate::portal_menu::take_front(&app);
+    let places = places.map_err(|e| e.to_string())??;
+    crate::toy_menu::after_load(&app, &game, Path::new(&path), place, &places);
+    Ok(places)
+}
+
+/// Takes the figure in `place` off the running game's toy.
+#[tauri::command]
+pub async fn toy_remove(app: AppHandle, place: usize) -> Result<Vec<String>, String> {
+    let crate::toy_menu::Running { backend, pid, game } = crate::toy_menu::running(&app)?;
+    let toy = game.toy;
+    let places = tauri::async_runtime::spawn_blocking(move || backend.toy_remove(pid, toy, place)).await;
+    // Even when the errand panicked, so the game is let hear again.
+    crate::portal_menu::take_front(&app);
+    places.map_err(|e| e.to_string())?
+}
+
+/// Every figure the running game's emulator can make that the game takes,
+/// each with the places it may go in.
+#[tauri::command]
+pub async fn toy_offers(app: AppHandle) -> Result<Vec<crate::toy_menu::ToyOffer>, String> {
+    let crate::toy_menu::Running { backend, pid, game } = crate::toy_menu::running(&app)?;
+    let handle = app.clone();
+    let offers =
+        tauri::async_runtime::spawn_blocking(move || crate::toy_menu::offers(&handle, backend, pid, &game)).await;
+    // Even when the errand panicked, so the game is let hear again.
+    crate::portal_menu::take_front(&app);
+    offers.map_err(|e| e.to_string())?
+}
+
+/// Has the emulator make a new figure, kept in its toy's folder, and put it
+/// in `place`, counted from 0. `number` and `series` are one of the figures
+/// `toy_offers` gave.
+#[tauri::command]
+pub async fn toy_create(
+    app: AppHandle,
+    place: usize,
+    number: u32,
+    series: Option<u8>,
+) -> Result<crate::toy_menu::ToyMade, String> {
+    let crate::toy_menu::Running { backend, pid, game } = crate::toy_menu::running(&app)?;
+    let (figure, file) = crate::toy_menu::before_create(&app, &game, place, number, series)?;
+    let (toy, made, path) = (game.toy, figure.clone(), file.clone());
+    let places = tauri::async_runtime::spawn_blocking(move || backend.toy_create(pid, toy, place, &made, &path)).await;
+    // Even when the errand panicked, so the game is let hear again.
+    crate::portal_menu::take_front(&app);
+    let places = places.map_err(|e| e.to_string())?;
+    // The emulator can write the figure and only then run into a problem, so
+    // a file it wrote is recorded as its figure either way.
+    if file.is_file() {
+        crate::toy_menu::made(&app, toy, &file, &figure);
+    }
+    let places = places?;
+    crate::toy_menu::used(&app, toy, &file);
+    Ok(crate::toy_menu::ToyMade { path: file.to_string_lossy().into_owned(), places })
+}
+
+/// The player's figure files for the running game's toy that the game
+/// takes, the ones used lately first.
+#[tauri::command]
+pub fn toy_files(app: AppHandle) -> Vec<crate::toy_menu::ToyFile> {
+    crate::toy_menu::files(&app)
+}
+
+/// Moves one of the player's toy figures to the Recycle Bin.
+#[tauri::command]
+pub fn delete_toy_figure(app: AppHandle, path: String) -> Result<(), String> {
+    crate::toy_menu::delete(&app, &path)
 }
 
 /// The figures' pictures a game has so far: the running game's when no

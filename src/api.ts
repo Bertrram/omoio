@@ -91,6 +91,10 @@ export interface Game {
     compatibility: boolean;
     /// The toy portal of a Skylanders game, filled from the portal menu.
     portal: boolean;
+    /// The Infinity Base of a Disney Infinity game, filled from the base menu.
+    infinity: boolean;
+    /// The Toy Pad of a LEGO Dimensions game, filled from the Toy Pad menu.
+    toypad: boolean;
     /// The game stops reading the pad while Omoio is in front of it, so
     /// Big Picture's presses never reach a game waiting behind it.
     quiet_behind: boolean;
@@ -106,6 +110,13 @@ export interface Game {
   /// For Imaginators, what works of the Senseis and Creation Crystals an
   /// emulator makes.
   figures_note: string | null;
+  /// The toy the game is played with, which picks the menu over it. Null
+  /// for a game played without one.
+  toy: Toy | null;
+  /// Whether the toy's menu works in this game, the portal menu among them.
+  /// The same as `portal_menu` for a Skylanders game, which keeps its own
+  /// Skylanders things on that.
+  toy_menu: boolean;
   /// For a game played in Omoio, what its pages say beside the list's
   /// rating. Null for any other game.
   tested: Played | null;
@@ -714,6 +725,11 @@ export interface Listing {
   portal_note: string | null;
   /// For Imaginators, what works of the figures an emulator makes.
   figures_note: string | null;
+  /// The toy the game is played with. Null for a game with no toy.
+  toy: Toy | null;
+  /// For a game played with a toy, whether its menu works in it, the
+  /// portal menu among them. Null for any other game.
+  toy_menu: boolean | null;
   /// For a game played in Omoio, what its card and page say beside `status`,
   /// which stays the list's own. Null for any other game.
   tested: Played | null;
@@ -1094,6 +1110,99 @@ export function setPortalButton(button: string): Promise<void> {
 
 export function onPortalMenu(handler: (state: { open: boolean; family: string }) => void): Promise<UnlistenFn> {
   return listen<{ open: boolean; family: string }>("portal-menu", (event) => handler(event.payload));
+}
+
+/// Which toy a game is played with, which picks the menu over it: the
+/// Skylanders portal, Disney Infinity's base or LEGO Dimensions' Toy Pad.
+export type Toy = "skylanders" | "infinity" | "toypad";
+
+/// The running game as its toy's menu needs it.
+export interface ToyGame {
+  toy: Toy;
+  console: Console;
+  /// Disney Infinity 1.0, 2.0 or 3.0, where the game's id or title says which.
+  game: "one" | "two" | "three" | null;
+  /// That game's series, 1, 2 or 3, which decides the figures it takes.
+  series: number | null;
+}
+
+/// A figure an emulator's figure maker can make for a toy.
+export interface ToyFigure {
+  name: string;
+  number: number;
+  /// Disney Infinity's 1, 2 or 3, for 1.0, 2.0 and 3.0. Null for the Toy Pad.
+  series: number | null;
+}
+
+/// What a Disney Infinity piece is: a character, a play set (Toy Box games
+/// among them), or a round or hexagonal power disc.
+export type ToyKind = "character" | "play_set" | "round_disc" | "hex_disc";
+
+/// A figure the emulator can make that the running game takes.
+export interface ToyOffer extends ToyFigure {
+  /// Empty for a toy Omoio doesn't sort into kinds.
+  kind: ToyKind | "";
+  /// The places it may go in, counted from 0.
+  places: number[];
+}
+
+/// A new figure on its toy: its file, and what each place holds now.
+export interface ToyMade {
+  path: string;
+  places: string[];
+}
+
+/// One of the player's figure files for the running game's toy.
+export interface ToyFile {
+  path: string;
+  /// The file's name without its extension.
+  name: string;
+  /// Which figure it is, for a file Omoio had made or the emulator named.
+  figure: ToyFigure | null;
+  kind: ToyKind | null;
+  /// Where it may go: every place when Omoio doesn't know what it is.
+  places: number[];
+  /// Used lately, so listed first.
+  recent: boolean;
+}
+
+/// The running game's toy, and for Disney Infinity which game it is. Null
+/// while nothing runs and for a game played without a toy.
+export function toyGame(): Promise<ToyGame | null> {
+  return invoke("toy_game");
+}
+
+/// What each place of the running game's toy holds, by place, empty where
+/// nothing is.
+export function toyPlaces(): Promise<string[]> {
+  return invoke("toy_places");
+}
+
+/// `place` counts from 0. Resolves to what the places hold afterwards.
+export function toyLoad(place: number, path: string): Promise<string[]> {
+  return invoke("toy_load", { place, path });
+}
+
+export function toyRemove(place: number): Promise<string[]> {
+  return invoke("toy_remove", { place });
+}
+
+export function toyOffers(): Promise<ToyOffer[]> {
+  return invoke("toy_offers");
+}
+
+/// Makes a new figure of one of `toyOffers`'s and puts it in `place`.
+export function toyCreate(place: number, number: number, series: number | null): Promise<ToyMade> {
+  return invoke("toy_create", { place, number, series });
+}
+
+export function toyFiles(): Promise<ToyFile[]> {
+  return invoke("toy_files");
+}
+
+/// Moves one of the player's toy figures to the Recycle Bin.
+export function deleteToyFigure(path: string): Promise<void> {
+  return invoke("delete_toy_figure", { path });
 }
 
 /// The figures' pictures a game has so far: where they are, and each one's

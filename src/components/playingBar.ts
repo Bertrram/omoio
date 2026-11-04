@@ -1,5 +1,14 @@
-import { listGames, openPortalMenu, setGameFullscreen, stopGame, type Playing } from "../api";
+import { listGames, openPortalMenu, setGameFullscreen, stopGame, type Playing, type Toy } from "../api";
 import { store } from "../state";
+
+/// The button over a game whose toy's menu works, by the toy, and what it
+/// says when the menu won't open. Skylanders' keeps the words it has always
+/// had.
+const MENU_BUTTON: Record<Toy, { label: string; failed: string }> = {
+  skylanders: { label: "Portal (Insert or Tab)", failed: "Couldn't open the portal menu." },
+  infinity: { label: "Infinity Base (Insert or Tab)", failed: "Couldn't open the base menu." },
+  toypad: { label: "Toy Pad (Insert or Tab)", failed: "Couldn't open the Toy Pad menu." },
+};
 
 /// Shown across the top of the content area while a game is running. The game
 /// picture sits below it, so this is the only part of Omoio visible mid-game
@@ -19,20 +28,22 @@ export function renderPlayingBar(playing: Playing): HTMLElement {
   `;
   bar.querySelector<HTMLElement>(".playing-name")!.textContent = playing.title;
 
-  // The portal menu for a player whose pad Omoio can't read, only in a game
-  // the menu works in. Insert opens and closes it too while the game or
-  // Omoio is in front, and Tab while the game or the menu is (MENU_KEY and
-  // SECOND_MENU_KEY in src-tauri/src/portal_menu.rs), which also works once
-  // the picture covers the screen and this button is behind it.
+  // The toy's menu, the portal menu or another, for a player whose pad
+  // Omoio can't read, only in a game the menu works in. Insert opens and
+  // closes it too while the game or Omoio is in front, and Tab while the
+  // game or the menu is (MENU_KEY and SECOND_MENU_KEY in
+  // src-tauri/src/portal_menu.rs), which also works once the picture covers
+  // the screen and this button is behind it.
   // The list of games may come in after the bar is drawn, as when a game
   // is started from Big Picture before the library was ever shown, so the
   // button is shown once it does. The bar goes when the game ends.
   const portalButton = bar.querySelector<HTMLButtonElement>("#open-portal")!;
+  let menu = MENU_BUTTON.skylanders;
   portalButton.onclick = async () => {
     try {
       await openPortalMenu();
     } catch (err) {
-      showPlayingNote(typeof err === "string" ? err : "Couldn't open the portal menu.");
+      showPlayingNote(typeof err === "string" ? err : menu.failed);
     }
   };
   const stopWatching = store.subscribe(({ games, playing: now }) => {
@@ -41,7 +52,9 @@ export function renderPlayingBar(playing: Playing): HTMLElement {
       return;
     }
     const game = games?.find((each) => each.title_id === playing.title_id);
-    portalButton.classList.toggle("gone", !game?.portal_menu);
+    menu = MENU_BUTTON[game?.toy ?? "skylanders"];
+    portalButton.textContent = menu.label;
+    portalButton.classList.toggle("gone", !game?.toy_menu);
   });
 
   const fullscreenButton = bar.querySelector<HTMLButtonElement>("#toggle-fullscreen")!;

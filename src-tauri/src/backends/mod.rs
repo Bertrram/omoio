@@ -17,6 +17,7 @@ use crate::core::import_warning::Imported;
 use crate::core::library::Game;
 use crate::core::figures::Character;
 use crate::core::pad_layout::{Pad, Player};
+use crate::core::toys::{Toy, ToyFigure};
 use crate::process_watch::Launched;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
@@ -125,6 +126,42 @@ pub trait EmulatorBackend: Sync {
     /// Gets the emulator's own portal window open as the portal menu opens,
     /// before the game is hushed. An emulator that needs nothing leaves this.
     fn ready_portal(&self, _pid: u32) {}
+
+    /// What each place of the running game's toy holds, the name the
+    /// emulator shows, in place order, empty where nothing is: nine for
+    /// Disney Infinity's base. `toy` is never Skylanders, whose portal has
+    /// `portal_figures`.
+    fn toy_places(&self, _pid: u32, _toy: Toy) -> Result<Vec<String>, String> {
+        Err(NO_TOY.to_string())
+    }
+
+    /// Puts the figure in `figure` in `place` of the toy, counted from 0,
+    /// and returns what the places hold afterwards.
+    fn toy_load(&self, _pid: u32, _toy: Toy, _place: usize, _figure: &Path) -> Result<Vec<String>, String> {
+        Err(NO_TOY.to_string())
+    }
+
+    /// Takes the figure in `place` off the toy, and returns what is left.
+    fn toy_remove(&self, _pid: u32, _toy: Toy, _place: usize) -> Result<Vec<String>, String> {
+        Err(NO_TOY.to_string())
+    }
+
+    /// Every figure the emulator's own figure maker makes for the toy, with
+    /// its number and, for Disney Infinity, its series.
+    fn toy_list(&self, _app: &AppHandle, _pid: u32, _toy: Toy) -> Result<Vec<ToyFigure>, String> {
+        Err(NO_TOY.to_string())
+    }
+
+    /// Has the emulator's figure maker make `figure` into `file` and put it
+    /// in `place` of the toy. Returns what the places hold afterwards.
+    fn toy_create(&self, _pid: u32, _toy: Toy, _place: usize, _figure: &ToyFigure, _file: &Path) -> Result<Vec<String>, String> {
+        Err(NO_TOY.to_string())
+    }
+
+    /// Gets the emulator's own window for the toy open as the toy's menu
+    /// opens, out of sight, as `ready_portal` does for the portal. An
+    /// emulator that needs nothing leaves this.
+    fn ready_toy(&self, _pid: u32, _toy: Toy) {}
 
     /// Whether the game titled `title` takes the figures this emulator's
     /// figure maker makes for it, and the pack that lets it when it checks
@@ -420,6 +457,7 @@ pub struct SaveFolder {
 }
 
 const NO_PORTAL: &str = "Omoio can't reach this emulator's portal yet.";
+const NO_TOY: &str = "Omoio can't reach this emulator's base yet.";
 const NO_PACKS: &str = "There are no community packs for this emulator.";
 const NO_LIST: &str = "There is no compatibility list for this emulator.";
 

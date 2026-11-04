@@ -518,7 +518,15 @@ pub fn quiet_game(app: &AppHandle) {
         // Over a game the menu isn't offered in, the window shows only why,
         // so the emulator's portal window stays shut.
         if portal && crate::portal_menu::note(&app).is_none() {
-            backend.ready_portal(pid);
+            // A game with another toy has its emulator's window for that toy
+            // readied, and never the portal's: Cemu's opens its Emulated USB
+            // Devices window whenever its portal server holds no Skylanders
+            // names (backends/cemu/portal.rs, `ready` and `server`), as in
+            // every game that isn't Skylanders.
+            match crate::core::toys::toy_of(playing.console, &playing.title_id, &playing.title) {
+                Some(toy) if toy != crate::core::toys::Toy::Skylanders => backend.ready_toy(pid, toy),
+                _ => backend.ready_portal(pid),
+            }
             // Cemu reads keys in whichever of its windows is active
             // (`CemuApp::FilterEvent`, CemuApp.cpp lines 389 to 409, v2.6),
             // and its portal window takes the front as it opens
@@ -528,7 +536,12 @@ pub fn quiet_game(app: &AppHandle) {
             // was done (read in the source on 20 October 2026, not yet seen).
             // The menu takes the front back at once, which makes Cemu let go
             // of every key (lines 401 to 405). Only for a keyboard player, so
-            // nothing changes for a pad.
+            // nothing changes for a pad. After a toy's window too, which
+            // RPCS3 and Dolphin show as they show their portal's
+            // (rpcs3qt/main_window.cpp lines 3204 to 3214, master b2e52d6;
+            // Dolphin shows its Infinity Base window and makes it the active
+            // one, DolphinQt/MainWindow.cpp lines 1472 to 1482, 2609a; read 4
+            // November 2026).
             // Never from another program the player went to meanwhile.
             if front_is_ours(pid) && crate::controllers::keyboard_plays(&app, &playing.title_id) {
                 if let Some(window) = app.get_webview_window("portal") {

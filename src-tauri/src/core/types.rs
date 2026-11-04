@@ -68,6 +68,14 @@ pub struct GameEntry {
     /// For Imaginators, what works of the figures an emulator makes
     /// (`figures::made_figures_note`).
     pub figures_note: Option<&'static str>,
+    /// The toy the game is played with, which picks the menu over it.
+    /// `None` for a game played without one.
+    pub toy: Option<crate::core::toys::Toy>,
+    /// Whether the toy's menu works in this game, the portal menu among
+    /// them (`toys::offers_menu`), for what opens it: the Portal button and
+    /// Big Picture's button setting. The same as `portal_menu` for a
+    /// Skylanders game, which keeps its own Skylanders things on that.
+    pub toy_menu: bool,
     /// For a game played in Omoio, what its pages say beside the list's
     /// rating, with or without one shown (`tested::played`).
     pub tested: Option<crate::core::tested::Played>,

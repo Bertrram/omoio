@@ -50,6 +50,15 @@ pub struct Settings {
     /// the Skylanders menu lists them first.
     #[serde(default)]
     pub recent_figures: Vec<String>,
+    /// The same for the Disney Infinity base menu's figures, kept apart so
+    /// neither menu pushes the other's out (toy_menu.rs, `used`). Left out
+    /// of the file while empty, so a Skylanders player's settings stay as
+    /// they were.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recent_infinity: Vec<String>,
+    /// The same for the LEGO Dimensions Toy Pad menu's tags.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recent_toypad: Vec<String>,
     /// The pad button that opens the portal menu over a Skylanders game, as
     /// a place on the pad. The home button unless the user picks another.
     #[serde(default = "default_portal_button")]
@@ -84,6 +93,8 @@ impl Default for Settings {
             rawg_key: None,
             applied_fixes: Default::default(),
             recent_figures: Vec::new(),
+            recent_infinity: Vec::new(),
+            recent_toypad: Vec::new(),
             portal_button: default_portal_button(),
             mouse_aims: Default::default(),
         }
@@ -135,6 +146,8 @@ mod tests {
             rawg_key: Some("k".to_string()),
             applied_fixes: Default::default(),
             recent_figures: vec!["Whirlwind.sky".to_string()],
+            recent_infinity: vec!["Mr. Incredible.bin".to_string()],
+            recent_toypad: Vec::new(),
             portal_button: "Back".to_string(),
             mouse_aims: [("0005000010181f00".to_string(), "Right stick".to_string())].into(),
         };
@@ -148,6 +161,10 @@ mod tests {
         assert!(loaded.tuned);
         assert_eq!(loaded.tuned_scale, Some(200));
         assert_eq!(loaded.mouse_aims["0005000010181f00"], "Right stick");
+        assert_eq!(loaded.recent_figures, ["Whirlwind.sky"]);
+        assert_eq!(loaded.recent_infinity, ["Mr. Incredible.bin"], "each menu's own");
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(!text.contains("recent_toypad"), "an empty list isn't written");
         let _ = std::fs::remove_file(&path);
     }
 

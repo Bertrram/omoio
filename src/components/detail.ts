@@ -24,6 +24,7 @@ import {
   EMULATOR_OF,
   type Game,
   type Played,
+  type Toy,
 } from "../api";
 import { fitCovers, placeholderArt } from "./art";
 import { firmwareActions } from "./firmware";
@@ -83,6 +84,32 @@ function playedNote(played: Played): HTMLElement {
   return note;
 }
 
+/// The words of a game's toy menu section, by its toy. Skylanders' are the
+/// ones it has always had.
+const MENU_SECTION: Record<Toy, { heading: string; help: string; button: string; about: string }> = {
+  skylanders: {
+    heading: "Skylanders",
+    help: "How the portal menu works",
+    button: "Portal menu button",
+    about:
+      "Skylanders games need a toy portal, and the emulator pretends one is plugged in. While playing, press this button to open the portal menu over the game. Insert or Tab on the keyboard opens and closes it too, and Portal in the bar over the game opens it. Pick any character under its element, or an item or adventure pack, and it goes on the portal and is saved with its progress. Several can be on at once. It all works with the pad. The home button is the best choice, since games don't use it. If Windows' Game Bar opens instead, switch off its controller button in Windows Settings, under Gaming, Xbox Game Bar.",
+  },
+  infinity: {
+    heading: "Disney Infinity",
+    help: "How the base menu works",
+    button: "Base menu button",
+    about:
+      "Disney Infinity games need an Infinity Base, and the emulator pretends one is plugged in. While playing, press this button to open the base menu over the game. Insert or Tab on the keyboard opens and closes it too, and Infinity Base in the bar over the game opens it. Pick a character, a play set or a power disc, and it goes where it fits on the base and is saved with its progress. It all works with the pad. The same button opens the portal menu in a Skylanders game. The home button is the best choice, since games don't use it. If Windows' Game Bar opens instead, switch off its controller button in Windows Settings, under Gaming, Xbox Game Bar.",
+  },
+  toypad: {
+    heading: "LEGO Dimensions",
+    help: "How the Toy Pad menu works",
+    button: "Toy Pad menu button",
+    about:
+      "LEGO Dimensions games need a Toy Pad, and the emulator pretends one is plugged in. While playing, press this button to open the Toy Pad menu over the game. Insert or Tab on the keyboard opens and closes it too, and Toy Pad in the bar over the game opens it. It all works with the pad. The same button opens the portal menu in a Skylanders game. The home button is the best choice, since games don't use it. If Windows' Game Bar opens instead, switch off its controller button in Windows Settings, under Gaming, Xbox Game Bar.",
+  },
+};
+
 /// What to press when a Wii game asks you to move the remote.
 const WII_MOVES = "When a Wii game asks you to move the remote, press RB to shake it or RT to push it forward.";
 
@@ -118,7 +145,7 @@ function fill(body: HTMLElement, hero: HTMLElement, game: Game): void {
     <div class="note plain gone" id="detail-figures"></div>
     <div class="gone" id="detail-portal">
       <div class="d-group-h">
-        <span class="sec-h">Skylanders</span>
+        <span class="sec-h" id="detail-portal-h">Skylanders</span>
         <button class="help-dot" id="detail-portal-help" aria-label="How the portal menu works" aria-expanded="false">?</button>
       </div>
       <div class="note plain gone" id="detail-portal-about"></div>
@@ -238,17 +265,23 @@ function fill(body: HTMLElement, hero: HTMLElement, game: Game): void {
     figures.classList.remove("gone");
   }
 
-  // The button that opens the portal menu over a Skylanders game, shown only
-  // for a game the menu works in.
-  if (game.portal_menu && game.set_up) {
+  // The button that opens the toy's menu over the game, the portal menu over
+  // a Skylanders game, shown only for a game the menu works in. One button
+  // opens every toy's menu, so each game's page sets the same one.
+  if (game.toy_menu && game.set_up) {
+    const words = MENU_SECTION[game.toy ?? "skylanders"];
     body.querySelector("#detail-portal")!.classList.remove("gone");
+    body.querySelector<HTMLElement>("#detail-portal-h")!.textContent = words.heading;
     const keyRow = body.querySelector<HTMLButtonElement>("#detail-portal-button")!;
+    keyRow.querySelector<HTMLElement>(".d-row-k")!.textContent = words.button;
     const key = keyRow.querySelector<HTMLElement>(".d-key")!;
     const help = body.querySelector<HTMLButtonElement>("#detail-portal-help")!;
+    help.setAttribute("aria-label", words.help);
     const about = body.querySelector<HTMLElement>("#detail-portal-about")!;
     const picturesNote = body.querySelector<HTMLElement>("#detail-pictures-note")!;
-    about.textContent =
-      "Skylanders games need a toy portal, and the emulator pretends one is plugged in. While playing, press this button to open the portal menu over the game. Insert or Tab on the keyboard opens and closes it too, and Portal in the bar over the game opens it. Pick any character under its element, or an item or adventure pack, and it goes on the portal and is saved with its progress. Several can be on at once. It all works with the pad. The home button is the best choice, since games don't use it. If Windows' Game Bar opens instead, switch off its controller button in Windows Settings, under Gaming, Xbox Game Bar.";
+    about.textContent = words.about;
+    // The figures' pictures are read for Skylanders games alone.
+    if (!game.portal_menu) body.querySelector("#detail-pictures")!.classList.add("gone");
     help.onclick = () => {
       const open = !about.classList.toggle("gone");
       help.setAttribute("aria-expanded", String(open));
@@ -288,10 +321,13 @@ function fill(body: HTMLElement, hero: HTMLElement, game: Game): void {
       key.classList.remove("on");
       await showKey();
     };
+  }
 
-    // Each figure's own picture, read out of the user's copy of the game by
-    // a small program Omoio fetches the first time. The menu works without
-    // them, so the row only offers.
+  // Each figure's own picture, read out of the user's copy of the game by
+  // a small program Omoio fetches the first time. The menu works without
+  // them, so the row only offers. Skylanders games only.
+  if (game.portal_menu && game.set_up) {
+    const picturesNote = body.querySelector<HTMLElement>("#detail-pictures-note")!;
     const pictures = body.querySelector<HTMLButtonElement>("#detail-pictures")!;
     const picturesValue = pictures.querySelector<HTMLElement>(".d-row-v")!;
     const picturesBar = pictures.querySelector<HTMLElement>(".d-row-bar")!;

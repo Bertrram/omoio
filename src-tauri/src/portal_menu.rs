@@ -16,6 +16,7 @@ use crate::core::figure_data::{self, Trapped};
 use crate::core::figures::{self, Character, Class, Element, Kind, Movement};
 use crate::core::imaginators::{self, BattleClass, Casing};
 use crate::core::settings::Settings;
+use crate::core::toys::{self, Toy};
 use crate::core::vehicles::{self, Terrain};
 use crate::core::villains::{Villain, VILLAINS};
 use crate::session::Session;
@@ -156,7 +157,7 @@ fn game_or_menu_in_front(app: &AppHandle, game: Option<isize>) -> bool {
     front != 0 && (Some(front) == game || Some(front) == menu)
 }
 
-fn data_dir(app: &AppHandle) -> Result<PathBuf, String> {
+pub(crate) fn data_dir(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(app.path().data_dir().map_err(|e| e.to_string())?.join("Omoio"))
 }
 
@@ -408,7 +409,7 @@ pub fn delete(app: &AppHandle, figure: &str) -> Result<(), String> {
 /// Moves a file to the Recycle Bin as Explorer's Delete does, without
 /// asking or showing anything: Windows' own file operation, with undo
 /// allowed.
-fn to_recycle_bin(path: &Path) -> Result<(), String> {
+pub(crate) fn to_recycle_bin(path: &Path) -> Result<(), String> {
     use std::os::windows::ffi::OsStrExt;
     use windows::Win32::UI::Shell::{
         SHFileOperationW, FOF_ALLOWUNDO, FOF_NOCONFIRMATION, FOF_NOERRORUI, FOF_SILENT, FO_DELETE, SHFILEOPSTRUCTW,
@@ -428,8 +429,11 @@ fn to_recycle_bin(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Copies figure files the user picked into the figures folder. A file of the
-/// same name already there is kept. Returns how many were added.
+/// Copies figure files the user picked into the figures folder, and a
+/// Disney Infinity figure or a LEGO Dimensions tag into its toy's own folder
+/// inside it, told by its size (`toy_menu::toy_of_file`), so the Skylanders
+/// menu never lists it. A file of the same name already where it goes is
+/// kept. Returns how many were added.
 pub fn add(app: &AppHandle, paths: &[String]) -> Result<usize, String> {
     let dir = folder(app)?;
     std::fs::create_dir_all(&dir).map_err(|_| "Couldn't make the figures folder.".to_string())?;
@@ -439,8 +443,19 @@ pub fn add(app: &AppHandle, paths: &[String]) -> Result<usize, String> {
         let Some(name) = from.file_name() else {
             continue;
         };
-        let to = dir.join(name);
-        if !is_figure(from) || to.exists() {
+        if !is_figure(from) {
+            continue;
+        }
+        let into = match crate::toy_menu::toy_of_file(from) {
+            Some(toy) => {
+                let toys = crate::toy_menu::folder(app, toy)?;
+                std::fs::create_dir_all(&toys).map_err(|_| "Couldn't make the figures folder.".to_string())?;
+                toys
+            }
+            None => dir.clone(),
+        };
+        let to = into.join(name);
+        if to.exists() {
             continue;
         }
         std::fs::copy(from, &to).map_err(|_| "Couldn't copy that figure file.".to_string())?;
@@ -484,7 +499,7 @@ pub fn back_up(app: &AppHandle, figure: &Path) {
 /// Copies `figure` into its folder among `backups`, unless the newest copy
 /// there already holds the same bytes, and lets the oldest copies go past
 /// `BACKUPS_KEPT`. Returns the copy made, if one was.
-fn back_up_into(figure: &Path, backups: &Path, taken: u64) -> std::io::Result<Option<PathBuf>> {
+pub(crate) fn back_up_into(figure: &Path, backups: &Path, taken: u64) -> std::io::Result<Option<PathBuf>> {
     let (Some(name), Some(extension)) = (figure.file_name(), figure.extension()) else {
         return Ok(None);
     };
@@ -660,6 +675,22 @@ fn tell(app: &AppHandle, open: bool) {
     let _ = app.emit_to(LABEL, "portal-menu", MenuState { open, family: family() });
 }
 
+/// The toy whose page the window was last made with or turned to. The
+/// window lives for one game, but the watch of the game before closes it up
+/// to a look after the next game started (`watch`), and a window still up
+/// then, made for another toy, is turned to this game's page rather than
+/// shown as it is.
+static BUILT_FOR: Mutex<Option<Toy>> = Mutex::new(None);
+
+/// The toy of the game running now, whose page the window shows. The
+/// portal's for a game with none, where the menu never opens (`watch`).
+fn running_toy(app: &AppHandle) -> Toy {
+    app.state::<Session>()
+        .playing()
+        .and_then(|playing| toys::toy_of(playing.console, &playing.title_id, &playing.title))
+        .unwrap_or(Toy::Skylanders)
+}
+
 /// Whether the menu is on the screen.
 pub fn showing(app: &AppHandle) -> bool {
     app.get_webview_window(LABEL)
@@ -667,11 +698,31 @@ pub fn showing(app: &AppHandle) -> bool {
         .unwrap_or(false)
 }
 
-/// Shows the menu over the whole screen Omoio is on. Made the first time and
-/// kept, hidden, after that, so opening it again is instant. The game stops
-/// hearing the pad while it is up.
+/// Shows the menu over the whole screen Omoio is on, with the page of the
+/// running game's toy: the portal's, the base's or the Toy Pad's. Made the
+/// first time and kept, hidden, after that, so opening it again is instant.
+/// The game stops hearing the pad while it is up.
 fn open(app: &AppHandle) -> Result<(), String> {
+    let toy = running_toy(app);
     if let Some(window) = app.get_webview_window(LABEL) {
+        // A second window can't be made under the same label while the
+        // first is there (`Error::WindowLabelAlreadyExists`, tauri 2.11.5
+        // src/error.rs line 38), so the one there goes to the new page, at
+        // the address its own page has (`WebviewWindow::navigate` and `url`,
+        // src/webview/webview_window.rs lines 2379 to 2386, read 4 November
+        // 2026).
+        let mut built = BUILT_FOR.lock().unwrap();
+        if *built != Some(toy) {
+            let page = window
+                .url()
+                .map_err(|e| e.to_string())?
+                .join(toy.page())
+                .map_err(|e| e.to_string())?;
+            window.navigate(page).map_err(|e| e.to_string())?;
+            let _ = window.set_title(toy.title());
+            *built = Some(toy);
+        }
+        drop(built);
         window.show().map_err(|e| e.to_string())?;
         let _ = window.set_focus();
         tell(app, true);
@@ -685,8 +736,8 @@ fn open(app: &AppHandle) -> Result<(), String> {
         .ok_or("No screen found for the menu.")?;
     let scale = monitor.scale_factor();
     let (position, size) = (monitor.position(), monitor.size());
-    WebviewWindowBuilder::new(app, LABEL, WebviewUrl::App(PathBuf::from("portal.html")))
-        .title("Portal")
+    WebviewWindowBuilder::new(app, LABEL, WebviewUrl::App(PathBuf::from(toy.page())))
+        .title(toy.title())
         .decorations(false)
         .transparent(true)
         .shadow(false)
@@ -698,6 +749,7 @@ fn open(app: &AppHandle) -> Result<(), String> {
         .inner_size(size.width as f64 / scale, size.height as f64 / scale)
         .build()
         .map_err(|e| e.to_string())?;
+    *BUILT_FOR.lock().unwrap() = Some(toy);
     crate::session::quiet_game(app);
     Ok(())
 }
@@ -745,16 +797,17 @@ pub fn take_front(app: &AppHandle) {
     }
 }
 
-/// What the menu shows instead of itself over a Skylanders game it isn't
-/// offered in: the game page's own line (`figures::menu_note`). Its key and
-/// its pad button open it there too, and it closes as the menu does, but
-/// nothing is read from the portal or put on it, and the emulator's portal
-/// window isn't opened (`session::quiet_game`). `None` where the menu works,
-/// and while nothing runs.
+/// What the menu shows instead of itself over a game whose toy's menu isn't
+/// offered in it: the game page's own line (`toys::menu_note`, which is
+/// `figures::menu_note` for a Skylanders game). Its key and its pad button
+/// open it there too, and it closes as the menu does, but nothing is read
+/// from the toy or put on it, and the emulator's own window for it isn't
+/// opened (`session::quiet_game`). `None` where the menu works, and while
+/// nothing runs.
 pub fn note(app: &AppHandle) -> Option<String> {
     let playing = app.state::<Session>().playing()?;
     let backend = crate::backends::for_console(playing.console)?;
-    figures::menu_note(backend.features(), playing.console, &playing.title)
+    toys::menu_note(backend.features(), playing.console, &playing.title_id, &playing.title)
 }
 
 /// Opens the menu from the Portal button over the running game, for a
@@ -763,10 +816,13 @@ pub fn note(app: &AppHandle) -> Option<String> {
 /// the pad's press makes it, and this waits until it is up.
 pub fn open_by_button(app: &AppHandle) -> Result<(), String> {
     let playing = app.state::<Session>().playing().ok_or("Start a game first.")?;
-    let works = crate::backends::for_console(playing.console)
-        .is_some_and(|backend| figures::offers_portal_menu(backend.features(), playing.console, &playing.title));
+    // "portal menu" for a Skylanders game, as it always said.
+    let menu = crate::toy_menu::menu_name(running_toy(app));
+    let works = crate::backends::for_console(playing.console).is_some_and(|backend| {
+        toys::offers_menu(backend.features(), playing.console, &playing.title_id, &playing.title)
+    });
     if !works {
-        return Err("The portal menu doesn't work in this game.".to_string());
+        return Err(format!("The {menu} doesn't work in this game."));
     }
     let (done, opened) = std::sync::mpsc::channel();
     let handle = app.clone();
@@ -780,11 +836,11 @@ pub fn open_by_button(app: &AppHandle) -> Result<(), String> {
             open(&handle)
         });
     })
-    .map_err(|_| "Couldn't open the portal menu.".to_string())?;
+    .map_err(|_| format!("Couldn't open the {menu}."))?;
     opened
         .recv_timeout(Duration::from_secs(10))
-        .map_err(|_| "Couldn't open the portal menu.".to_string())?
-        .map_err(|_| "Couldn't open the portal menu.".to_string())
+        .map_err(|_| format!("Couldn't open the {menu}."))?
+        .map_err(|_| format!("Couldn't open the {menu}."))
 }
 
 /// The pad button that opens the menu, as a place on the pad.
@@ -805,12 +861,13 @@ pub fn set_button(app: &AppHandle, place: &str) -> Result<(), String> {
     settings.save(&file)
 }
 
-/// While a Skylanders game runs, the chosen button on any pad opens or
-/// closes the menu, and so does the menu key while Omoio or the game is in
-/// front. In one the menu isn't offered in, the same window shows only why
-/// (`note`). Read twenty times a second, since a press lasts about a tenth
-/// of one, and the choice is read again every two seconds so one made while
-/// playing counts. It ends with the game and takes the menu with it.
+/// While a game played with a toy runs, a Skylanders game or another, the
+/// chosen button on any pad opens or closes its menu, and so does the menu
+/// key while Omoio or the game is in front. In one the menu isn't offered
+/// in, the same window shows only why (`note`). Read twenty times a second,
+/// since a press lasts about a tenth of one, and the choice is read again
+/// every two seconds so one made while playing counts. It ends with the game
+/// and takes the menu with it.
 pub fn watch(app: AppHandle, pid: u32) {
     std::thread::spawn(move || {
         let mut was = false;
@@ -847,7 +904,9 @@ pub fn watch(app: AppHandle, pid: u32) {
             let Some(playing) = session.playing() else {
                 continue;
             };
-            if !figures::is_skylanders(&playing.title) {
+            // Every Skylanders game, as `figures::is_skylanders` says, and a
+            // game played with another toy.
+            if toys::toy_of(playing.console, &playing.title_id, &playing.title).is_none() {
                 return;
             }
             let pressing = crate::pads::connected()
