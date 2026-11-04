@@ -333,6 +333,7 @@ pub fn launch(app: &AppHandle, game: &Game) -> Result<Launched, String> {
     prepare_gui_settings(app, super::controllers::keyboard_plays(app, &game.title_id))?;
     keep_pad_to_the_game(app);
     leave_fullscreen_to_omoio(app);
+    super::account::start_in_game_language(app);
 
     // Spawned rather than waited on, so Omoio stays usable while the game runs.
     let toy = toys::toy_of(Console::Ps3, &game.title_id, &game.title);
