@@ -115,7 +115,7 @@ pub fn toy_of(console: Console, title_id: &str, title: &str) -> Option<Toy> {
 /// console whose emulator fills the base. None has been played with the menu
 /// in Omoio yet, and each is offered so players can say how it goes. What
 /// is known of each game in each emulator was read on 4 November 2026.
-const INFINITY_MENU: [(Console, InfinityGame); 7] = [
+const INFINITY_MENU: [(Console, InfinityGame); 3] = [
     // Untested in Omoio until Bertram has played it. RPCS3's list rates it
     // Ingame (BLUS30977 and BLES01842, 22 January 2023). The three games
     // show blocky pictures in RPCS3 (RPCS3 issue 14572, open); a player
@@ -129,31 +129,25 @@ const INFINITY_MENU: [(Console, InfinityGame); 7] = [
     // November 2023), Intro from the US PlayStation Store (NPUB31657, 24
     // October 2026), with RPCS3 issue 14572.
     (Console::Ps3, InfinityGame::Three),
-    // Untested in Omoio until Bertram has played it. Cemu's wiki rates it
-    // Loads: tests up to Cemu 2.0-94 stop at an Err_Eula notice after + at
-    // the menu, which a Cemu developer calls the game saying its online
-    // service is gone, and the black screen after it a known problem of
-    // its own (Cemu issue 1620). One test, on a Cemu called 2.7, calls it
-    // playable. Whether Omoio's Cemu, v2.6-2, gets past them only a play
-    // can say.
-    (Console::WiiU, InfinityGame::One),
-    // Untested in Omoio until Bertram has played it. Loads on Cemu's wiki:
-    // Err_Eula and a black screen after it, as 1.0 (Cemu issue 1620), and a
-    // hang at the base prompt in Cemu 1.22.12c. One test, on a Cemu called
-    // 2.7, calls it playable. Offered so players can say how it goes in
-    // Omoio's Cemu.
-    (Console::WiiU, InfinityGame::Two),
-    // Untested in Omoio until Bertram has played it. Loads on Cemu's wiki,
-    // with Err_Eula coming back after A or +. It crashes at or after the
-    // first loading screen, and Cemu's lead says its rendering problems
-    // leave a black screen past that (Cemu issue 1714, open since 28
-    // October 2025). Offered so players can say how it goes in Omoio's
-    // Cemu.
-    (Console::WiiU, InfinityGame::Three),
-    // Untested in Omoio until Bertram has played it. Dolphin's wiki gives it
-    // four stars, and Dolphin 2609a switches on its own patch for the game's
-    // speed (Data/Sys/GameSettings/SQIE4Q.ini, SQIP4Q.ini and SQIY4Q.ini).
-    (Console::Wii, InfinityGame::One),
+    // The Wii U and Wii versions are left out of this release, which starts
+    // with the PS3 versions (Bertram, 4 November 2026): the Wii U's base
+    // needs an Omoio Cemu newer than v2.6-2, and neither has been played.
+    // What is known of them, for when they are offered:
+    // - Wii U, 1.0: Cemu's wiki rates it Loads. Tests up to Cemu 2.0-94 stop
+    //   at an Err_Eula notice after + at the menu, which a Cemu developer
+    //   calls the game saying its online service is gone, and the black
+    //   screen after it a known problem of its own (Cemu issue 1620). One
+    //   test, on a Cemu called 2.7, calls it playable.
+    // - Wii U, 2.0: Loads, with Err_Eula and a black screen after it, as
+    //   1.0, and a hang at the base prompt in Cemu 1.22.12c. One test on
+    //   Cemu 2.7 calls it playable.
+    // - Wii U, 3.0: Loads, with Err_Eula coming back after A or +. It crashes
+    //   at or after the first loading screen, and Cemu's lead says its
+    //   rendering problems leave a black screen past that (Cemu issue 1714,
+    //   open since 28 October 2025).
+    // - Wii, 1.0: Dolphin's wiki gives it four stars, and Dolphin 2609a
+    //   switches on its own patch for the game's speed
+    //   (Data/Sys/GameSettings/SQIE4Q.ini, SQIP4Q.ini and SQIY4Q.ini).
 ];
 
 /// Where the Toy Pad menu is offered: LEGO Dimensions on each console whose
@@ -163,7 +157,7 @@ const INFINITY_MENU: [(Console, InfinityGame); 7] = [
 /// Toy Pad. It hasn't been played with the menu in Omoio yet, and it is
 /// offered so players can say how it goes. All of it, and what is known of
 /// the game in each emulator, was read on 4 November 2026.
-const TOYPAD_MENU: [Console; 2] = [
+const TOYPAD_MENU: [Console; 1] = [
     // Untested in Omoio until Bertram has played it. RPCS3's list rates
     // both discs, BLES02105 and BLUS31473, Playable (4 August 2024, build
     // f6b5511). The US disc crashes in the Phantom Zone level as the Zod
@@ -172,11 +166,11 @@ const TOYPAD_MENU: [Console; 2] = [
     // (rpcs3/Emu/Io/Dimensions.cpp lines 647 to 659, master b2e52d6), so
     // the menu can't show them there.
     Console::Ps3,
-    // Untested in Omoio until Bertram has played it. Cemu's wiki rates it
-    // Playable (revision 19675, 25 January 2026), with shadows wrong away
-    // from 720p and voices quiet. The menu fills Cemu's Toy Pad through the
-    // commands of an Omoio Cemu newer than v2.6-2.
-    Console::WiiU,
+    // The Wii U version is left out of this release, which starts with the
+    // PS3 version (Bertram, 4 November 2026). What is known of it: Cemu's
+    // wiki rates it Playable (revision 19675, 25 January 2026), with shadows
+    // wrong away from 720p and voices quiet, and the menu fills Cemu's Toy
+    // Pad through the commands of an Omoio Cemu newer than v2.6-2.
 ];
 
 /// Whether the toy's menu works in this game on this console. Skylanders'
@@ -430,9 +424,6 @@ mod tests {
             (Ps3, "BLES02105", "LEGO® DIMENSIONS™"),
             (Ps3, "BLUS31473", "LEGO® DIMENSIONS™"),
             (Ps3, "BLES99999", "LEGO Dimensions"),
-            (WiiU, "0005000010194200", "LEGO® Dimensions™"),
-            (WiiU, "0005000010195D00", "LEGO® DIMENSIONS™"),
-            (WiiU, "WUD0123456789ABC", "LEGO Dimensions"),
         ];
         let toypad = Features { toypad: true, ..Features::default() };
         for (console, id, title) in releases {
@@ -442,7 +433,19 @@ mod tests {
             assert!(!offers_menu(Features { portal: true, infinity: true, ..Features::default() }, console, id, title));
             assert_eq!(menu_note(toypad, console, id, title), None, "{title}");
         }
-        // There is no LEGO Dimensions for the Wii or the GameCube.
+        // This release offers the PS3 version only (Bertram, 4 November
+        // 2026), and there is no LEGO Dimensions for the Wii or the GameCube.
+        for (console, id, title) in [
+            (WiiU, "0005000010194200", "LEGO® Dimensions™"),
+            (WiiU, "0005000010195D00", "LEGO® DIMENSIONS™"),
+            (WiiU, "WUD0123456789ABC", "LEGO Dimensions"),
+        ] {
+            assert!(!has_menu(Toy::ToyPad, console, id, title), "{title}");
+            assert_eq!(
+                menu_note(toypad, console, id, title).as_deref(),
+                Some("The Toy Pad menu doesn't work in this version yet. It works in the PS3 version.")
+            );
+        }
         assert!(!has_menu(Toy::ToyPad, Wii, "", "LEGO Dimensions"));
         assert!(!has_menu(Toy::ToyPad, GameCube, "", "LEGO Dimensions"));
         assert!(!has_menu(Toy::ToyPad, Ps3, "BLES02055", "Skylanders Trap Team"));
@@ -459,7 +462,7 @@ mod tests {
         );
         assert_eq!(
             menu_note(toypad, Console::Wii, "", "LEGO Dimensions").as_deref(),
-            Some("The Toy Pad menu doesn't work in this version yet. It works in the PS3 and Wii U versions.")
+            Some("The Toy Pad menu doesn't work in this version yet. It works in the PS3 version.")
         );
         assert_eq!(menu_note(toypad, Console::Ps3, "", "LEGO Marvel Super Heroes"), None);
     }
@@ -472,12 +475,6 @@ mod tests {
             (Ps3, "BLES01844", "Disney Infinity"),
             (Ps3, "BLES02064", "Disney Infinity [2.0]"),
             (Ps3, "BLJS10323", "Disney Infinity 3.0"),
-            (WiiU, "0005000010136F00", "Disney Infinity"),
-            (WiiU, "0005000010188C00", "Disney Infinity [2.0]"),
-            (WiiU, "00050000101B3D00", "DISNEY INFINITY 3.0: PLAY WITHOUT LIMITS"),
-            (WiiU, "00050000101DDC00", "ディズニーインフィニティ3.0"),
-            (WiiU, "WUD0123456789ABC", "Disney Infinity 2.0: Marvel Super Heroes"),
-            (Wii, "SQIP4Q", "Disney Infinity"),
         ];
         let base = Features { infinity: true, ..Features::default() };
         for (console, id, title) in releases {
@@ -487,7 +484,23 @@ mod tests {
             assert!(!offers_menu(Features { portal: true, toypad: true, ..Features::default() }, console, id, title));
             assert_eq!(menu_note(base, console, id, title), None, "{title}");
         }
-        // There is no Disney Infinity for the GameCube, nor 2.0 or 3.0 for the Wii.
+        // This release offers the PS3 versions only (Bertram, 4 November
+        // 2026). There is no Disney Infinity for the GameCube, nor 2.0 or 3.0
+        // for the Wii.
+        for (console, id, title) in [
+            (WiiU, "0005000010136F00", "Disney Infinity"),
+            (WiiU, "0005000010188C00", "Disney Infinity [2.0]"),
+            (WiiU, "00050000101B3D00", "DISNEY INFINITY 3.0: PLAY WITHOUT LIMITS"),
+            (WiiU, "00050000101DDC00", "ディズニーインフィニティ3.0"),
+            (WiiU, "WUD0123456789ABC", "Disney Infinity 2.0: Marvel Super Heroes"),
+            (Wii, "SQIP4Q", "Disney Infinity"),
+        ] {
+            assert!(!has_menu(Toy::Infinity, console, id, title), "{title}");
+            assert_eq!(
+                menu_note(base, console, id, title).as_deref(),
+                Some("The base menu doesn't work in this version yet. It works in the PS3 version.")
+            );
+        }
         assert!(!has_menu(Toy::Infinity, GameCube, "", "Disney Infinity"));
         assert!(!has_menu(Toy::Infinity, Wii, "", "Disney Infinity 3.0"));
         assert!(!has_menu(Toy::Infinity, Ps3, "BLES02055", "Skylanders Trap Team"));
@@ -503,11 +516,11 @@ mod tests {
         );
         assert_eq!(
             menu_note(base, Console::Wii, "", "Disney Infinity 3.0").as_deref(),
-            Some("The base menu doesn't work in this version yet. It works in the PS3 and Wii U versions.")
+            Some("The base menu doesn't work in this version yet. It works in the PS3 version.")
         );
         assert_eq!(
             menu_note(base, Console::GameCube, "", "Disney Infinity").as_deref(),
-            Some("The base menu doesn't work in this version yet. It works in the PS3, Wii U and Wii versions.")
+            Some("The base menu doesn't work in this version yet. It works in the PS3 version.")
         );
         assert_eq!(menu_note(base, Console::WiiU, "", "Mario Kart 8"), None);
         for features in every(Features::default()) {

@@ -470,8 +470,13 @@ mod tests {
             assert_eq!(skylanders.toy, Some(Toy::Skylanders));
             assert_eq!(skylanders.toy_menu, skylanders.portal_menu, "the portal menu's own answer");
         }
-        for infinity in [find(Console::Ps3, "Disney Infinity 3.0"), find(Console::WiiU, "Disney Infinity 3.0 Edition")] {
-            assert_eq!((infinity.toy, infinity.toy_menu), (Some(Toy::Infinity), Some(true)));
+        let ps3 = find(Console::Ps3, "Disney Infinity 3.0");
+        assert_eq!((ps3.toy, ps3.toy_menu), (Some(Toy::Infinity), Some(true)));
+        // This release offers the base menu on the PS3 only (Bertram, 4
+        // November 2026).
+        let wii_u = find(Console::WiiU, "Disney Infinity 3.0 Edition");
+        assert_eq!((wii_u.toy, wii_u.toy_menu), (Some(Toy::Infinity), Some(false)));
+        for infinity in [ps3, wii_u] {
             assert_eq!((infinity.portal_menu, infinity.portal_note.as_deref()), (None, None), "no Skylanders words");
         }
         let batman = find(Console::Ps3, "Batman: Arkham Origins");
