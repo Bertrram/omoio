@@ -9,12 +9,15 @@
 //! file is and their own recently used list. Omoio never reads which figure
 //! a file is out of the file: a Disney Infinity figure's number is encrypted
 //! (Cemu's `InfinityUSB::LoadFigure`, Infinity.cpp lines 856 to 878, v2.6-2,
-//! read 4 November 2026). It knows a figure it had the emulator make from
-//! its own record of what it asked for, and one the player brought only
-//! once the emulator has named it on the base.
+//! read 4 November 2026), and so is a LEGO Dimensions minifigure's
+//! (`DimensionsUSB::GetFigureId`, nsyshid/Dimensions.cpp lines 1001 to
+//! 1017, v2.6-2, read 4 November 2026). It knows a figure it had the
+//! emulator make from its own record of what it asked for, and one the
+//! player brought only once the emulator has named it on the toy.
 
 use crate::backends::EmulatorBackend;
 use crate::core::console::Console;
+use crate::core::dimensions;
 use crate::core::figures;
 use crate::core::infinity::{self, InfinityGame, Piece};
 use crate::core::settings::Settings;
@@ -23,6 +26,7 @@ use crate::session::{Playing, Session};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, PoisonError};
 use tauri::{AppHandle, Manager};
 
 /// The toys with a menu of their own beside the portal menu.
@@ -187,14 +191,32 @@ struct Known {
 }
 
 impl Known {
-    fn figure(&self, file: &str) -> Option<&ToyFigure> {
-        self.made.get(file).or_else(|| self.seen.get(file))
+    fn figure(&self, toy: Toy, file: &str) -> Option<&ToyFigure> {
+        match self.made.get(file) {
+            // A Blank Tag Omoio made is whatever the game has written to it
+            // since, once the emulator has named that.
+            Some(made) if blank(toy, made) => self.seen.get(file).or(Some(made)),
+            Some(made) => Some(made),
+            None => self.seen.get(file),
+        }
     }
 
     fn forget(&mut self, file: &str) -> bool {
         let made = self.made.remove(file).is_some();
         self.seen.remove(file).is_some() || made
     }
+}
+
+/// A LEGO Dimensions Blank Tag, the one tag that becomes another while it
+/// is on the Toy Pad: the figure maker leaves its pages for the game to
+/// fill (Cemu's `DimensionsUSB::CreateFigure`, nsyshid/Dimensions.cpp lines
+/// 707 to 749, v2.6-2; RPCS3's `dimensions_toypad::create_blank_character`,
+/// rpcs3/Emu/Io/Dimensions.cpp lines 496 to 529, master b2e52d6), and both
+/// emulators take the id the game then writes to its page 36 as the tag's
+/// (Cemu's `DimensionsUSB::WriteBlock`, lines 1050 to 1078; RPCS3's
+/// `dimensions_toypad::write_block`, lines 311 to 338). Read 4 November 2026.
+fn blank(toy: Toy, figure: &ToyFigure) -> bool {
+    toy == Toy::ToyPad && matches!(dimensions::Piece::of_id(figure.number), dimensions::Piece::BlankTag)
 }
 
 /// Not `made-figures.json`, which is the Skylanders menu's.
@@ -316,9 +338,29 @@ fn placed(game: &ToyGame, figure: &ToyFigure) -> Option<Placed> {
         // (`CreateMinifig` and `CreateDimensionFigureDialog`,
         // EmulatedUSBDeviceFrame.cpp lines 653 to 661 and 688 to 704,
         // v2.6-2, read 4 November 2026).
-        Toy::ToyPad => Some(Placed { kind: None, places: every(Toy::ToyPad) }),
+        Toy::ToyPad => Some(Placed {
+            kind: Some(dimensions::Piece::of_id(figure.number).kind()),
+            places: every(Toy::ToyPad),
+        }),
         Toy::Skylanders => None,
     }
+}
+
+/// Whether Omoio has the emulator's figure maker make `figure`. Never a
+/// LEGO Dimensions vehicle or gadget: both makers encrypt any id they are
+/// given as a minifigure's, where the game keeps a vehicle's in plain, so
+/// such a tag reads as no vehicle at all (Cemu's
+/// `DimensionsUSB::CreateFigure` and `GetFigureId`, nsyshid/Dimensions.cpp
+/// lines 707 to 749 and 1001 to 1017, v2.6-2; RPCS3's
+/// `create_blank_character`, rpcs3/Emu/Io/Dimensions.cpp lines 496 to 529,
+/// master b2e52d6). Both makers' own windows offer the minifigures and the
+/// Blank Tag only (Cemu's EmulatedUSBDeviceFrame.cpp lines 698 to 703;
+/// RPCS3's rpcs3qt/dimensions_dialog.cpp lines 389 to 402), and the game
+/// writes a vehicle or gadget to a Blank Tag as it is built. Read 4
+/// November 2026. Vehicles stay in the maker's list all the same, to name a
+/// tag the game wrote.
+fn makes(game: &ToyGame, figure: &ToyFigure) -> bool {
+    game.toy != Toy::ToyPad || !matches!(dimensions::Piece::of_id(figure.number), dimensions::Piece::Vehicle)
 }
 
 /// A figure the emulator's maker can make that the running game takes, with
@@ -329,7 +371,7 @@ pub struct ToyOffer {
     pub number: u32,
     pub series: Option<u8>,
     /// For Disney Infinity "character", "play_set", "round_disc" or
-    /// "hex_disc"; empty for a toy Omoio doesn't sort into kinds.
+    /// "hex_disc"; for the Toy Pad "minifigure" or "blank_tag".
     pub kind: String,
     pub places: Vec<usize>,
 }
@@ -337,6 +379,7 @@ pub struct ToyOffer {
 fn offered(figures: Vec<ToyFigure>, game: &ToyGame) -> Vec<ToyOffer> {
     figures
         .into_iter()
+        .filter(|figure| makes(game, figure))
         .filter_map(|figure| {
             let placed = placed(game, &figure)?;
             Some(ToyOffer {
@@ -369,6 +412,8 @@ pub struct ToyFile {
     pub name: String,
     /// Which figure it is, for a file Omoio had made or the emulator named.
     pub figure: Option<ToyFigure>,
+    /// As `ToyOffer::kind`, and for the Toy Pad also "vehicle", for a tag
+    /// the game wrote a vehicle or gadget to.
     pub kind: Option<String>,
     /// Where it may go: every place when Omoio doesn't know what it is.
     pub places: Vec<usize>,
@@ -393,7 +438,7 @@ fn files_in(dir: &Path, known: &Known, recent: &[String], game: &ToyGame) -> Vec
                 })
                 .filter_map(|path| {
                     let file = path.file_name()?.to_string_lossy().into_owned();
-                    let figure = known.figure(&file).cloned();
+                    let figure = known.figure(game.toy, &file).cloned();
                     let (kind, places) = match &figure {
                         // A figure from a game later than the running one is
                         // left out, as the portal menu leaves out a Skylander
@@ -441,41 +486,133 @@ pub fn files(app: &AppHandle) -> Vec<ToyFile> {
     files_in(&dir, &known(app, game.toy), &recent(app, game.toy), &game)
 }
 
-/// The figure named `name` in a maker's list: by the name as it is, or
-/// else whatever its case, and only where one figure has it.
+/// The figure named `name` in a maker's list: by the name exactly as the
+/// emulator shows it, then without the spaces at its ends, then whatever its
+/// case, and only where one figure has it. Exactly first, since a space can
+/// be all that tells two apart: both Toy Pad lists have 1054 "Gyrosphere"
+/// and 1056 " Gyrosphere" (Cemu's nsyshid/Dimensions.cpp lines 169 and 171,
+/// v2.6-2; RPCS3's rpcs3qt/dimensions_dialog.cpp lines 167 and 169, master
+/// b2e52d6; read 4 November 2026).
 fn named<'a>(list: &'a [ToyFigure], name: &str) -> Option<&'a ToyFigure> {
     let only = |matches: Vec<&'a ToyFigure>| match matches.as_slice() {
         [one] => Some(*one),
         _ => None,
     };
-    let name = name.trim();
-    only(list.iter().filter(|figure| figure.name == name).collect()).or_else(|| {
-        only(list.iter().filter(|figure| figure.name.trim().eq_ignore_ascii_case(name)).collect())
-    })
+    if name.trim().is_empty() {
+        return None;
+    }
+    only(list.iter().filter(|figure| figure.name == name).collect())
+        .or_else(|| only(list.iter().filter(|figure| figure.name == name.trim()).collect()))
+        .or_else(|| {
+            only(list.iter().filter(|figure| figure.name.trim().eq_ignore_ascii_case(name.trim())).collect())
+        })
 }
 
-/// Remembers which figure a file the player brought is, once the emulator
-/// has named it on the base: the name it shows for the place, looked up in
-/// the list its figure maker gave (`listed`). Nothing is read from the file.
-/// A file Omoio made is known already, and a name the list doesn't hold,
-/// such as an emulator's "Unknown Figure", teaches nothing.
-fn seen(app: &AppHandle, game: &ToyGame, figure: &Path, name: &str) {
-    let (Ok(record), Some(file)) = (known_file(app, game.toy), figure.file_name()) else {
-        return;
-    };
-    let file = file.to_string_lossy().into_owned();
-    let mut known = read_known(&record);
-    if known.made.contains_key(&file) {
+/// Learns which figure each of `names`'s files is, from the name the
+/// emulator shows for the place it is in, looked up in `list`, the one its
+/// figure maker gave (`listed`). Nothing is read from the file. A file Omoio
+/// made is known already, apart from a Blank Tag (`blank`), and a name the
+/// list doesn't hold, such as an emulator's "Unknown Figure", teaches
+/// nothing. Whether anything was learned.
+fn learned(known: &mut Known, toy: Toy, list: &[ToyFigure], names: &[(String, String)]) -> bool {
+    let mut changed = false;
+    for (file, name) in names {
+        if known.made.get(file).is_some_and(|made| !blank(toy, made)) {
+            continue;
+        }
+        let Some(figure) = named(list, name) else {
+            continue;
+        };
+        if known.seen.get(file) != Some(figure) {
+            known.seen.insert(file.clone(), figure.clone());
+            changed = true;
+        }
+    }
+    changed
+}
+
+/// Remembers which figure each of `names`'s files is, by file name, from
+/// the name the emulator shows for it on the toy (`learned`).
+fn seen(app: &AppHandle, game: &ToyGame, names: &[(String, String)]) {
+    if names.is_empty() {
         return;
     }
-    let list = kept_figures(app, game);
-    let Some(figure) = named(&list, name) else {
+    let Ok(record) = known_file(app, game.toy) else {
         return;
     };
-    if known.seen.get(&file) != Some(figure) {
-        known.seen.insert(file, figure.clone());
+    let mut known = read_known(&record);
+    if learned(&mut known, game.toy, &kept_figures(app, game), names) {
         write_known(&record, &known);
     }
+}
+
+/// Which of the player's files Omoio put in each place of the running
+/// game's toy, by file name, while the emulator whose process is `pid`
+/// runs. A figure moved on the Toy Pad takes its open file along: both
+/// emulators give the place's file to the new place (Cemu's
+/// `DimensionsUSB::MoveFigure`, nsyshid/Dimensions.cpp lines 751 to 773,
+/// v2.6-2; RPCS3's `dimensions_toypad::move_figure`,
+/// rpcs3/Emu/Io/Dimensions.cpp lines 470 to 494, master b2e52d6; read 4
+/// November 2026), so the record follows it here too.
+struct OnToy {
+    pid: u32,
+    files: BTreeMap<usize, String>,
+}
+
+static ON_TOY: Mutex<Option<OnToy>> = Mutex::new(None);
+
+/// The places of the game whose emulator is `pid`, begun empty for each new
+/// game.
+fn on_toy<T>(pid: u32, change: impl FnOnce(&mut BTreeMap<usize, String>) -> T) -> T {
+    let mut on = ON_TOY.lock().unwrap_or_else(PoisonError::into_inner);
+    if on.as_ref().is_some_and(|on| on.pid != pid) {
+        *on = None;
+    }
+    change(&mut on.get_or_insert_with(|| OnToy { pid, files: BTreeMap::new() }).files)
+}
+
+/// `file` is in `place` now, and nowhere else: neither emulator holds one
+/// file in two places of the Toy Pad (RPCS3 opens it locked,
+/// rpcs3qt/dimensions_dialog.cpp line 743, master b2e52d6), and Omoio's Cemu
+/// refuses a tag that is on already.
+fn put(files: &mut BTreeMap<usize, String>, place: usize, file: String) {
+    files.retain(|_, on| *on != file);
+    files.insert(place, file);
+}
+
+/// The figure in `from` went to `to`. Whatever was in `to` came off first,
+/// as both emulators take it off (`OnToy`).
+fn moved(files: &mut BTreeMap<usize, String>, from: usize, to: usize) {
+    let file = files.remove(&from);
+    files.remove(&to);
+    if let Some(file) = file {
+        files.insert(to, file);
+    }
+}
+
+/// What the places say now of the files Omoio put in them: a place the
+/// emulator shows as empty holds no file any more, and every other one's
+/// file is given with the name the emulator shows for it, as it shows it
+/// (`named`).
+fn read(files: &mut BTreeMap<usize, String>, places: &[String]) -> Vec<(String, String)> {
+    files.retain(|&place, _| places.get(place).is_some_and(|name| !name.trim().is_empty()));
+    files.iter().map(|(&place, file)| (file.clone(), places[place].clone())).collect()
+}
+
+/// Learns from what the places hold now which figure each file Omoio put on
+/// them is. Only the Toy Pad's are learned this way: a tag becomes another
+/// while it is on, as the game writes a vehicle or gadget to a Blank Tag
+/// (`blank`), where a Disney Infinity figure stays the one it was named
+/// when it went on (`after_load`).
+fn learn(app: &AppHandle, game: &ToyGame, pid: u32, places: &[String]) {
+    let names = on_toy(pid, |files| read(files, places));
+    if game.toy == Toy::ToyPad {
+        seen(app, game, &names);
+    }
+}
+
+fn file_name(figure: &Path) -> Option<String> {
+    figure.file_name().map(|name| name.to_string_lossy().into_owned())
 }
 
 /// The file name of one of the player's figures for `toy`, checked to be a
@@ -533,23 +670,31 @@ pub fn back_up(app: &AppHandle, toy: Toy, figure: &Path) {
 /// their figures for this toy and goes there, and a copy of it kept.
 pub fn before_load(app: &AppHandle, game: &ToyGame, place: usize, figure: &Path) -> Result<(), String> {
     let file = saved(app, game.toy, figure)?;
-    goes(game, known(app, game.toy).figure(&file), place)?;
+    goes(game, known(app, game.toy).figure(game.toy, &file), place)?;
     back_up(app, game.toy, figure);
     Ok(())
 }
 
-/// After a figure went in `place`: remembered as used, and, for a file the
-/// player brought, as the figure the emulator now names there.
-pub fn after_load(app: &AppHandle, game: &ToyGame, figure: &Path, place: usize, places: &[String]) {
+/// After a figure went in `place` of the game whose emulator is `pid`:
+/// remembered as used and as being there, and, for a file the player
+/// brought, as the figure the emulator now names there.
+pub fn after_load(app: &AppHandle, game: &ToyGame, pid: u32, figure: &Path, place: usize, places: &[String]) {
     used(app, game.toy, figure);
-    if let Some(name) = places.get(place).filter(|name| !name.trim().is_empty()) {
-        seen(app, game, figure, name);
+    let Some(file) = file_name(figure) else {
+        return;
+    };
+    on_toy(pid, |files| put(files, place, file.clone()));
+    if game.toy == Toy::ToyPad {
+        learn(app, game, pid, places);
+    } else if let Some(name) = places.get(place).filter(|name| !name.trim().is_empty()) {
+        seen(app, game, &[(file, name.clone())]);
     }
 }
 
 /// Before a new figure is made for `place`: the figure the maker's list
-/// gives for `number` and `series`, checked to go there, and the file it
-/// goes in.
+/// gives for `number` and `series`, checked to be one Omoio makes and to go
+/// there, and the file it goes in. A Blank Tag's file is "Blank Tag.bin",
+/// or the first of "Blank Tag 2.bin" and on that is free.
 pub fn before_create(
     app: &AppHandle,
     game: &ToyGame,
@@ -561,9 +706,52 @@ pub fn before_create(
         .into_iter()
         .find(|figure| figure.number == number && figure.series == series)
         .ok_or("Omoio doesn't know that figure. Close the menu and open it again.")?;
+    if !makes(game, &figure) {
+        return Err("Vehicles and gadgets go on a Blank Tag. Put one on the centre pad and build the vehicle in the game.".to_string());
+    }
     goes(game, Some(&figure), place)?;
     let file = new_figure(app, game.toy, &figure.name)?;
     Ok((figure, file))
+}
+
+/// After a new figure went in `place`: remembered as used and as being
+/// there.
+pub fn after_create(app: &AppHandle, game: &ToyGame, pid: u32, file: &Path, place: usize, places: &[String]) {
+    used(app, game.toy, file);
+    if let Some(name) = file_name(file) {
+        on_toy(pid, |files| put(files, place, name));
+    }
+    learn(app, game, pid, places);
+}
+
+/// After the places were read: what they hold now, learned for the files
+/// Omoio put on them.
+pub fn after_read(app: &AppHandle, game: &ToyGame, pid: u32, places: &[String]) {
+    learn(app, game, pid, places);
+}
+
+/// After the figure in `place` came off.
+pub fn after_remove(app: &AppHandle, game: &ToyGame, pid: u32, place: usize, places: &[String]) {
+    on_toy(pid, |files| files.remove(&place));
+    learn(app, game, pid, places);
+}
+
+/// Before a figure on the Toy Pad moves from `from` to `to`: that the game
+/// is played with the Toy Pad, and both are its places.
+pub fn before_move(game: &ToyGame, from: usize, to: usize) -> Result<(), String> {
+    if game.toy != Toy::ToyPad {
+        return Err(NO_MENU.to_string());
+    }
+    if from.max(to) >= game.toy.places() {
+        return Err("That figure doesn't go there.".to_string());
+    }
+    Ok(())
+}
+
+/// After the figure in `from` moved to `to`: its file is recorded there.
+pub fn after_move(app: &AppHandle, game: &ToyGame, pid: u32, from: usize, to: usize, places: &[String]) {
+    on_toy(pid, |files| moved(files, from, to));
+    learn(app, game, pid, places);
 }
 
 /// A new figure on its toy: the file, and what each place holds now.
@@ -728,14 +916,14 @@ mod tests {
         write_known(&record, &known);
         let read = read_known(&record);
         assert_eq!(read, known);
-        assert_eq!(read.figure("from a friend.bin").map(|f| f.number), Some(1000100));
-        assert_eq!(read.figure("never seen.bin"), None);
+        assert_eq!(read.figure(Toy::Infinity, "from a friend.bin").map(|f| f.number), Some(1000100));
+        assert_eq!(read.figure(Toy::Infinity, "never seen.bin"), None);
         // What Omoio made wins over a name the emulator showed.
         let mut both = read;
         both.seen.insert("Mr. Incredible.bin".to_string(), figure("Captain America", 1000100, 2));
-        assert_eq!(both.figure("Mr. Incredible.bin").map(|f| f.number), Some(1000001));
+        assert_eq!(both.figure(Toy::Infinity, "Mr. Incredible.bin").map(|f| f.number), Some(1000001));
         assert!(both.forget("Mr. Incredible.bin"));
-        assert_eq!(both.figure("Mr. Incredible.bin"), None);
+        assert_eq!(both.figure(Toy::Infinity, "Mr. Incredible.bin"), None);
         assert!(!both.forget("Mr. Incredible.bin"));
         // A record from an older Omoio with only one half still reads.
         let older = r#"{"made":{"Jack Sparrow.bin":{"name":"Jack Sparrow","number":1000003,"series":1}}}"#;
@@ -793,6 +981,13 @@ mod tests {
         assert_eq!(named(&list, ""), None);
         let twice = [figure("Captain America", 1000100, 2), figure("Captain America", 1000999, 3)];
         assert_eq!(named(&twice, "Captain America"), None, "a name two figures share says nothing");
+        // Two of the Toy Pad's vehicles are told apart by a space alone.
+        let gyrospheres = [tag("Gyrosphere", 1054), tag("Sonic Beam Gyrosphere", 1055), tag(" Gyrosphere", 1056)];
+        assert_eq!(named(&gyrospheres, "Gyrosphere").map(|f| f.number), Some(1054));
+        assert_eq!(named(&gyrospheres, " Gyrosphere").map(|f| f.number), Some(1056));
+        assert_eq!(named(&gyrospheres, "gyrosphere"), None, "whatever its case, two have it");
+        assert_eq!(named(&gyrospheres, "sonic beam gyrosphere ").map(|f| f.number), Some(1055));
+        assert_eq!(named(&gyrospheres, "   "), None);
     }
 
     #[test]
@@ -822,6 +1017,166 @@ mod tests {
         assert_eq!(files[1].figure, None);
         assert_eq!(files[1].places, (0..9).collect::<Vec<_>>(), "a file Omoio doesn't know may go anywhere");
         assert_eq!(files[2].places, [3, 6], "one the emulator named is known");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn toypad() -> ToyGame {
+        ToyGame { toy: Toy::ToyPad, console: Console::WiiU, game: None, series: None, infinity: None }
+    }
+
+    fn tag(name: &str, number: u32) -> ToyFigure {
+        ToyFigure { name: name.to_string(), number, series: None }
+    }
+
+    /// Some of each kind from the makers' lists, the same in both emulators
+    /// (Cemu's `s_listMinis` and `s_listTokens`, nsyshid/Dimensions.cpp
+    /// lines 25 to 380, v2.6-2; RPCS3's rpcs3qt/dimensions_dialog.cpp lines
+    /// 23 to 378, master b2e52d6).
+    fn tags() -> Vec<ToyFigure> {
+        vec![
+            tag("Blank Tag", 0),
+            tag("Batman", 1),
+            tag("Supergirl Red Lantern", 769),
+            tag("Police Car", 1000),
+            tag("Batmobile", 1006),
+            tag("Batblaster", 1007),
+            tag("Unknown", 1100),
+            tag("Unknown", 1101),
+        ]
+    }
+
+    #[test]
+    fn a_blank_tag_is_a_bin_named_for_it_that_isnt_taken() {
+        assert_eq!(free_name("Blank Tag", |_| false), "Blank Tag.bin");
+        let taken = ["Blank Tag.bin", "Blank Tag 2.bin"];
+        assert_eq!(free_name("Blank Tag", |file| taken.contains(&file)), "Blank Tag 3.bin");
+    }
+
+    #[test]
+    fn the_toy_pad_is_offered_its_minifigures_and_the_blank_tag_on_any_place() {
+        let offers = offered(tags(), &toypad());
+        let names: Vec<&str> = offers.iter().map(|offer| offer.name.as_str()).collect();
+        assert_eq!(names, ["Blank Tag", "Batman", "Supergirl Red Lantern"], "no vehicle is made from its id");
+        let kinds: Vec<&str> = offers.iter().map(|offer| offer.kind.as_str()).collect();
+        assert_eq!(kinds, ["blank_tag", "minifigure", "minifigure"]);
+        assert!(offers.iter().all(|offer| offer.places == (0..7).collect::<Vec<_>>() && offer.series.is_none()));
+    }
+
+    #[test]
+    fn a_tag_goes_in_any_of_the_toy_pads_seven_places() {
+        let game = toypad();
+        assert!(goes(&game, Some(&tag("Batman", 1)), 0).is_ok());
+        assert!(goes(&game, Some(&tag("Batmobile", 1006)), 6).is_ok(), "a tag the game wrote a vehicle to");
+        assert!(goes(&game, None, 6).is_ok());
+        assert!(goes(&game, None, 7).is_err(), "the Toy Pad has seven places");
+        assert!(makes(&game, &tag("Blank Tag", 0)) && makes(&game, &tag("Batman", 1)));
+        assert!(!makes(&game, &tag("Batmobile", 1006)));
+        assert!(makes(&one(), &figure("Mickey's Car", 4000018, 1)), "Disney Infinity's pieces are all made");
+    }
+
+    #[test]
+    fn a_blank_tag_becomes_the_vehicle_the_game_wrote_to_it() {
+        let list = tags();
+        let mut known = Known::default();
+        known.made.insert("Blank Tag.bin".to_string(), tag("Blank Tag", 0));
+        known.made.insert("Batman.bin".to_string(), tag("Batman", 1));
+        let says = |file: &str, name: &str| [(file.to_string(), name.to_string())];
+        assert_eq!(known.figure(Toy::ToyPad, "Blank Tag.bin").map(|f| f.number), Some(0));
+        assert!(learned(&mut known, Toy::ToyPad, &list, &says("Blank Tag.bin", "Batmobile")));
+        assert_eq!(known.figure(Toy::ToyPad, "Blank Tag.bin").map(|f| f.number), Some(1006));
+        assert!(!learned(&mut known, Toy::ToyPad, &list, &says("Blank Tag.bin", "Batmobile")), "nothing new");
+        // Rebuilt in the game.
+        assert!(learned(&mut known, Toy::ToyPad, &list, &says("Blank Tag.bin", "Batblaster")));
+        assert_eq!(known.figure(Toy::ToyPad, "Blank Tag.bin").map(|f| f.number), Some(1007));
+        // A minifigure Omoio made stays the one it asked for.
+        assert!(!learned(&mut known, Toy::ToyPad, &list, &says("Batman.bin", "Police Car")));
+        assert_eq!(known.figure(Toy::ToyPad, "Batman.bin").map(|f| f.number), Some(1));
+        // A tag the player brought is what the emulator names it.
+        assert!(learned(&mut known, Toy::ToyPad, &list, &says("from a friend.bin", "Supergirl Red Lantern")));
+        assert_eq!(known.figure(Toy::ToyPad, "from a friend.bin").map(|f| f.number), Some(769));
+        // A name the list doesn't hold, or holds twice, says nothing.
+        assert!(!learned(&mut known, Toy::ToyPad, &list, &says("odd.bin", "Unknown")));
+        assert!(!learned(&mut known, Toy::ToyPad, &list, &says("odd.bin", "Unknown (4000)")));
+        // Only a Toy Pad tag is a Blank Tag.
+        let mut base = Known::default();
+        base.made.insert("odd.bin".to_string(), ToyFigure { name: "Blank Tag".into(), number: 0, series: None });
+        assert!(!learned(&mut base, Toy::Infinity, &list, &says("odd.bin", "Batmobile")));
+    }
+
+    #[test]
+    fn the_record_follows_a_tag_from_place_to_place() {
+        let mut files = BTreeMap::new();
+        put(&mut files, 1, "Batman.bin".to_string());
+        put(&mut files, 0, "Blank Tag.bin".to_string());
+        moved(&mut files, 1, 3);
+        assert_eq!(files, BTreeMap::from([(0, "Blank Tag.bin".to_string()), (3, "Batman.bin".to_string())]));
+        moved(&mut files, 3, 3);
+        assert_eq!(files.get(&3).map(String::as_str), Some("Batman.bin"), "lifted and put back");
+        moved(&mut files, 3, 0);
+        assert_eq!(files, BTreeMap::from([(0, "Batman.bin".to_string())]), "what was there came off");
+        put(&mut files, 2, "Batman.bin".to_string());
+        assert_eq!(files, BTreeMap::from([(2, "Batman.bin".to_string())]), "one file is in one place");
+        put(&mut files, 5, "Blank Tag.bin".to_string());
+        moved(&mut files, 4, 5);
+        assert_eq!(files.get(&5), None, "a figure Omoio didn't put on took the place");
+        put(&mut files, 5, "Blank Tag.bin".to_string());
+        let mut places = vec![String::new(); 7];
+        places[2] = "Batman".to_string();
+        places[5] = " Gyrosphere".to_string();
+        assert_eq!(
+            read(&mut files, &places),
+            [("Batman.bin".to_string(), "Batman".to_string()), ("Blank Tag.bin".to_string(), " Gyrosphere".to_string())],
+            "each name as the emulator shows it"
+        );
+        places[5] = " ".to_string();
+        assert_eq!(read(&mut files, &places).len(), 1, "a place of spaces is empty");
+        put(&mut files, 5, "Blank Tag.bin".to_string());
+        places[5] = "Batmobile".to_string();
+        places[2].clear();
+        assert_eq!(read(&mut files, &places).len(), 1, "a place that reads empty holds no file");
+        assert_eq!(files.get(&2), None);
+        assert!(read(&mut files, &[]).is_empty() && files.is_empty());
+    }
+
+    #[test]
+    fn each_game_begins_with_nothing_on_its_toy() {
+        let (first, second) = (u32::MAX - 1, u32::MAX - 2);
+        on_toy(first, |files| put(files, 1, "Batman.bin".to_string()));
+        assert_eq!(on_toy(first, |files| files.len()), 1);
+        assert_eq!(on_toy(second, |files| files.len()), 0);
+    }
+
+    #[test]
+    fn a_figure_moves_only_between_the_toy_pads_places() {
+        assert!(before_move(&toypad(), 0, 6).is_ok());
+        assert!(before_move(&toypad(), 1, 1).is_ok(), "lifted and put back");
+        assert!(before_move(&toypad(), 0, 7).is_err());
+        assert!(before_move(&toypad(), 7, 0).is_err());
+        assert!(before_move(&one(), 3, 6).is_err(), "nothing moves on the Infinity Base");
+    }
+
+    #[test]
+    fn the_players_tags_are_listed_with_their_kinds() {
+        let dir = scratch("tags");
+        let write = |name: &str, size: usize| std::fs::write(dir.join(name), vec![0u8; size]).unwrap();
+        write("Batman.bin", 180);
+        write("Blank Tag.bin", 180);
+        write("from a friend.bin", 180);
+        write("Stitch.bin", 320);
+        let mut known = Known::default();
+        known.made.insert("Batman.bin".to_string(), tag("Batman", 1));
+        known.made.insert("Blank Tag.bin".to_string(), tag("Blank Tag", 0));
+        known.seen.insert("Blank Tag.bin".to_string(), tag("Batmobile", 1006));
+        let files = files_in(&dir, &known, &[], &toypad());
+        let listed: Vec<(&str, Option<&str>)> =
+            files.iter().map(|file| (file.name.as_str(), file.kind.as_deref())).collect();
+        // A Disney Infinity figure's size isn't a tag's.
+        assert_eq!(
+            listed,
+            [("Batman", Some("minifigure")), ("Blank Tag", Some("vehicle")), ("from a friend", None)]
+        );
+        assert!(files.iter().all(|file| file.places == (0..7).collect::<Vec<_>>()));
+        assert_eq!(files[1].figure.as_ref().map(|f| f.name.as_str()), Some("Batmobile"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

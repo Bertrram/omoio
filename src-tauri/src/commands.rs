@@ -2095,7 +2095,9 @@ pub async fn toy_places(app: AppHandle) -> Result<Vec<String>, String> {
     let places = tauri::async_runtime::spawn_blocking(move || backend.toy_places(pid, toy)).await;
     // Even when the errand panicked, so the game is let hear again.
     crate::portal_menu::take_front(&app);
-    places.map_err(|e| e.to_string())?
+    let places = places.map_err(|e| e.to_string())??;
+    crate::toy_menu::after_read(&app, &game, pid, &places);
+    Ok(places)
 }
 
 /// Puts one of the player's figures in `place`, counted from 0. A copy of
@@ -2110,7 +2112,7 @@ pub async fn toy_load(app: AppHandle, place: usize, path: String) -> Result<Vec<
     // Even when the errand panicked, so the game is let hear again.
     crate::portal_menu::take_front(&app);
     let places = places.map_err(|e| e.to_string())??;
-    crate::toy_menu::after_load(&app, &game, Path::new(&path), place, &places);
+    crate::toy_menu::after_load(&app, &game, pid, Path::new(&path), place, &places);
     Ok(places)
 }
 
@@ -2122,7 +2124,9 @@ pub async fn toy_remove(app: AppHandle, place: usize) -> Result<Vec<String>, Str
     let places = tauri::async_runtime::spawn_blocking(move || backend.toy_remove(pid, toy, place)).await;
     // Even when the errand panicked, so the game is let hear again.
     crate::portal_menu::take_front(&app);
-    places.map_err(|e| e.to_string())?
+    let places = places.map_err(|e| e.to_string())??;
+    crate::toy_menu::after_remove(&app, &game, pid, place, &places);
+    Ok(places)
 }
 
 /// Every figure the running game's emulator can make that the game takes,
@@ -2161,8 +2165,40 @@ pub async fn toy_create(
         crate::toy_menu::made(&app, toy, &file, &figure);
     }
     let places = places?;
-    crate::toy_menu::used(&app, toy, &file);
+    crate::toy_menu::after_create(&app, &game, pid, &file, place, &places);
     Ok(crate::toy_menu::ToyMade { path: file.to_string_lossy().into_owned(), places })
+}
+
+/// Moves the figure in `from` of the running game's Toy Pad to `to`, both
+/// counted from 0, as a player lifts a figure and puts it down on another
+/// place when the game asks. `to` may be `from`: the figure is lifted and
+/// put back.
+#[tauri::command]
+pub async fn toypad_move(app: AppHandle, from: usize, to: usize) -> Result<Vec<String>, String> {
+    let crate::toy_menu::Running { backend, pid, game } = crate::toy_menu::running(&app)?;
+    crate::toy_menu::before_move(&game, from, to)?;
+    let places = tauri::async_runtime::spawn_blocking(move || backend.toypad_move(pid, from, to)).await;
+    // Even when the errand panicked, so the game is let hear again.
+    crate::portal_menu::take_front(&app);
+    let places = places.map_err(|e| e.to_string())??;
+    crate::toy_menu::after_move(&app, &game, pid, from, to, &places);
+    Ok(places)
+}
+
+/// The light the game last asked of each of the running game's Toy Pad's
+/// three pads, centre, left and right, so the menu lights its pads as the
+/// game lit them. `None` where the emulator can't say. The menu asks this
+/// over and over while it is open, so it leaves the front where it is,
+/// unlike the errands above. Off the interface thread all the same, since
+/// an emulator that doesn't answer is waited for.
+#[tauri::command]
+pub async fn toypad_lights(app: AppHandle) -> Option<Vec<crate::core::dimensions::PadLight>> {
+    let crate::toy_menu::Running { backend, pid, game } = crate::toy_menu::running(&app).ok()?;
+    if game.toy != crate::core::toys::Toy::ToyPad {
+        return None;
+    }
+    let lights = tauri::async_runtime::spawn_blocking(move || backend.toypad_lights(pid)).await.ok()??;
+    Some(lights.into())
 }
 
 /// The player's figure files for the running game's toy that the game

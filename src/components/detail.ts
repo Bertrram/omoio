@@ -106,7 +106,7 @@ const MENU_SECTION: Record<Toy, { heading: string; help: string; button: string;
     help: "How the Toy Pad menu works",
     button: "Toy Pad menu button",
     about:
-      "LEGO Dimensions games need a Toy Pad, and the emulator pretends one is plugged in. While playing, press this button to open the Toy Pad menu over the game. Insert or Tab on the keyboard opens and closes it too, and Toy Pad in the bar over the game opens it. It all works with the pad. The same button opens the portal menu in a Skylanders game. The home button is the best choice, since games don't use it. If Windows' Game Bar opens instead, switch off its controller button in Windows Settings, under Gaming, Xbox Game Bar.",
+      "LEGO Dimensions games need a Toy Pad, and the emulator pretends one is plugged in. While playing, press this button to open the Toy Pad menu over the game. Insert or Tab on the keyboard opens and closes it too, and Toy Pad in the bar over the game opens it. Pick a minifigure and the place it goes on, and move it to another pad when the game asks. For a vehicle or gadget, put a Blank Tag on the centre pad and build it in the game, which writes it to the tag. It all works with the pad. The same button opens the portal menu in a Skylanders game. The home button is the best choice, since games don't use it. If Windows' Game Bar opens instead, switch off its controller button in Windows Settings, under Gaming, Xbox Game Bar.",
   },
 };
 

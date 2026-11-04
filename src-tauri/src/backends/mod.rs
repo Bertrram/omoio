@@ -12,6 +12,7 @@ pub mod rpcs3;
 
 use crate::core::community::{MadeFigures, PackChange, Packs};
 use crate::core::console::{Console, Features};
+use crate::core::dimensions::PadLight;
 use crate::core::game_settings::{Chosen, GameSettings};
 use crate::core::import_warning::Imported;
 use crate::core::library::Game;
@@ -129,8 +130,8 @@ pub trait EmulatorBackend: Sync {
 
     /// What each place of the running game's toy holds, the name the
     /// emulator shows, in place order, empty where nothing is: nine for
-    /// Disney Infinity's base. `toy` is never Skylanders, whose portal has
-    /// `portal_figures`.
+    /// Disney Infinity's base, seven for LEGO Dimensions' Toy Pad. `toy` is
+    /// never Skylanders, whose portal has `portal_figures`.
     fn toy_places(&self, _pid: u32, _toy: Toy) -> Result<Vec<String>, String> {
         Err(NO_TOY.to_string())
     }
@@ -147,7 +148,9 @@ pub trait EmulatorBackend: Sync {
     }
 
     /// Every figure the emulator's own figure maker makes for the toy, with
-    /// its number and, for Disney Infinity, its series.
+    /// its number and, for Disney Infinity, its series. For the Toy Pad, the
+    /// vehicles and gadgets too, which name a tag the game wrote one to; the
+    /// menu makes none of them.
     fn toy_list(&self, _app: &AppHandle, _pid: u32, _toy: Toy) -> Result<Vec<ToyFigure>, String> {
         Err(NO_TOY.to_string())
     }
@@ -162,6 +165,21 @@ pub trait EmulatorBackend: Sync {
     /// opens, out of sight, as `ready_portal` does for the portal. An
     /// emulator that needs nothing leaves this.
     fn ready_toy(&self, _pid: u32, _toy: Toy) {}
+
+    /// Moves the figure in `from` of the running game's Toy Pad to `to`,
+    /// both counted from 0, as a player lifts a figure and puts it down on
+    /// another place, and returns what the places hold afterwards. `to` is
+    /// empty, or is `from` itself to lift the figure and put it back.
+    fn toypad_move(&self, _pid: u32, _from: usize, _to: usize) -> Result<Vec<String>, String> {
+        Err(NO_TOYPAD.to_string())
+    }
+
+    /// The light the game last asked of each of the Toy Pad's three pads,
+    /// centre, left and right. `None` where the emulator can't say. Asked
+    /// over and over while the menu is open, so it opens no window.
+    fn toypad_lights(&self, _pid: u32) -> Option<[PadLight; 3]> {
+        None
+    }
 
     /// Whether the game titled `title` takes the figures this emulator's
     /// figure maker makes for it, and the pack that lets it when it checks
@@ -458,6 +476,7 @@ pub struct SaveFolder {
 
 const NO_PORTAL: &str = "Omoio can't reach this emulator's portal yet.";
 const NO_TOY: &str = "Omoio can't reach this emulator's base yet.";
+const NO_TOYPAD: &str = "Omoio can't reach this emulator's Toy Pad yet.";
 const NO_PACKS: &str = "There are no community packs for this emulator.";
 const NO_LIST: &str = "There is no compatibility list for this emulator.";
 

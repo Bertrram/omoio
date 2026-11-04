@@ -1135,10 +1135,14 @@ export interface ToyFigure {
 }
 
 /// What a Disney Infinity piece is: a character, a play set (Toy Box games
-/// among them), or a round or hexagonal power disc.
-export type ToyKind = "character" | "play_set" | "round_disc" | "hex_disc";
+/// among them), or a round or hexagonal power disc. A LEGO Dimensions tag is
+/// a minifigure, a Blank Tag, or a vehicle or gadget the game wrote to a
+/// Blank Tag.
+export type ToyKind = "character" | "play_set" | "round_disc" | "hex_disc" | "minifigure" | "blank_tag" | "vehicle";
 
-/// A figure the emulator can make that the running game takes.
+/// A figure the emulator can make that the running game takes. For the Toy
+/// Pad, the minifigures and the Blank Tag: a vehicle or gadget is built in
+/// the game, onto a Blank Tag.
 export interface ToyOffer extends ToyFigure {
   /// Empty for a toy Omoio doesn't sort into kinds.
   kind: ToyKind | "";
@@ -1203,6 +1207,39 @@ export function toyFiles(): Promise<ToyFile[]> {
 /// Moves one of the player's toy figures to the Recycle Bin.
 export function deleteToyFigure(path: string): Promise<void> {
   return invoke("delete_toy_figure", { path });
+}
+
+/// The light the game last asked of one of the Toy Pad's three pads.
+export interface PadLight {
+  /// "none" until the game lights the pad; "solid"; "fade" from `from` to
+  /// `color`, `count` steps one way or back (0 never stops); "flash" of
+  /// `color`, `count` times (255 never stops); "random", a fade through
+  /// colours the pad picks itself, so `color` says nothing.
+  mode: "none" | "solid" | "fade" | "flash" | "random";
+  color: [number, number, number];
+  /// What the pad showed before.
+  from: [number, number, number];
+  /// A fade's step, or how long a flash is on, in the pad's own ticks.
+  time: number;
+  /// How long a flash is off, in ticks.
+  off: number;
+  count: number;
+  /// Goes up each time the game changes the pad, so a light is started
+  /// again only when the game sent a new one.
+  changes: number;
+}
+
+/// Moves the figure in `from` of the Toy Pad to `to`, both counted from 0,
+/// as a player lifts it and puts it down. `to` is empty, or is `from` itself
+/// to lift it and put it back. Resolves to what the places hold afterwards.
+export function toypadMove(from: number, to: number): Promise<string[]> {
+  return invoke("toypad_move", { from, to });
+}
+
+/// The light the game last asked of each of the Toy Pad's pads, centre,
+/// left and right. Null where the emulator can't say, as on the PS3.
+export function toypadLights(): Promise<PadLight[] | null> {
+  return invoke("toypad_lights");
 }
 
 /// The figures' pictures a game has so far: where they are, and each one's

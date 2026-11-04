@@ -181,6 +181,8 @@ pub fn run() {
             commands::toy_create,
             commands::toy_files,
             commands::delete_toy_figure,
+            commands::toypad_move,
+            commands::toypad_lights,
             commands::get_settings,
             commands::set_start_fullscreen,
             commands::set_keep_sessions,
