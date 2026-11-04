@@ -23,6 +23,15 @@ use std::collections::HashSet;
 /// read 4 November 2026). An ending, not a crash.
 const CONTROL_C_EXIT: u32 = 0xC000_013A;
 
+/// The code a program ends with when Windows closes it from its "not
+/// responding" prompt, which comes with Application Hang's event 1002.
+/// No Microsoft page gives it; it is the code debuggers and crash reports
+/// show for such an end, for example Visual Studio's "exited with code
+/// -805306369 (0xcfffffff)" (seen in public reports, 4 November 2026). Its
+/// top bits read as an error's, but it is a hang Windows ended, which is
+/// closed, not crashed (`decide`).
+const HUNG_CLOSED: u32 = 0xCFFF_FFFF;
+
 /// The warning-severity exceptions a program can die of: a guard page, a
 /// misaligned access, a breakpoint (what Cemu's `cemu_assert` raises,
 /// `src/Common/precompiled.h` lines 329 to 335, fork v2.6-2) and a single
@@ -53,9 +62,19 @@ const CPP_EXCEPTION: u32 = 0xE06D_7363;
 /// PowerShell's Stop-Process, the 1 that taskkill leaves (both measured on
 /// this PC, 4 November 2026), and any small number a program returns.
 pub fn is_exception(code: u32) -> bool {
-    ((code & 0xE000_0000) == 0xC000_0000 && code != CONTROL_C_EXIT)
+    ((code & 0xE000_0000) == 0xC000_0000 && code != CONTROL_C_EXIT && code != HUNG_CLOSED)
         || WARNING_EXCEPTIONS.contains(&code)
         || code == CPP_EXCEPTION
+}
+
+/// Whether Windows may write a report about an end with this exit code, and
+/// so whether it is worth waiting for: Application Error comes with a
+/// program an exception ended, whose exit code is the exception's, and
+/// Application Hang with one Windows closed after it stopped responding
+/// (`HUNG_CLOSED`). Any other end, a program closing itself or being ended
+/// from outside, leaves Windows nothing to report.
+pub fn windows_reports(code: u32) -> bool {
+    is_exception(code) || code == HUNG_CLOSED
 }
 
 /// Plain words for the exception codes an emulator is likely to end with,
@@ -149,6 +168,7 @@ pub fn exit_note(emulator: &str, code: u32) -> String {
             // this PC, 4 November 2026).
             0xFFFF_FFFF => "or -1, the code exit(-1) leaves, and PowerShell's Stop-Process too",
             CONTROL_C_EXIT => "Windows' code for a program ended with Ctrl+C",
+            HUNG_CLOSED => "the code a program has after Windows closes it because it stopped responding",
             _ => "a code of its own rather than an exception code",
         }
     };
@@ -297,7 +317,63 @@ pub fn parse_event(xml: &str) -> Option<WinEvent> {
     }
 
     event.id = id?;
+    name_by_place(&mut event);
     (!event.provider.is_empty()).then_some(event)
+}
+
+/// Application Error's and Application Hang's fields, in the order the
+/// events hold them. Windows 11 writes them with these names (this PC's
+/// own events, 22621, 4 November 2026). Where the two sources are still
+/// the classic ones with no manifest, as on Windows 10, the values come in
+/// the same order with no names. For event 1000 that order is its
+/// message's: "Faulting process id: 0x%9" and "Faulting application start
+/// time: 0x%10" (Application Error's publisher metadata, wevtutil gp on
+/// this PC, 4 November 2026). Event 1002's message names only %1 and %2,
+/// so its order is taken from the named fields alone, likely the same in
+/// the classic form; a Windows 10 PC can settle it.
+const CRASH_FIELDS: &[&str] = &[
+    "AppName",
+    "AppVersion",
+    "AppTimeStamp",
+    "ModuleName",
+    "ModuleVersion",
+    "ModuleTimeStamp",
+    "ExceptionCode",
+    "FaultingOffset",
+    "ProcessId",
+    "ProcessCreationTime",
+    "AppPath",
+    "ModulePath",
+    "IntegratorReportId",
+    "PackageFullName",
+    "PackageRelativeAppId",
+];
+const HANG_FIELDS: &[&str] = &[
+    "AppName",
+    "AppVersion",
+    "ProcessId",
+    "StartTime",
+    "TerminationTime",
+    "ExeFileName",
+    "ReportId",
+    "PackageFullName",
+    "PackageRelativeAppId",
+    "HangType",
+];
+
+/// Names an event's unnamed fields by their place, so a Windows 10 event
+/// is read as a Windows 11 one is.
+fn name_by_place(event: &mut WinEvent) {
+    let names = match (event.provider.as_str(), event.id) {
+        (APPLICATION_ERROR, CRASH_EVENT) => CRASH_FIELDS,
+        (APPLICATION_HANG, HANG_EVENT) => HANG_FIELDS,
+        _ => return,
+    };
+    if event.data.iter().all(|(name, _)| name.is_empty()) {
+        for ((name, _), given) in event.data.iter_mut().zip(names) {
+            *name = given.to_string();
+        }
+    }
 }
 
 fn attribute(element: &quick_xml::events::BytesStart, name: &[u8]) -> Option<String> {
@@ -855,7 +931,7 @@ mod tests {
         // 1 from taskkill and Task Manager, 3 from abort without Windows
         // Error Reporting, 259 read after the end, -1, Ctrl+C, an HRESULT and
         // a code a program made up itself.
-        for code in [0, 1, 3, 259, 0xFFFF_FFFF, 0xC000_013A, 0x8000_4005, 0xE000_0001] {
+        for code in [0, 1, 3, 259, 0xFFFF_FFFF, 0xC000_013A, 0xCFFF_FFFF, 0x8000_4005, 0xE000_0001] {
             assert!(!is_exception(code), "{code:#X}");
         }
     }
@@ -1299,12 +1375,41 @@ Further errors will be sent to the Video Backend log and Dolphin will now likely
         assert_eq!(decide(&reported), Ending::Crashed);
     }
 
+    /// Event 1000 as the classic, manifest-less Application Error source
+    /// writes it, on Windows 10: the same values with no names.
+    const APP_ERROR_UNNAMED: &str = concat!(
+        "<Event xmlns='http://schemas.microsoft.com/win/2004/08/events/event'><System>",
+        "<Provider Name='Application Error'/><EventID Qualifiers='0'>1000</EventID><Level>2</Level>",
+        "<TimeCreated SystemTime='2026-11-04T14:02:11.0000000Z'/><Channel>Application</Channel></System>",
+        "<EventData><Data>Cemu.exe</Data><Data>2.6.0.0</Data><Data>67a4b7c2</Data><Data>nvoglv64.dll</Data>",
+        "<Data>32.0.15.9760</Data><Data>68e7c2d4</Data><Data>c0000409</Data><Data>00000000001a2b3c</Data>",
+        "<Data>0x1f2c</Data><Data>0x1dd6c6232b33499</Data>",
+        r"<Data>C:\Games\Cemu.exe</Data><Data>C:\Windows\nvoglv64.dll</Data>",
+        "<Data>6f1d2c3b</Data><Data></Data><Data></Data></EventData></Event>",
+    );
+
+    #[test]
+    fn a_windows_10_event_with_unnamed_fields_is_read_by_place() {
+        let event = parse_event(APP_ERROR_UNNAMED).unwrap();
+        assert_eq!(event.field("ProcessId"), Some("0x1f2c"));
+        assert!(is_about(&event, 0x1f2c, 0x1dd6c6232b33499));
+        assert!(!is_about(&event, 0x1f2c, 0x1dd6c6232b33498));
+        let note = event_note(&event);
+        assert!(note.contains("ModuleName=nvoglv64.dll") && note.contains("ExceptionCode=c0000409"), "{note}");
+        assert!(!note.contains("Games") && !note.contains("ProcessCreationTime"), "{note}");
+    }
+
     #[test]
     fn task_manager_a_hang_and_a_driver_reset_are_closed_normally() {
         assert_eq!(decide(&Evidence { exit_code: Some(1), ..Default::default() }), Ending::Closed);
         assert_eq!(decide(&Evidence { exit_code: Some(0xFFFF_FFFF), ..Default::default() }), Ending::Closed);
         let hang = Evidence { exit_code: Some(1), events: vec![parse_event(APP_HANG).unwrap()], ..Default::default() };
         assert_eq!(decide(&hang), Ending::Closed);
+        // What a program Windows closed from its "not responding" prompt
+        // really ends with.
+        let closed_hung = Evidence { exit_code: Some(0xCFFF_FFFF), events: vec![parse_event(APP_HANG).unwrap()], ..Default::default() };
+        assert_eq!(decide(&closed_hung), Ending::Closed);
+        assert!(exit_note("Cemu", 0xCFFF_FFFF).contains("stopped responding"));
         let reset = Evidence { exit_code: Some(0), events: vec![parse_event(DISPLAY_RESET).unwrap()], ..Default::default() };
         assert_eq!(decide(&reset), Ending::Closed);
         assert_eq!(decide(&Evidence::default()), Ending::Closed);
