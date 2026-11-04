@@ -1,4 +1,5 @@
-//! Working an emulator's Qt windows from outside, for its Skylanders portal.
+//! Working an emulator's Qt windows from outside, for its Skylanders portal
+//! and its Infinity Base.
 //!
 //! RPCS3 and Dolphin are both built with Qt, whose buttons and boxes are not
 //! windows of their own, so window messages can't reach them. Qt answers UI
@@ -23,7 +24,9 @@ use windows::Win32::UI::Accessibility::{
     UIA_MenuItemControlTypeId, UIA_NamePropertyId, UIA_SelectionItemPatternId, UIA_ValuePatternId,
     UIA_CONTROLTYPE_ID, UIA_PROPERTY_ID,
 };
-use windows::Win32::UI::Input::KeyboardAndMouse::{MapVirtualKeyW, MAPVK_VK_TO_VSC_EX, VIRTUAL_KEY, VK_SPACE};
+use windows::Win32::UI::Input::KeyboardAndMouse::{
+    MapVirtualKeyW, MAPVK_VK_TO_VSC_EX, VIRTUAL_KEY, VK_DOWN, VK_ESCAPE, VK_SPACE, VK_UP,
+};
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GetClassNameW, GetWindow, GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible, PostMessageW,
     SetWindowPos, ShowWindow, GW_OWNER, SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, WM_KEYDOWN, WM_KEYUP,
@@ -276,6 +279,81 @@ pub fn arrives(pid: u32, wanted: &str) -> Option<HWND> {
 /// Qt's menus each open as a window of their own, over everything else.
 pub fn open_menus(pid: u32) -> Vec<HWND> {
     showing(pid).into_iter().filter(|&window| class(window).contains("Popup")).collect()
+}
+
+/// Chooses an item through a window's menus, `path` naming each menu on
+/// the way and then the item. Qt shows a menu's items only while the menu
+/// is open, so each menu is opened with ExpandCollapse and moved out of
+/// sight as it opens, and the item is chosen with Invoke, which closes them
+/// all (docs/what-we-verified.md, "Driving RPCS3's portal from outside
+/// works", 5 October 2026). Says whether the item was chosen; menus a try
+/// that gave up left open are closed.
+pub fn choose_from_menus(automation: &Automation, pid: u32, menus: &IUIAutomationElement, path: &[&str]) -> bool {
+    let chosen = through_menus(automation, pid, menus, path).is_some();
+    if !chosen {
+        for menu in open_menus(pid) {
+            key(menu, VK_ESCAPE);
+        }
+    }
+    chosen
+}
+
+fn through_menus(automation: &Automation, pid: u32, menus: &IUIAutomationElement, path: &[&str]) -> Option<()> {
+    let (item, on_the_way) = path.split_last()?;
+    for label in on_the_way {
+        expand(&menu_item_soon(automation, pid, menus, label)?)?;
+        for menu in open_menus(pid) {
+            out_of_sight(menu);
+        }
+    }
+    invoke(&menu_item_soon(automation, pid, menus, item)?)
+}
+
+/// A menu item, in the window or in one of the menus open over it.
+fn menu_item_soon(automation: &Automation, pid: u32, menus: &IUIAutomationElement, label: &str) -> Option<IUIAutomationElement> {
+    soon(WAIT, || {
+        automation.menu_item(menus, label).or_else(|| {
+            open_menus(pid)
+                .into_iter()
+                .find_map(|menu| automation.window(menu).and_then(|menu| automation.menu_item(&menu, label)))
+        })
+    })
+}
+
+/// Every step of a Qt list, read one at a time as the arrow keys posted to
+/// `window` take them while `typing`, the list's own typing box, has the
+/// keyboard: as it opens, then down to the end, then up to the top, each
+/// as `read` gives it. A read can land half way through a step, so a change
+/// counts once two reads agree on it. An end is where a step changes
+/// nothing, and a step that hasn't shown within `step` gets `end` more
+/// before it counts as the end. Proven on RPCS3's Skylander Creator
+/// (docs/what-we-verified.md, "Driving RPCS3's portal from outside works",
+/// 5 October 2026). `None` when the typing box won't take the keyboard.
+pub fn step_through<T: PartialEq + Clone>(
+    window: HWND,
+    typing: &IUIAutomationElement,
+    step: Duration,
+    end: Duration,
+    read: impl Fn() -> T,
+) -> Option<Vec<T>> {
+    unsafe { typing.SetFocus() }.ok()?;
+    let mut now = read();
+    let mut seen = vec![now.clone()];
+    for arrow in [VK_DOWN, VK_UP] {
+        loop {
+            key(window, arrow);
+            let moved = || {
+                let first = read();
+                (first != now && read() == first).then_some(first)
+            };
+            let Some(next) = soon(step, moved).or_else(|| soon(end, moved)) else {
+                break;
+            };
+            seen.push(next.clone());
+            now = next;
+        }
+    }
+    Some(seen)
 }
 
 pub fn process_of(window: HWND) -> u32 {

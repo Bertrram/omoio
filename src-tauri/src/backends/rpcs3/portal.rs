@@ -31,7 +31,7 @@ use crate::backends::qt::{
 };
 use crate::core::figures::{self, Character};
 use std::path::Path;
-use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::sync::{Mutex, MutexGuard, PoisonError, TryLockError};
 use std::time::Duration;
 #[cfg(test)]
 use std::time::Instant;
@@ -74,8 +74,9 @@ const MAKER_BOX: &str = "gui_application.skylanders_creator.QLineEdit";
 const MAKER_BUTTON: &str = "gui_application.skylanders_creator.QPushButton";
 const MAKER_LIST: &str = "gui_application.skylanders_creator.QComboBox";
 const MAKER_TYPING: &str = "gui_application.skylanders_creator.QComboBox.QLineEdit";
-const FILE_NAME: &str = "gui_application.QFileDialog.fileNameEdit";
-const FILE_BUTTON: &str = "gui_application.QFileDialog.buttonBox.QPushButton";
+/// Qt's own file windows, the same for every one of RPCS3's managers.
+pub(super) const FILE_NAME: &str = "gui_application.QFileDialog.fileNameEdit";
+pub(super) const FILE_BUTTON: &str = "gui_application.QFileDialog.buttonBox.QPushButton";
 
 const LOOKS_DIFFERENT: &str = "RPCS3's portal looks different from what Omoio knows.";
 const NOT_READY: &str = "RPCS3's portal isn't ready yet. Try again in a moment.";
@@ -83,14 +84,14 @@ const LOAD_FAILED: &str = "RPCS3 couldn't put that figure on the portal. It may 
 const MAKE_FAILED: &str = "RPCS3 couldn't make that figure. Try again.";
 
 /// How long RPCS3 may take to show its main window after it starts.
-const START_WAIT: Duration = Duration::from_secs(30);
+pub(super) const START_WAIT: Duration = Duration::from_secs(30);
 /// How long one step through the figure maker's list may take to show. The
 /// list stops moving at either end, which is how its ends are found, so a
 /// step that hasn't shown by then gets `END_WAIT` more before it counts as
 /// the end: a game starting can keep RPCS3 too busy to answer at once, and
 /// a list cut short would be kept until RPCS3 updates.
-const STEP_WAIT: Duration = Duration::from_millis(300);
-const END_WAIT: Duration = Duration::from_secs(1);
+pub(super) const STEP_WAIT: Duration = Duration::from_millis(300);
+pub(super) const END_WAIT: Duration = Duration::from_secs(1);
 
 /// How long the portal server may take to answer once RPCS3's main window
 /// shows. RPCS3 starts it before that window and again as the game boots
@@ -103,11 +104,22 @@ const SERVER_RETRY: Duration = Duration::from_millis(100);
 /// starts and a figure the user picked meanwhile would each open windows the
 /// other is waiting for, and one clears away the windows another left open.
 /// The server's errands take their turn too, so a figure picked as the game
-/// starts waits until it is known which way it goes.
+/// starts waits until it is known which way it goes. The Infinity Base's
+/// errands (infinity.rs) take the same turn, as they work the same windows.
 static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
 
-fn turn() -> MutexGuard<'static, ()> {
+pub(super) fn turn() -> MutexGuard<'static, ()> {
     ONE_AT_A_TIME.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// The turn when no errand has it, for something that only gets a manager
+/// ready and so never waits behind an errand already at work on it.
+pub(super) fn free_turn() -> Option<MutexGuard<'static, ()>> {
+    match ONE_AT_A_TIME.try_lock() {
+        Ok(turn) => Some(turn),
+        Err(TryLockError::Poisoned(poisoned)) => Some(poisoned.into_inner()),
+        Err(TryLockError::WouldBlock) => None,
+    }
 }
 
 /// The RPCS3 whose start `prepare` saw, and whether its portal server
@@ -211,7 +223,7 @@ fn press(button: &IUIAutomationElement, window: HWND) -> Result<(), String> {
     qt::press(button, window).ok_or_else(|| LOOKS_DIFFERENT.to_string())
 }
 
-fn main_window(pid: u32) -> Option<HWND> {
+pub(super) fn main_window(pid: u32) -> Option<HWND> {
     all_windows(pid).into_iter().find(|&window| title(window).starts_with(MAIN_TITLE))
 }
 
@@ -224,12 +236,24 @@ fn owned_by_rpcs3(pid: u32, window: HWND) -> bool {
 /// A window RPCS3 put up by itself, such as an error: one of its dialogs
 /// other than those Omoio opens. Qt's menus, titled "RPCS3" like the
 /// program, are windows of their own kind.
-fn is_message(pid: u32, window: HWND) -> bool {
+pub(super) fn is_message(pid: u32, window: HWND) -> bool {
     let title = title(window);
     owned_by_rpcs3(pid, window)
         && !title.is_empty()
         && !class(window).contains("Popup")
-        && ![MANAGER, CREATOR, OPEN_FIGURE, SAVE_FIGURE].contains(&title.as_str())
+        && !opened_by_omoio(&title)
+}
+
+/// Whether one of RPCS3's windows is one Omoio opens, by its title: the
+/// Skylanders Manager's here, and the Infinity Manager's (infinity.rs). The
+/// Infinity Manager is owned by RPCS3's main window and titled like any of
+/// its messages (`infinity_dialog::get_dlg`, rpcs3qt/main_window.cpp lines
+/// 3211 to 3215, and infinity_dialog.cpp line 718, RPCS3/rpcs3 b2e52d6,
+/// read 4 November 2026), so without its titles here the game would be
+/// left deaf after the base menu, with the keyboard on the manager, and
+/// Return would be pressed on its figure maker.
+fn opened_by_omoio(title: &str) -> bool {
+    [MANAGER, CREATOR, OPEN_FIGURE, SAVE_FIGURE].contains(&title) || super::infinity::WINDOWS.contains(&title)
 }
 
 /// Hands the keyboard back to the game's window when one of RPCS3's own
@@ -266,7 +290,7 @@ pub fn give_back_to_game(pid: u32) {
 
 /// Closes a message RPCS3 put up, so it doesn't sit over the game, and says
 /// whether there was one.
-fn dismiss_message(pid: u32) -> bool {
+pub(super) fn dismiss_message(pid: u32) -> bool {
     let Some(message) = showing(pid).into_iter().find(|&w| is_message(pid, w)) else {
         return false;
     };
@@ -280,12 +304,18 @@ fn dismiss_message(pid: u32) -> bool {
 /// figure maker. Each is modal, and the manager's buttons would open another
 /// over it. A message that won't close is left after a few tries.
 fn put_away_leftovers(pid: u32) {
+    put_away(pid, &[OPEN_FIGURE, SAVE_FIGURE, CREATOR]);
+}
+
+/// Closes RPCS3's messages, then the windows titled as in `leftovers`, in
+/// that order: a file window before the figure maker it opened over.
+pub(super) fn put_away(pid: u32, leftovers: &[&str]) {
     for _ in 0..3 {
         if !dismiss_message(pid) {
             break;
         }
     }
-    for leftover in [OPEN_FIGURE, SAVE_FIGURE, CREATOR] {
+    for &leftover in leftovers {
         for window in showing(pid).into_iter().filter(|&w| title(w) == leftover) {
             key(window, VK_ESCAPE);
             gone(window);
@@ -742,6 +772,21 @@ mod tests {
         know_kept_names(&file);
         let _ = std::fs::remove_file(&file);
         assert_eq!(named(&[Some((16, 0)), None, Some((999, 0))]), ["Spyro", "", "Unknown (Id:999 Var:0)"]);
+    }
+
+    #[test]
+    fn the_managers_windows_are_omoios_and_rpcs3s_messages_are_not() {
+        for title in ["Skylanders Manager", "Skylander Creator", "Select Skylander File", "Create Skylander File"] {
+            assert!(opened_by_omoio(title), "{title}");
+        }
+        for title in ["Infinity Manager", "Figure Creator", "Select Infinity File", "Create Figure File"] {
+            assert!(opened_by_omoio(title), "{title}");
+        }
+        // RPCS3's own messages over the Infinity Manager and its figure
+        // maker (infinity_dialog.cpp lines 866, 873 and 589).
+        for title in ["Failed to open the figure file!", "Failed to read the figure file!", "Failed to create figure file!"] {
+            assert!(!opened_by_omoio(title), "{title}");
+        }
     }
 
     #[test]

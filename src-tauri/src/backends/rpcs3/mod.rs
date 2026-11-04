@@ -5,6 +5,8 @@ pub mod firmware;
 pub mod fixes;
 pub mod game_config;
 pub mod graphics;
+#[cfg(windows)]
+mod infinity;
 mod keyboard;
 pub mod launch;
 #[cfg(windows)]
@@ -421,6 +423,13 @@ impl super::EmulatorBackend for Rpcs3 {
             // RPCS3's keyboard handler puts the mouse moving on a stick
             // (controllers.rs).
             mouse_aims: true,
+            // RPCS3 always emulates one Infinity Base and one Toy Pad,
+            // unless a real one is plugged in (`get_num_emu_devices`,
+            // Emu/Io/Infinity.cpp lines 380 to 383 and Emu/Io/Dimensions.cpp
+            // lines 573 to 576; Emu/Cell/lv2/sys_usbd.cpp lines 189 and 557
+            // to 566; RPCS3/rpcs3 b2e52d6, read 4 November 2026).
+            infinity: true,
+            toypad: true,
         }
     }
 
@@ -467,6 +476,59 @@ impl super::EmulatorBackend for Rpcs3 {
         file: &Path,
     ) -> Result<Vec<String>, String> {
         portal::create(pid, slot, character, file)
+    }
+
+    fn toy_places(&self, pid: u32, toy: crate::core::toys::Toy) -> Result<Vec<String>, String> {
+        match toy {
+            crate::core::toys::Toy::Infinity => infinity::places(pid),
+            _ => Err(super::NO_TOY.to_string()),
+        }
+    }
+
+    fn toy_load(&self, pid: u32, toy: crate::core::toys::Toy, place: usize, figure: &Path) -> Result<Vec<String>, String> {
+        match toy {
+            crate::core::toys::Toy::Infinity => infinity::load(pid, place, figure),
+            _ => Err(super::NO_TOY.to_string()),
+        }
+    }
+
+    fn toy_remove(&self, pid: u32, toy: crate::core::toys::Toy, place: usize) -> Result<Vec<String>, String> {
+        match toy {
+            crate::core::toys::Toy::Infinity => infinity::remove(pid, place),
+            _ => Err(super::NO_TOY.to_string()),
+        }
+    }
+
+    fn toy_list(
+        &self,
+        app: &AppHandle,
+        pid: u32,
+        toy: crate::core::toys::Toy,
+    ) -> Result<Vec<crate::core::toys::ToyFigure>, String> {
+        match toy {
+            crate::core::toys::Toy::Infinity => infinity::list(app, pid),
+            _ => Err(super::NO_TOY.to_string()),
+        }
+    }
+
+    fn toy_create(
+        &self,
+        pid: u32,
+        toy: crate::core::toys::Toy,
+        place: usize,
+        figure: &crate::core::toys::ToyFigure,
+        file: &Path,
+    ) -> Result<Vec<String>, String> {
+        match toy {
+            crate::core::toys::Toy::Infinity => infinity::create(pid, place, figure, file),
+            _ => Err(super::NO_TOY.to_string()),
+        }
+    }
+
+    fn ready_toy(&self, pid: u32, toy: crate::core::toys::Toy) {
+        if toy == crate::core::toys::Toy::Infinity {
+            infinity::ready(pid);
+        }
     }
 
     fn is_game_window(&self, title: &str) -> bool {

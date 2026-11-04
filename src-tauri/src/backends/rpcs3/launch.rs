@@ -1,6 +1,8 @@
 //! Telling RPCS3 about a game and starting it.
 
+use crate::core::console::Console;
 use crate::core::library::Game;
+use crate::core::toys::{self, Toy};
 use crate::process_watch::Launched;
 use std::path::{Path, PathBuf};
 use tauri::AppHandle;
@@ -291,6 +293,16 @@ fn switch_off(app: &AppHandle, key: &str) {
     }
 }
 
+/// Whether a game starts with RPCS3's main window. --no-gui keeps it out of
+/// the way: the user asked to play a game, not to meet the emulator. But
+/// RPCS3 fills its Skylanders portal and its Infinity Base only from their
+/// managers, which open from that window's Manage menu (portal.rs and
+/// infinity.rs), so a game played with either starts with it, and Omoio
+/// hides it.
+fn with_main_window(toy: Option<Toy>) -> bool {
+    matches!(toy, Some(Toy::Skylanders | Toy::Infinity))
+}
+
 pub fn launch(app: &AppHandle, game: &Game) -> Result<Launched, String> {
     let exe = super::exe_path(app)?;
     if !exe.exists() {
@@ -322,20 +334,19 @@ pub fn launch(app: &AppHandle, game: &Game) -> Result<Launched, String> {
     keep_pad_to_the_game(app);
     leave_fullscreen_to_omoio(app);
 
-    // --no-gui keeps RPCS3's own window out of the way: the user asked to play
-    // a game, not to meet the emulator. A Skylanders game needs that window
-    // for its portal, so it starts with it and Omoio hides it; see portal.rs.
     // Spawned rather than waited on, so Omoio stays usable while the game runs.
-    let skylanders = crate::core::figures::is_skylanders(&game.title);
+    let toy = toys::toy_of(Console::Ps3, &game.title_id, &game.title);
     let mut command = super::command(&exe);
-    if skylanders {
+    if with_main_window(toy) {
         command.env("QT_QPA_PLATFORM", super::portal::QT_PLATFORM);
     } else {
         command.arg("--no-gui");
     }
     let child = command.arg(&boot).spawn().map_err(|e| e.to_string())?;
-    if skylanders {
-        super::portal::prepare(child.id());
+    match toy {
+        Some(Toy::Skylanders) => super::portal::prepare(child.id()),
+        Some(Toy::Infinity) => super::infinity::prepare(child.id()),
+        _ => {}
     }
     // Before `child` is dropped as this returns, which closes the handle
     // the spawn gave it.
@@ -538,6 +549,19 @@ mod tests {
     }
 
     #[test]
+    fn a_game_played_with_a_toy_starts_with_rpcs3s_window() {
+        let toy = |title_id: &str, title: &str| toys::toy_of(Console::Ps3, title_id, title);
+        assert!(with_main_window(toy("BLUS31006", "Skylanders Giants")));
+        assert!(with_main_window(toy("BLUS30977", "Disney Infinity")));
+        assert!(with_main_window(toy("BLES02064", "Disney Infinity [2.0]")));
+        assert!(with_main_window(toy("BLJS10323", "Disney Infinity 3.0")));
+        assert!(!with_main_window(toy("BCES00850", "LittleBigPlanet 2")));
+        // "Infinity" alone is no Disney Infinity game.
+        assert!(!with_main_window(toy("", "Ace Combat Infinity")));
+        assert!(!with_main_window(None));
+    }
+
+    #[test]
     fn finds_the_binary_in_both_dump_shapes() {
         let root = std::env::temp_dir().join(format!("omoio-eboot-{}", std::process::id()));
         let disc = root.join("disc");
@@ -562,9 +586,10 @@ mod tests {
 /// when it is the image's key. Whether a key file fits only RPCS3 can tell,
 /// by decrypting with it, which Omoio never does. RPCS3 then never opens the
 /// game's window: it logs why (Emu/System.cpp, `check_disc_key`) and, with
-/// --no-gui, shows its own error, while a Skylanders game, started with its
-/// window hidden, shows nothing at all (rpcs3.cpp, the boot from the command
-/// line; RPCS3/rpcs3 c365ea7, read 27 October 2026).
+/// --no-gui, shows its own error, while a game started with its main window
+/// hidden, as a Skylanders or Disney Infinity game is, shows nothing at all
+/// (rpcs3.cpp, the boot from the command line; RPCS3/rpcs3 c365ea7, read 27
+/// October 2026).
 pub fn refused_image(app: &AppHandle, since: std::time::SystemTime) -> Option<&'static str> {
     let log = super::install_dir(app).ok()?.join("log").join("RPCS3.log");
     key_refusal(&this_run(&log, since))
