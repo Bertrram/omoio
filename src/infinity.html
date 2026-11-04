@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Infinity Base</title>
+  </head>
+  <body>
+    <!-- The Disney Infinity base menu, in the same window as the portal menu
+         and in its chrome (src/styles/portal.css paints #portal and the
+         portal-* classes). Shown the moment the window opens, until the menu
+         has asked the emulator what is on the base. -->
+    <div id="portal">
+      <div class="portal-panel" role="dialog" aria-label="Infinity Base">
+        <div class="portal-loading" role="status">
+          <span class="portal-spinner" aria-hidden="true"></span>
+          <p class="portal-loading-title">Loading the base</p>
+          <p class="portal-loading-note">Please wait a moment.</p>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="/infinity.ts"></script>
+  </body>
+</html>

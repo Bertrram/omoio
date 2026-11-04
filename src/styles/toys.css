@@ -1,0 +1,322 @@
+/* The menus for the toys that aren't Skylanders, in the portal menu's window
+   and chrome (portal.css): the Disney Infinity base, drawn as the base is,
+   beside the list of what goes in the place picked. Sizes follow the
+   window's height, since the menu fills a TV as well as a laptop. */
+
+.toy-panel {
+  --spot-big: clamp(92px, 14.5vh, 140px);
+  --spot-small: clamp(60px, 8.6vh, 84px);
+}
+
+.toy-game {
+  font-size: 17px;
+  color: var(--mute);
+}
+
+/* The base couldn't be read: in the head, until it is, since a notice goes
+   by itself and the base would only look empty. */
+.toy-unread {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--warn);
+}
+
+.toy-body {
+  display: grid;
+  flex: 1;
+  grid-template-columns: minmax(400px, 40%) minmax(0, 1fr);
+  min-height: 0;
+  border-top: 1px solid var(--line);
+}
+
+/* ---- the base ---- */
+
+/* The hexagon above, Player One's pad and Player Two's below it, each with
+   its two Power Discs under the character. */
+.toy-base {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  align-content: center;
+  gap: clamp(14px, 3vh, 32px) 8px;
+  padding: 20px 16px;
+  overflow: hidden;
+  border-right: 1px solid var(--line);
+  background: radial-gradient(ellipse at 50% 45%, var(--brand-soft), transparent 70%);
+}
+
+.toy-hexagon {
+  display: flex;
+  grid-column: 1 / -1;
+  justify-content: center;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.toy-player {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.toy-abilities {
+  display: flex;
+  gap: 4px;
+}
+
+.toy-spot {
+  --size: var(--spot-small);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  width: calc(var(--size) + 44px);
+  padding: 0;
+  background: none;
+  border: 0;
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+
+.toy-spot.big {
+  --size: var(--spot-big);
+}
+
+/* Places 1 and 2 sit level with the middle of the hexagon's own place, with
+   room for their longer names, which the row has to spare. */
+.toy-hexagon .toy-spot:not(.big) {
+  width: calc(var(--size) + 64px);
+  margin-top: calc((var(--spot-big) - var(--spot-small)) / 2);
+}
+
+.toy-spot-shape {
+  position: relative;
+  width: var(--size);
+  height: var(--size);
+  margin-bottom: 4px;
+}
+
+.toy-spot-shape > svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+/* An empty place is a dashed outline with what it takes drawn faintly in
+   it; one with a figure on is solid, in the colour tiles on the base have;
+   the one picked has the ring a picked tile has. */
+.toy-edge {
+  fill: var(--raise);
+  stroke: var(--line2);
+  stroke-width: 2;
+  stroke-dasharray: 7 6;
+  vector-effect: non-scaling-stroke;
+}
+
+.toy-spot.on .toy-edge {
+  fill: var(--raise2);
+  stroke: var(--go);
+  stroke-width: 3;
+  stroke-dasharray: none;
+}
+
+.toy-spot.sel .toy-edge {
+  stroke: var(--ink);
+  stroke-width: 5;
+  stroke-dasharray: none;
+}
+
+.toy-spot-piece {
+  position: absolute;
+  inset: 27%;
+  color: var(--tint);
+}
+
+.toy-spot-piece svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  filter: drop-shadow(0 4px 12px color-mix(in srgb, var(--tint) 45%, transparent));
+}
+
+.toy-spot:not(.on) .toy-spot-piece {
+  color: var(--dim);
+  opacity: 0.55;
+}
+
+.toy-spot:not(.on) .toy-spot-piece svg {
+  filter: none;
+}
+
+.toy-spot-label,
+.toy-spot-name {
+  width: 100%;
+  overflow: hidden;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.toy-spot-label {
+  font-size: 13px;
+  color: var(--mute);
+}
+
+.toy-spot.sel .toy-spot-label {
+  color: var(--ink);
+}
+
+.toy-spot-name {
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.toy-spot-name.empty {
+  font-weight: 500;
+  color: var(--dim);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .toy-spot:hover:not(.sel) .toy-edge {
+    stroke: var(--mute);
+  }
+}
+
+/* Feedback on pointer-down. A pad press has none: the menu is drawn again
+   at once. */
+@media (prefers-reduced-motion: no-preference) {
+  .toy-spot-shape,
+  .toy-off {
+    transition: transform 160ms var(--ease-out);
+  }
+
+  .toy-spot:active .toy-spot-shape,
+  .toy-off:active {
+    transform: scale(0.96);
+  }
+}
+
+/* ---- the place picked, and what goes in it ---- */
+
+.toy-column {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.toy-place-head {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--line);
+}
+
+.toy-place-words {
+  flex: 1;
+  min-width: 0;
+}
+
+.toy-place-name {
+  font-size: 21px;
+  font-weight: 700;
+}
+
+.toy-place-takes {
+  margin-top: 2px;
+  font-size: 15px;
+  color: var(--mute);
+}
+
+/* What is on the place, as the button that takes it off. */
+.toy-off {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  max-width: 45%;
+  padding: 8px 12px;
+  background: var(--raise2);
+  border: 1px solid var(--line2);
+  border-radius: var(--r);
+  color: var(--mute);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.toy-off-name {
+  min-width: 0;
+  overflow: hidden;
+  margin-right: 4px;
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.toy-off kbd {
+  flex: none;
+  padding: 2px 8px;
+  border: 1px solid var(--line2);
+  border-radius: 5px;
+  color: var(--ink);
+  font: inherit;
+  font-weight: 700;
+}
+
+.toy-off:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .toy-off:hover {
+    border-color: var(--mute);
+  }
+}
+
+.toy-group {
+  margin: 26px 0 12px;
+  font-size: 17px;
+  font-weight: 650;
+}
+
+.toy-group:first-child {
+  margin-top: 0;
+}
+
+.toy-group-note {
+  margin-left: 10px;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--mute);
+}
+
+.toy-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 22px 18px;
+}
+
+/* A tile scrolled to shows its group's heading above it when it is in the
+   group's first row. */
+.toy-list .portal-item {
+  scroll-margin: 52px 18px 18px;
+}
+
+.toy-quiet {
+  margin-bottom: 4px;
+}
+
+/* Each kind of piece's colour, for its drawing and the line under its name.
+   The kinds go by their shapes as much as by these. */
+.toy-character { --tint: var(--ink); }
+.toy-play_set { --tint: var(--brand-text); }
+.toy-hex_disc { --tint: var(--brand-lit); }
+.toy-round_disc { --tint: var(--brand-text); }
+.toy-unknown { --tint: var(--mute); }
