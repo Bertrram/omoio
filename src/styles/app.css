@@ -1184,6 +1184,14 @@ img.cover-behind {
 .card .meta .region:last-child {
   margin-left: auto;
 }
+/* Played in Omoio, beside the rating. On a narrow tile it is what gives way,
+   and its title says the whole of it. */
+.meta .played {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .card-actions {
   margin-top: 4px;
 }

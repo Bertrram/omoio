@@ -23,6 +23,7 @@ import {
   CONSOLE_SHORT,
   EMULATOR_OF,
   type Game,
+  type Played,
 } from "../api";
 import { fitCovers, placeholderArt } from "./art";
 import { firmwareActions } from "./firmware";
@@ -67,6 +68,19 @@ function icon(paths: string, className = "d-ico"): string {
 /// A row that opens a sheet, with where things stand on its right.
 function listRow(id: string, paths: string, label: string): string {
   return `<button class="d-row" id="detail-${id}">${icon(paths)}<span class="d-row-k">${label}</span><span class="d-row-v"></span>${icon(ICON.chevron, "d-chev")}</button>`;
+}
+
+/// For a game played in Omoio, the line under its list's rating. The rating
+/// stays, since anyone can look it up; this says why it plays well all the
+/// same. The same on a library game's page and a catalogue listing's.
+function playedNote(played: Played): HTMLElement {
+  const note = document.createElement("div");
+  note.className = "note plain";
+  const mark = document.createElement("span");
+  mark.className = "status go tiny";
+  mark.textContent = played.label;
+  note.append(mark, " ", played.reason);
+  return note;
 }
 
 /// What to press when a Wii game asks you to move the remote.
@@ -459,6 +473,9 @@ function fill(body: HTMLElement, hero: HTMLElement, game: Game): void {
     }
   };
   if (offers.compatibility) void showCompat();
+  // Said whether or not the page shows a rating. Only RPCS3's shows here, so
+  // a Wii U game played in Omoio has this line on its own.
+  if (game.tested) compat.after(playedNote(game.tested));
 
   const showPackCount = async () => {
     const packs = await communityPacks(game.title_id);
@@ -577,6 +594,7 @@ function fillListing(body: HTMLElement, hero: HTMLElement, { listing }: Catalogu
   badge.textContent = listing.status.label || "No result";
   badge.className = `status ${listing.status.tone || "mute"}`;
   compatNote.textContent = listing.status.explanation || "Nobody has reported on this game yet.";
+  if (listing.tested) compatNote.after(playedNote(listing.tested));
   if (listing.portal_note) {
     const noPortal = body.querySelector<HTMLElement>("#listing-no-portal")!;
     noPortal.textContent = listing.portal_note;

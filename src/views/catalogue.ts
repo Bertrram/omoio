@@ -77,6 +77,13 @@ function card(listing: Listing, covers: boolean, region: string, selected: boole
   if (listing.status.label) {
     meta.appendChild(tag(`status ${listing.status.tone} tiny`, listing.status.label));
   }
+  // Beside the list's rating, which stays. A tile has no room for the
+  // reason, so it is the tag's title; the side panel says it in full.
+  if (listing.tested) {
+    const played = tag("status go tiny played", listing.tested.label);
+    played.title = listing.tested.reason;
+    meta.appendChild(played);
+  }
 
   if (covers) {
     // RAWG's art is wide, like the tile, so it fills it.

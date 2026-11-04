@@ -6,6 +6,7 @@
 
 use crate::core::console::{Console, Features};
 use crate::core::figures::{has_portal_menu, is_skylanders, portal_menu_note};
+use crate::core::tested::{played, Played};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -79,6 +80,9 @@ pub struct Listing {
     /// For Imaginators, what works of the figures an emulator makes
     /// (`figures::made_figures_note`).
     pub figures_note: Option<&'static str>,
+    /// For a game played in Omoio, what its card and page say beside
+    /// `status`, which stays the list's own (`tested::played`).
+    pub tested: Option<Played>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -324,6 +328,7 @@ fn listing_of(mut entries: Vec<Entry>) -> Listing {
         portal_menu: is_skylanders(&first.name).then(|| has_portal_menu(first.console, &first.name)),
         portal_note: portal_menu_note(first.console, &first.name),
         figures_note: crate::core::figures::made_figures_note(first.console, &first.name),
+        tested: played(first.console, &first.name),
     }
 }
 
@@ -431,6 +436,37 @@ mod tests {
         assert_eq!((on_wii_u.portal_menu, on_wii_u.portal_note.as_deref()), (Some(true), None));
         let batman = find(Console::Ps3, "Batman: Arkham Origins");
         assert_eq!((batman.portal_menu, batman.portal_note.as_deref()), (None, None));
+    }
+
+    #[test]
+    fn a_game_played_in_omoio_says_so_beside_the_lists_rating() {
+        let listings = group(vec![
+            titled(Console::WiiU, "swapforce", "Skylanders: Swap Force", vec!["EU", "US"], "warn"),
+            ps3("BLES01860", "Skylanders SWAP Force™", "EU", "warn"),
+            ps3("BLES02055", "Skylanders Trap Team", "EU", "warn"),
+            ps3("BLES01784", "Batman: Arkham Origins", "EU", "go"),
+        ]);
+        let find = |console: Console, name: &str| {
+            listings.iter().find(|l| l.console == console && l.name == name).unwrap()
+        };
+
+        for swap_force in [find(Console::WiiU, "Skylanders: Swap Force"), find(Console::Ps3, "Skylanders SWAP Force™")] {
+            assert_eq!(swap_force.status.tone, "warn", "the list's rating stays");
+            let line = swap_force.tested.expect("SWAP Force has been played in Omoio");
+            assert_eq!(line.label, "Played in Omoio");
+            assert!(line.reason.ends_with('.'), "{}", line.reason);
+        }
+        assert!(find(Console::Ps3, "Skylanders SWAP Force™").tested.unwrap().reason.contains("7 October 2026"));
+        assert_eq!(find(Console::Ps3, "Skylanders Trap Team").tested, None);
+        assert_eq!(find(Console::Ps3, "Batman: Arkham Origins").tested, None);
+
+        // What the interface reads: the line, or null where there is none.
+        let json = serde_json::to_value(&listings).unwrap();
+        let tested_of = |name: &str| {
+            json.as_array().unwrap().iter().find(|l| l["name"] == name).unwrap()["tested"].clone()
+        };
+        assert_eq!(tested_of("Skylanders: Swap Force")["label"], "Played in Omoio");
+        assert!(tested_of("Batman: Arkham Origins").is_null());
     }
 
     #[test]

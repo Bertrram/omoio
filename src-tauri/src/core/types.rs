@@ -64,6 +64,9 @@ pub struct GameEntry {
     /// For Imaginators, what works of the figures an emulator makes
     /// (`figures::made_figures_note`).
     pub figures_note: Option<&'static str>,
+    /// For a game played in Omoio, what its pages say beside the list's
+    /// rating, with or without one shown (`tested::played`).
+    pub tested: Option<crate::core::tested::Played>,
 }
 
 #[derive(Clone, Serialize)]

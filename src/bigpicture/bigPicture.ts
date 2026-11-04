@@ -861,10 +861,15 @@ function spotlight(titleId: string): void {
   meta.append(h("span", "", CONSOLE_SHORT[game.console]));
   const when = lastPlayed.get(titleId);
   if (when) meta.append(h("span", "", lastPlayedText(when)));
+  // Room for a word or two here, so a game played in Omoio says only that;
+  // its page gives the reason.
+  const played = game.tested ? h("span", "bp-status go", game.tested.label) : null;
+  if (played) meta.append(played);
   spot.replaceChildren(h("div", "bp-spot-title", game.title), meta);
   void compatibility(game)?.then((result) => {
     if (spot.dataset.game !== titleId || !result.known) return;
-    meta.append(h("span", `bp-status ${result.tone}`, result.label));
+    // The list's rating first, wherever it is shown.
+    meta.insertBefore(h("span", `bp-status ${result.tone}`, result.label), played);
   });
 }
 
@@ -1117,6 +1122,12 @@ function gamePage(titleId: string, section: Section): Screen {
         if (!result.known || !runs.isConnected) return;
         runs.append(h("span", `bp-status ${result.tone}`, result.label), h("span", "", result.explanation));
       });
+      // Said with or without a rating above it, as on the desktop.
+      if (game.tested) {
+        const played = h("div", "bp-page-runs");
+        played.append(h("span", "bp-status go", game.tested.label), h("span", "", game.tested.reason));
+        notes.append(played);
+      }
       if (game.console === "wii") notes.append(wiiMovesNote());
       if (playable(game) && family) notes.append(chordNote("while you play brings you back here."));
 

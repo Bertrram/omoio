@@ -102,6 +102,16 @@ export interface Game {
   /// For Imaginators, what works of the Senseis and Creation Crystals an
   /// emulator makes.
   figures_note: string | null;
+  /// For a game played in Omoio, what its pages say beside the list's
+  /// rating. Null for any other game.
+  tested: Played | null;
+}
+
+/// "Played in Omoio" and what was seen, for a game on Omoio's own short
+/// list. Shown beside the emulator list's rating, which stays.
+export interface Played {
+  label: string;
+  reason: string;
 }
 
 export function listGames(): Promise<Game[]> {
@@ -684,6 +694,9 @@ export interface Listing {
   portal_note: string | null;
   /// For Imaginators, what works of the figures an emulator makes.
   figures_note: string | null;
+  /// For a game played in Omoio, what its card and page say beside `status`,
+  /// which stays the list's own. Null for any other game.
+  tested: Played | null;
 }
 
 export interface CatalogueFilter {
