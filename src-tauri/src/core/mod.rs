@@ -11,6 +11,7 @@ pub mod import_warning;
 pub mod infinity;
 pub mod iso9660;
 pub mod keys;
+pub mod language;
 pub mod library;
 pub mod pad_layout;
 pub mod picked;

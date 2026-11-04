@@ -1347,9 +1347,38 @@ pub fn set_username(app: AppHandle, name: String) -> Result<String, String> {
     rpcs3::account::set_username(&app, &name)
 }
 
+/// Remembered as well as written to RPCS3, since a game language changes
+/// RPCS3's Language at every start and the pair no longer names the region
+/// (account.rs, `read`). Only once RPCS3 took it, so a region it refused is
+/// never shown as picked.
 #[tauri::command]
 pub fn set_region(app: AppHandle, id: String) -> Result<(), String> {
-    rpcs3::account::set_region(&app, &id)
+    rpcs3::account::set_region(&app, &id)?;
+    let file = settings_path(&app)?;
+    let mut settings = Settings::load(&file);
+    if let Some(spoken) = rpcs3::account::language_of_region(&id) {
+        crate::core::language::follow_region(&mut settings, spoken);
+    }
+    settings.region = Some(id);
+    settings.save(&file)
+}
+
+#[tauri::command]
+pub fn list_languages() -> Vec<crate::core::language::Choice> {
+    crate::core::language::choices()
+}
+
+/// The language games start in, or `None` for each emulator's own. Each
+/// backend reads it as a game starts, so it applies from the next game.
+#[tauri::command]
+pub fn set_game_language(app: AppHandle, id: Option<String>) -> Result<(), String> {
+    if id.as_deref().is_some_and(|id| crate::core::language::find(id).is_none()) {
+        return Err("That isn't a language Omoio knows.".to_string());
+    }
+    let file = settings_path(&app)?;
+    let mut settings = Settings::load(&file);
+    settings.game_language = id;
+    settings.save(&file)
 }
 
 /// Whether the first-run questions still need asking.

@@ -122,6 +122,8 @@ pub fn run() {
             commands::list_regions,
             commands::set_username,
             commands::set_region,
+            commands::list_languages,
+            commands::set_game_language,
             commands::needs_setup,
             commands::finish_setup,
             commands::pending_updates,

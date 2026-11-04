@@ -211,7 +211,7 @@ export function settingsScreen(kit: Kit, cap: (input: string) => string, start: 
           }
           kit.redraw(screen);
         },
-        "The language PS3 games start in."
+        "The PS3's region, and the language its games start in unless a game language is picked."
       ),
       row("gen:name", "Username", account.username || "Not set", undefined, "Changed in Settings on the desktop, where there is a keyboard.")
     );

@@ -12,9 +12,11 @@ import {
   installFirmware,
   installRpcs3,
   listGames,
+  listLanguages,
   listRegions,
   onRpcs3InstallProgress,
   revealFolder,
+  setGameLanguage,
   setGamesFolder,
   setKeepSessions,
   setRegion,
@@ -169,6 +171,7 @@ export async function renderSettings(): Promise<View> {
   // ---- the console games see ----
   const account = await getAccount();
   const regions = await listRegions();
+  const languages = await listLanguages();
 
   const nameRow = row("Username", "The name games show for you.");
   const nameInput = document.createElement("input");
@@ -188,7 +191,10 @@ export async function renderSettings(): Promise<View> {
   };
   nameRow.right.append(nameSaid, nameInput);
 
-  const regionRow = row("Region", "Sets the language PS3 games start in. It doesn't change games for other consoles.");
+  const regionRow = row(
+    "Region",
+    "Sets the PS3's region, and the language its games start in unless a game language is picked. It doesn't change games for other consoles."
+  );
   const regionSelect = document.createElement("select");
   regionSelect.className = "select";
   for (const choice of regions) {
@@ -210,7 +216,44 @@ export async function renderSettings(): Promise<View> {
   };
   regionRow.right.append(regionSaid, regionSelect);
 
-  content.appendChild(section("Console", nameRow.row, regionRow.row));
+  const languageRow = row("Game language", "The language games start in, on every console, when the game has it.");
+  // Which consoles don't have the language picked, under the hint.
+  const languageNote = document.createElement("div");
+  languageNote.className = "setting-hint";
+  languageRow.row.firstElementChild?.appendChild(languageNote);
+  const languageSelect = document.createElement("select");
+  languageSelect.className = "select";
+  const asEach = document.createElement("option");
+  asEach.value = "";
+  asEach.textContent = "As each emulator has it";
+  languageSelect.appendChild(asEach);
+  for (const choice of languages) {
+    const option = document.createElement("option");
+    option.value = choice.id;
+    option.textContent = choice.name;
+    option.selected = choice.id === settings.game_language;
+    languageSelect.appendChild(option);
+  }
+  const showNote = () => {
+    const note = languages.find((choice) => choice.id === languageSelect.value)?.note;
+    languageNote.textContent = note ?? "";
+    languageNote.classList.toggle("gone", !note);
+  };
+  showNote();
+  const languageSaid = document.createElement("span");
+  languageSaid.className = "cfg-v";
+  languageSelect.onchange = async () => {
+    showNote();
+    try {
+      await setGameLanguage(languageSelect.value || null);
+      languageSaid.textContent = "Saved";
+    } catch (err) {
+      languageSaid.textContent = typeof err === "string" ? err : "Couldn't change the game language.";
+    }
+  };
+  languageRow.right.append(languageSaid, languageSelect);
+
+  content.appendChild(section("Console", nameRow.row, regionRow.row, languageRow.row));
   content.appendChild(section("Playing", fullscreen.row, bigPicture.row, games.row));
 
   // ---- cover art ----

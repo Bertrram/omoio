@@ -68,6 +68,23 @@ pub struct Settings {
     /// for; any other has the one keyboard_pad.rs picks for it.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub mouse_aims: std::collections::BTreeMap<String, String>,
+    /// The language games start in on every console, by core::language's
+    /// id. None leaves every emulator as it is and writes nothing anywhere,
+    /// so nothing changes for someone who never picks one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub game_language: Option<String>,
+    /// What the emulators' own files held before a game language first
+    /// replaced it, by emulator ("rpcs3": config.yml's Language, "cemu":
+    /// settings.xml's console_language), put back once the setting is on its
+    /// default again and then forgotten. Those files keep what is written in
+    /// them; Dolphin's language is given for one run and needs nothing kept.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub language_kept: std::collections::BTreeMap<String, String>,
+    /// The region last picked, by its id in rpcs3/account.rs. With a game
+    /// language set, RPCS3's License Area and Language together no longer
+    /// name it, so it is remembered here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub region: Option<String>,
 }
 
 fn default_keep_sessions() -> usize {
@@ -97,6 +114,9 @@ impl Default for Settings {
             recent_toypad: Vec::new(),
             portal_button: default_portal_button(),
             mouse_aims: Default::default(),
+            game_language: None,
+            language_kept: Default::default(),
+            region: None,
         }
     }
 }
@@ -150,6 +170,9 @@ mod tests {
             recent_toypad: Vec::new(),
             portal_button: "Back".to_string(),
             mouse_aims: [("0005000010181f00".to_string(), "Right stick".to_string())].into(),
+            game_language: Some("de".to_string()),
+            language_kept: [("rpcs3".to_string(), "English (UK)".to_string())].into(),
+            region: Some("eu-en".to_string()),
         };
         settings.save(&path).unwrap();
 
@@ -163,8 +186,22 @@ mod tests {
         assert_eq!(loaded.mouse_aims["0005000010181f00"], "Right stick");
         assert_eq!(loaded.recent_figures, ["Whirlwind.sky"]);
         assert_eq!(loaded.recent_infinity, ["Mr. Incredible.bin"], "each menu's own");
+        assert_eq!(loaded.game_language.as_deref(), Some("de"));
+        assert_eq!(loaded.language_kept["rpcs3"], "English (UK)");
+        assert_eq!(loaded.region.as_deref(), Some("eu-en"));
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(!text.contains("recent_toypad"), "an empty list isn't written");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn no_game_language_writes_nothing_new() {
+        let path = temp_path("language");
+        Settings::default().save(&path).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(!text.contains("\"game_language\""));
+        assert!(!text.contains("\"language_kept\""));
+        assert!(!text.contains("\"region\""));
         let _ = std::fs::remove_file(&path);
     }
 

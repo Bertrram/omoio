@@ -362,6 +362,9 @@ export interface Settings {
   covers: boolean;
   /// The user's own RAWG key, kept on this machine only.
   rawg_key: string | null;
+  /// The language games start in, by LanguageChoice id. Absent while each
+  /// emulator keeps its own.
+  game_language?: string;
 }
 
 export function getSettings(): Promise<Settings> {
@@ -669,6 +672,23 @@ export function setUsername(name: string): Promise<string> {
 
 export function setRegion(id: string): Promise<void> {
   return invoke("set_region", { id });
+}
+
+export interface LanguageChoice {
+  id: string;
+  name: string;
+  /// Which consoles have no such language, so their games start in English.
+  /// Null when every console has it.
+  note: string | null;
+}
+
+export function listLanguages(): Promise<LanguageChoice[]> {
+  return invoke("list_languages");
+}
+
+/// Null goes back to each emulator's own language.
+export function setGameLanguage(id: string | null): Promise<void> {
+  return invoke("set_game_language", { id });
 }
 
 export function needsSetup(): Promise<boolean> {

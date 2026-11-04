@@ -109,7 +109,7 @@ async function askWhoAndWhere(sheet: HTMLElement): Promise<void> {
     <div class="setting">
       <div>
         <div class="setting-k">Region</div>
-        <div class="setting-hint">Sets the language PS3 games start in. It doesn't change games for other consoles.</div>
+        <div class="setting-hint">Sets the PS3's region, and the language its games start in unless a game language is picked in Settings. It doesn't change games for other consoles.</div>
       </div>
       <div class="row-actions">
         <select class="select" id="setup-region"></select>
