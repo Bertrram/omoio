@@ -1,7 +1,8 @@
 /* The menus for the toys that aren't Skylanders, in the portal menu's window
-   and chrome (portal.css): the Disney Infinity base, drawn as the base is,
-   beside the list of what goes in the place picked. Sizes follow the
-   window's height, since the menu fills a TV as well as a laptop. */
+   and chrome (portal.css): the Disney Infinity base and the LEGO Dimensions
+   Toy Pad, each drawn as the real one is, beside the list of what goes in
+   the place picked. Sizes follow the window's height, since the menu fills
+   a TV as well as a laptop. */
 
 .toy-panel {
   --spot-big: clamp(92px, 14.5vh, 140px);
@@ -320,3 +321,297 @@
 .toy-hex_disc { --tint: var(--brand-lit); }
 .toy-round_disc { --tint: var(--brand-text); }
 .toy-unknown { --tint: var(--mute); }
+
+/* ---- the Toy Pad ---- */
+
+/* The Toy Pad is wider than the base, three pads side by side, so its side
+   of the menu is a little wider too. */
+.toypad-panel .toy-body {
+  grid-template-columns: minmax(420px, 44%) minmax(0, 1fr);
+}
+
+/* A place's size follows the window's height and the width its side of the
+   menu has, so the three pads always fit side by side: four side places and
+   the centre's, half as large again, take six and a half of them, and the
+   pads' edges and gaps about 190px. */
+.toypad {
+  --tag: clamp(36px, min(6.8vh, calc((100cqi - 190px) / 6.5)), 76px);
+  --tag-big: calc(var(--tag) * 1.5);
+  container-type: inline-size;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  padding: 20px 16px;
+  overflow: hidden;
+  border-right: 1px solid var(--line);
+  background: radial-gradient(ellipse at 50% 45%, var(--brand-soft), transparent 70%);
+}
+
+/* The Toy Pad itself: a dark body with the left pad, the round centre pad
+   and the right pad on it, each with its name under it. */
+.toypad-deck {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 10px;
+  padding: 18px 14px 12px;
+  border: 1px solid var(--line2);
+  border-radius: 36px;
+  background: var(--void);
+  box-shadow: 0 18px 50px rgb(var(--shadow) / 0.45);
+}
+
+.toypad-side {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.toypad-pad {
+  position: relative;
+  display: grid;
+  place-items: center;
+  background: var(--raise);
+  border: 2px solid var(--line2);
+}
+
+/* The side pads round off away from the centre, as the real ones do. */
+.toypad-side.left .toypad-pad {
+  padding: 14px 12px 12px 18px;
+  border-radius: 38% 14% 14% 38% / 44% 18% 18% 44%;
+}
+
+.toypad-side.right .toypad-pad {
+  padding: 14px 18px 12px 12px;
+  border-radius: 14% 38% 38% 14% / 18% 44% 44% 18%;
+}
+
+.toypad-side.centre .toypad-pad {
+  width: calc(var(--tag-big) * 1.62);
+  height: calc(var(--tag-big) * 1.62);
+  border-radius: 50%;
+}
+
+/* The centre pad sits level with the middle of the side pads. */
+.toypad-side.centre {
+  align-self: center;
+}
+
+/* The game's light, in two layers over the pad: the colour it had before
+   the game's last command, and the new one over it, which fades or flashes.
+   The colours come from the game; a pad the game hasn't lit, or turned off,
+   shows the pad's own surface. */
+.toypad-glow {
+  --c: transparent;
+  position: absolute;
+  inset: -2px;
+  z-index: 0;
+  border: 2px solid var(--c);
+  border-radius: inherit;
+  background: radial-gradient(
+    circle at 50% 45%,
+    color-mix(in srgb, var(--c) 46%, transparent),
+    color-mix(in srgb, var(--c) 14%, transparent) 75%
+  );
+  box-shadow:
+    0 0 44px color-mix(in srgb, var(--c) 48%, transparent),
+    inset 0 0 26px color-mix(in srgb, var(--c) 40%, transparent);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.toypad-glow.from {
+  --c: var(--from, transparent);
+}
+
+.toypad-glow.lit {
+  --c: var(--lit, transparent);
+}
+
+/* A pad lit in colours the pad picks itself, which the game never names:
+   the brand colour turned through every hue, or, with motion reduced, a
+   plain light with no colour of its own. */
+.toypad-glow.lit.random {
+  --c: var(--brand);
+}
+
+.toypad-glow.lit.random.still {
+  --c: var(--ink);
+}
+
+.toypad-spots {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: repeat(2, auto);
+  gap: 6px 8px;
+}
+
+/* A side pad's first place sits above its other two, as the emulators'
+   windows have it. */
+.toypad-side:not(.centre) .toypad-spots > :first-child {
+  grid-column: 1 / -1;
+  justify-self: center;
+}
+
+.toypad-side.centre .toypad-spots {
+  grid-template-columns: auto;
+}
+
+.toypad-spot {
+  --size: var(--tag);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  width: calc(var(--size) + 14px);
+  padding: 0;
+  background: none;
+  border: 0;
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+
+.toypad-side.centre .toypad-spot {
+  --size: var(--tag-big);
+  width: calc(var(--size) + 24px);
+}
+
+/* A place is a round tag: dashed while empty, with the pad's light showing
+   through it; solid in the colour tiles on the Toy Pad have once a tag is
+   on; the one picked has the ring a picked tile has. */
+.toypad-tag {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: var(--size);
+  height: var(--size);
+  box-sizing: border-box;
+  border: 2px dashed var(--line2);
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--void) 62%, transparent);
+  color: var(--tint, var(--dim));
+}
+
+.toypad-tag svg {
+  width: 56%;
+  height: 56%;
+  filter: drop-shadow(0 4px 10px color-mix(in srgb, var(--tint) 45%, transparent));
+}
+
+.toypad-spot.on .toypad-tag {
+  border: 3px solid var(--go);
+  background: color-mix(in srgb, var(--raise2) 88%, transparent);
+}
+
+.toypad-spot.sel .toypad-tag {
+  box-shadow:
+    0 0 0 3px var(--void),
+    0 0 0 6px var(--ink);
+}
+
+.toypad-spot-name {
+  width: 100%;
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 650;
+  text-align: center;
+  text-overflow: ellipsis;
+  text-shadow: 0 1px 4px rgb(var(--shadow) / 0.8);
+  white-space: nowrap;
+}
+
+.toypad-spot-name.empty {
+  font-weight: 500;
+  color: var(--mute);
+}
+
+/* While a tag is held to be moved, the places it can go light in the brand
+   colour, its own place keeps a dashed ring with the tag faint in it, and
+   the places that hold another tag step back. */
+.toypad-spot.target .toypad-tag {
+  border: 3px solid var(--brand-lit);
+  background: color-mix(in srgb, var(--brand) 24%, transparent);
+}
+
+.toypad-spot.target:not(.on):not(.ghost) .toypad-tag {
+  color: var(--brand-text);
+}
+
+.toypad-spot.from .toypad-tag {
+  border-style: dashed;
+}
+
+.toypad-spot.from .toypad-tag svg,
+.toypad-spot.ghost .toypad-tag svg {
+  opacity: 0.5;
+}
+
+.toypad-spot.blocked {
+  opacity: 0.4;
+}
+
+.toypad-caption {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-height: 36px;
+  font-size: 13px;
+  color: var(--mute);
+}
+
+.toypad-pad-name {
+  font-weight: 600;
+}
+
+.toypad-pad-state {
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.toypad-line {
+  max-width: 36em;
+  margin: 0;
+  font-size: 15px;
+  text-align: center;
+  color: var(--mute);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .toypad-spot:hover:not(.sel):not(.on) .toypad-tag {
+    border-color: var(--mute);
+  }
+}
+
+/* Feedback on pointer-down. A pad press has none: the menu is drawn again
+   at once. */
+@media (prefers-reduced-motion: no-preference) {
+  .toypad-tag {
+    transition: transform 160ms var(--ease-out);
+  }
+
+  .toypad-spot:active .toypad-tag {
+    transform: scale(0.96);
+  }
+}
+
+/* The list waits while a tag is held: what is pressed goes to the places. */
+.toypad-moving .toy-list {
+  opacity: 0.35;
+}
+
+/* A line that tells what a group is for, under its heading. */
+.toypad-group-line {
+  margin: -6px 0 14px;
+  font-size: 15px;
+  color: var(--mute);
+}
+
+/* Each kind of tag's colour, for its drawing and the line under its name. */
+.toy-minifigure { --tint: var(--ink); }
+.toy-vehicle { --tint: var(--brand-text); }
+.toy-blank_tag { --tint: var(--brand-lit); }

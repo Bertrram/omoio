@@ -11,9 +11,15 @@ export default defineConfig({
     outDir: "../dist",
     emptyOutDir: true,
     // The app, and the menus that sit over a running game, one page to each
-    // toy: the Skylanders portal and the Disney Infinity base.
+    // toy: the Skylanders portal, the Disney Infinity base and the LEGO
+    // Dimensions Toy Pad.
     rollupOptions: {
-      input: { main: page("index.html"), portal: page("portal.html"), infinity: page("infinity.html") },
+      input: {
+        main: page("index.html"),
+        portal: page("portal.html"),
+        infinity: page("infinity.html"),
+        toypad: page("toypad.html"),
+      },
     },
   },
   // Vite options tailored for Tauri development.
