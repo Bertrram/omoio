@@ -20,13 +20,18 @@ pub struct Game {
     pub title: String,
     /// The version of the dump itself, out of its PARAM.SFO.
     pub version: Option<String>,
-    /// The official update Omoio installed, if any.
+    /// The official update Omoio installed, if any, kept as Omoio's own
+    /// record of it.
     ///
     /// An update lives in the emulator's own storage rather than in the dump,
-    /// so the dump keeps saying what it always said. RPCS3's game-data folder
-    /// does hold a version, but it is written for reasons of its own and did
-    /// not match either the disc or anything we installed, so it is not
-    /// something to read a version out of. What we put there ourselves is.
+    /// so the dump keeps saying what it always said. What runs is read from
+    /// the emulator's own files by its backend (`running_version` on
+    /// `EmulatorBackend`), since an update can go in without Omoio, and one
+    /// Omoio installed can be gone again. For RPCS3 that is the update it
+    /// boots from dev_hdd0 (backends/rpcs3/updates.rs). The VERSION a game
+    /// writes there for its own data is no update's and matches neither the
+    /// disc nor any update, which is likely what was seen on 1 September
+    /// 2026, when this said nothing in that folder was worth reading.
     #[serde(default)]
     pub update_version: Option<String>,
     pub path: PathBuf,
@@ -34,7 +39,10 @@ pub struct Game {
 }
 
 impl Game {
-    /// The version that actually runs, which is the update when there is one.
+    /// The update Omoio installed, or else the dump's own version. Only the
+    /// fallback now, for an emulator with no updates of its own for Omoio to
+    /// read (`EmulatorBackend::running_version`), whose `update_version`
+    /// stays empty, so it comes to the dump's version.
     pub fn running_version(&self) -> Option<&str> {
         self.update_version
             .as_deref()
@@ -427,11 +435,12 @@ mod tests {
     }
 
     #[test]
-    fn an_installed_update_is_the_version_that_runs() {
+    fn the_update_omoio_installed_comes_before_the_dumps_version() {
         let mut entry = game("BCES00850", "LittleBigPlanet 2");
         assert_eq!(entry.running_version(), Some("01.00"));
 
-        // The dump still says what it always said; the update is what runs.
+        // The dump still says what it always said; Omoio's note of the
+        // update comes first.
         entry.update_version = Some("01.33".to_string());
         assert_eq!(entry.running_version(), Some("01.33"));
         assert_eq!(entry.version.as_deref(), Some("01.00"));

@@ -1062,7 +1062,7 @@ function gamePage(titleId: string, section: Section): Screen {
       const info = h("div", "bp-page-info");
       const meta = h("div", "bp-page-meta");
       meta.append(h("span", "", CONSOLE_SHORT[game.console]), h("span", "bp-mono", game.title_id));
-      const version = game.update_version ?? game.version;
+      const version = game.running_version;
       if (version) meta.append(h("span", "bp-mono", `v${version}`));
       if (game.set_up && game.size_bytes > 0) meta.append(h("span", "bp-mono", formatSize(game.size_bytes)));
 

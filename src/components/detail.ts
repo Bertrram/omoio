@@ -417,7 +417,7 @@ function fill(body: HTMLElement, hero: HTMLElement, game: Game): void {
 
   // The sheet asks Sony when it opens. Opening a game should not quietly
   // make that request, so the row only shows the version it runs.
-  const running = game.update_version ?? game.version;
+  const running = game.running_version;
   const updateValue = valueOf("update");
   updateValue.classList.add("mono");
   updateValue.textContent = running ?? "unknown";

@@ -43,6 +43,10 @@ pub struct DisplayInfo {
 pub struct GameEntry {
     #[serde(flatten)]
     pub game: crate::core::library::Game,
+    /// The version the emulator runs, read from its own files where it keeps
+    /// updates of its own (`EmulatorBackend::running_version`), so the pages
+    /// show the one the patches are matched against.
+    pub running_version: Option<String>,
     pub available: bool,
     pub set_up: bool,
     /// The dump's own tile art, copied somewhere we control so it still shows

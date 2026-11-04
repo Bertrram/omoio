@@ -378,10 +378,16 @@ fn cover_for(
 
 fn entry(app: &AppHandle, game: crate::core::library::Game) -> GameEntry {
     let (cover, cover_source) = cover_for(app, &game);
-    let features = crate::backends::for_console(game.console)
-        .map(|backend| backend.features())
-        .unwrap_or_default();
+    let backend = crate::backends::for_console(game.console);
+    let features = backend.map(|backend| backend.features()).unwrap_or_default();
+    // Read now, each time the list is asked for, so the page follows an
+    // update put in through the emulator's own window too.
+    let running_version = match backend {
+        Some(backend) => backend.running_version(app, &game),
+        None => game.running_version().map(str::to_string),
+    };
     GameEntry {
+        running_version,
         set_up: game.is_set_up(),
         // A folder for most games, a single file for a Wii U disc image.
         available: game.is_set_up() && game.path.exists(),
@@ -1204,10 +1210,9 @@ pub struct UpdateProgress {
 /// installed yet, oldest first. RPCS3 refuses a package whose previous one is
 /// missing, so asking for the newest means installing them all.
 ///
-/// The version reached is recorded against the game after each one, because
-/// the update lives in the emulator's storage and the dump keeps reporting the
-/// version it shipped with. That also means a run that stops part way carries
-/// on from where it got to next time.
+/// The version reached is noted against the game after each one, as Omoio's
+/// own record of what it installed. A run that stops part way carries on next
+/// time from the version RPCS3 then runs.
 #[tauri::command]
 pub async fn install_update(
     app: AppHandle,
@@ -1219,16 +1224,14 @@ pub async fn install_update(
     let cancel = state.cancel_update.clone();
 
     let file = library_path(&app)?;
-    // What RPCS3 itself has installed comes first; the library's note of it
-    // can fall behind.
-    let installed = rpcs3::updates::installed_version(&app, &title_id)
-        .or_else(|| {
-            Library::load(&file)
-                .games()
-                .iter()
-                .find(|g| g.title_id == title_id)
-                .and_then(|g| g.update_version.clone().or_else(|| g.version.clone()))
-        })
+    // The chain starts from what RPCS3 runs, read from its own files, or the
+    // dump's own version when it runs no update, since each package expects
+    // the one before it to be the one installed. The library's note of what
+    // Omoio installed can fall behind, or outlive an update RPCS3 no longer
+    // has.
+    let installed = game_and_emulator(&app, &title_id)
+        .ok()
+        .and_then(|(backend, game)| backend.running_version(&app, &game))
         .unwrap_or_default();
     // Already there, so only the library's note needs catching up.
     if installed == update.version {
@@ -1284,7 +1287,7 @@ pub async fn install_update(
     Ok(())
 }
 
-/// Notes in the library the update a game now runs.
+/// Notes in the library the update Omoio installed.
 fn note_update(file: &Path, title_id: &str, version: String) -> Result<(), String> {
     Library::edit(file, |library| {
         if let Some(game) = library.get_mut(title_id) {
@@ -1382,12 +1385,14 @@ pub fn pending_updates(app: AppHandle) -> Result<(bool, Vec<PendingUpdate>), Str
         .games()
         .iter()
         .filter_map(|game| {
-            let installed = game.running_version()?;
             let published = newest.get(&game.title_id)?;
-            rpcs3::compat::is_newer(published, installed).then(|| PendingUpdate {
+            // What the emulator runs, so an update put in through RPCS3's
+            // own window isn't offered again.
+            let installed = crate::backends::for_console(game.console)?.running_version(&app, game)?;
+            rpcs3::compat::is_newer(published, &installed).then(|| PendingUpdate {
                 title_id: game.title_id.clone(),
                 title: game.title.clone(),
-                installed: installed.to_string(),
+                installed,
                 newest: published.clone(),
             })
         })

@@ -638,31 +638,50 @@ impl super::EmulatorBackend for Rpcs3 {
         Some(("PS3 results from RPCS3", "https://rpcs3.net/compatibility"))
     }
 
+    /// Read from RPCS3's own files rather than from Omoio's note, since RPCS3
+    /// runs an update in its dev_hdd0 however it went in (updates.rs,
+    /// `running_version`).
+    fn running_version(&self, app: &AppHandle, game: &crate::core::library::Game) -> Option<String> {
+        updates::running_version(app, game)
+    }
+
+    /// Asked as the game starts, so a fix is matched against the version
+    /// RPCS3 is about to run.
     fn apply_fixes(
         &self,
         app: &AppHandle,
         game: &crate::core::library::Game,
         applied: &[String],
     ) -> Vec<&'static str> {
-        let version = game.running_version().unwrap_or_default();
-        fixes::apply(app, &game.title_id, version, applied)
+        let version = updates::running_version(app, game).unwrap_or_default();
+        fixes::apply(app, &game.title_id, &version, applied)
     }
 
-    /// RPCS3's community patches, matched against the version that runs, so
-    /// a game with an official update sees the patches written for it.
+    /// RPCS3's community patches, matched against the version RPCS3 runs,
+    /// read each time the game's page asks, so a game with an official
+    /// update sees the patches written for it, however the update went in.
+    ///
+    /// A switch is kept under the version it was made for (`entry_keys` in
+    /// patches.rs), and RPCS3 reads only the one under the version it runs
+    /// (Utilities/bin_patch.cpp, `patch_engine::apply`, lines 1484 to 1535,
+    /// RPCS3/rpcs3 b2e52d6, read 4 November 2026), but this list reads
+    /// switches by patch alone (`read_enabled`). Until 4 November 2026 Omoio
+    /// took a game updated outside it for its disc's version, so a patch
+    /// written for both versions and switched on then shows on here while
+    /// RPCS3 leaves it off, and switching it off here doesn't clear it.
     fn community_packs(
         &self,
         app: &AppHandle,
         title_id: &str,
         game: Option<&crate::core::library::Game>,
     ) -> crate::core::community::Packs {
-        let version = game.and_then(|g| g.running_version()).unwrap_or_default();
+        let version = game.and_then(|g| updates::running_version(app, g)).unwrap_or_default();
         crate::core::community::Packs {
             have_list: patches::have_catalogue(app),
             source: "the RPCS3 community".to_string(),
             waiting: None,
             with_emulator: false,
-            packs: patches::for_title(app, title_id, version).into_iter().map(patches::as_pack).collect(),
+            packs: patches::for_title(app, title_id, &version).into_iter().map(patches::as_pack).collect(),
         }
     }
 
@@ -672,12 +691,12 @@ impl super::EmulatorBackend for Rpcs3 {
         game: &crate::core::library::Game,
         change: &crate::core::community::PackChange,
     ) -> Result<(), String> {
-        let version = game.running_version().unwrap_or_default();
-        let patch = patches::for_title(app, &game.title_id, version)
+        let version = updates::running_version(app, game).unwrap_or_default();
+        let patch = patches::for_title(app, &game.title_id, &version)
             .into_iter()
             .find(|patch| patches::pack_id(patch) == change.id)
             .ok_or("That patch isn't in the list any more. Download the latest patches.")?;
-        patches::set_enabled(app, &patch, &game.title_id, version, change.on)
+        patches::set_enabled(app, &patch, &game.title_id, &version, change.on)
     }
 
     fn refresh_community<'a>(

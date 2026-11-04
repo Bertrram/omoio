@@ -62,8 +62,12 @@ export interface Game {
   title: string;
   /// What the dump itself reports.
   version: string | null;
-  /// The official update Omoio installed, if any. This is what actually runs.
+  /// The official update Omoio installed, if any. Its own record; what runs
+  /// is `running_version`.
   update_version: string | null;
+  /// The version the emulator runs, read from its own files, so an update
+  /// put in outside Omoio counts. The one patches are matched against.
+  running_version: string | null;
   path: string;
   size_bytes: number;
   /// False when the folder isn't reachable right now, e.g. an external drive.

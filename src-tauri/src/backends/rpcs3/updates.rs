@@ -17,8 +17,10 @@
 //!   the transport. Every one carries a SHA-1 in the manifest, and a download
 //!   that does not match it is thrown away.
 
+use crate::core::library::Game;
+use crate::core::sfo::{Category, Sfo};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::AppHandle;
 
@@ -323,24 +325,92 @@ pub fn chain(updates: &[Update], installed: &str, target: &str) -> Vec<Update> {
     steps
 }
 
-/// The version RPCS3 has installed for a game, read from the PARAM.SFO its
-/// updates leave in dev_hdd0. `None` when no update has been installed.
+/// The version of a game RPCS3 runs, read from its files now, so the
+/// patches, the fixes and the Updates page follow an update however it went
+/// in: through Omoio, through RPCS3's own window or copied in by hand. A run
+/// of updates starts from it too. Omoio's own note of what it installed can
+/// fall behind, as it did when an update went in and Omoio misread the log,
+/// and it knows nothing of an update put in any other way.
+pub fn running_version(app: &AppHandle, game: &Game) -> Option<String> {
+    // Where RPCS3 keeps dev_hdd0 unless it is moved in RPCS3's settings
+    // (Emu/vfs_config.h, line 13, RPCS3/rpcs3 b2e52d6, read 4 November 2026),
+    // as everywhere else in Omoio.
+    let installed = super::install_dir(app).ok().map(|dir| dir.join("dev_hdd0").join("game"));
+    running_version_in(installed.as_deref(), game)
+}
+
+/// `running_version`, given RPCS3's `dev_hdd0/game` folder.
 ///
-/// This is what a run starts from. Omoio's own note of the version can fall
-/// behind, as it did when an update went in and Omoio misread the log.
-pub fn installed_version(app: &AppHandle, title_id: &str) -> Option<String> {
+/// RPCS3 takes the version from the PARAM.SFO beside the program it boots,
+/// APP_VER or else VERSION, and matches patches against it (Emu/System.cpp,
+/// `Emulator::Load`, lines 1744 to 1756; Emu/system_utils.cpp,
+/// `get_sfo_dir_from_game_path`, lines 533 to 583; Utilities/bin_patch.cpp,
+/// `patch_engine::apply`, lines 1484 to 1535; RPCS3/rpcs3 b2e52d6, read
+/// 4 November 2026).
+///
+/// An installed title, with USRDIR at the top of its folder where launch.rs
+/// finds its program, boots from its own folder, and its updates replace
+/// that folder's PARAM.SFO. A trial with its full game's licence boots C00
+/// inside it instead, which Omoio doesn't look into, as it never reads
+/// licences. A disc, a disc image among them, runs its own version unless
+/// RPCS3 boots an update from dev_hdd0 in its place (`update_in`). A folder
+/// that can't be seen, on a drive that's unplugged, is read as a disc:
+/// dev_hdd0 is on this PC either way, and for an installed title it seldom
+/// holds anything RPCS3 would boot, so that comes to the game's own version.
+fn running_version_in(installed: Option<&Path>, game: &Game) -> Option<String> {
+    // A game noted from the catalogue has no files, so nothing of it runs yet.
+    if !game.is_set_up() {
+        return game.version.clone();
+    }
+    let own_program = |at: &Path| at.join("USRDIR").join("EBOOT.BIN").is_file();
+    let installed_title = !own_program(&game.path.join("PS3_GAME")) && own_program(&game.path);
+    let found = if installed_title {
+        std::fs::read(game.path.join("PARAM.SFO"))
+            .ok()
+            .and_then(|bytes| Sfo::parse(&bytes).ok())
+            .and_then(|sfo| sfo.app_version().map(str::to_string))
+    } else {
+        installed.and_then(|installed| update_installed(installed, &game.title_id))
+    };
+    found.or_else(|| game.version.clone())
+}
+
+/// `update_in` for the disc with this title id, read from RPCS3's
+/// `dev_hdd0/game` folder now.
+fn update_installed(installed: &Path, title_id: &str) -> Option<String> {
+    // A title id is one folder name. Anything else would reach outside.
     if title_id.is_empty() || title_id.contains(['/', '\\', '.', ':']) {
         return None;
     }
-    let path = super::install_dir(app)
-        .ok()?
-        .join("dev_hdd0")
-        .join("game")
-        .join(title_id)
-        .join("PARAM.SFO");
-    let bytes = std::fs::read(path).ok()?;
-    let sfo = crate::core::sfo::Sfo::parse(&bytes).ok()?;
-    sfo.text("APP_VER").map(str::to_string)
+    let folder = installed.join(title_id);
+    let has_eboot = folder.join("USRDIR").join("EBOOT.BIN").is_file();
+    let sfo = has_eboot.then(|| std::fs::read(folder.join("PARAM.SFO")).ok()).flatten();
+    update_in(sfo.as_deref(), has_eboot, title_id)
+}
+
+/// The version of the update RPCS3 boots in place of a disc's own program,
+/// from what `dev_hdd0/game/<title id>/` holds: the bytes of its PARAM.SFO,
+/// if it has one, and whether its USRDIR/EBOOT.BIN is a file. `None` when
+/// RPCS3 boots the disc's own program.
+///
+/// RPCS3's own test, kept whole (Emu/System.cpp, `Emulator::Load`, lines
+/// 2572 to 2599, RPCS3/rpcs3 b2e52d6, read 4 November 2026): that EBOOT.BIN
+/// is a file, and that PARAM.SFO has the disc's TITLE_ID and CATEGORY GD.
+/// RPCS3 then boots from that folder and takes its version as for any boot.
+/// An official update passes, whoever installed it. Data a game keeps for
+/// itself in a folder of that name doesn't: RPCS3 writes it CATEGORY GD and
+/// the game's own data version as VERSION, with no APP_VER and no program
+/// beside it (Emu/Cell/Modules/cellGame.cpp, lines 1169 to 1200 and 1324 to
+/// 1331, same commit), so a version read from it matches neither the disc
+/// nor any update. RPCS3 also needs the program to load, which can't be told
+/// without decrypting it, so the file being there is taken as enough.
+fn update_in(sfo: Option<&[u8]>, has_eboot: bool, title_id: &str) -> Option<String> {
+    if !has_eboot {
+        return None;
+    }
+    let sfo = Sfo::parse(sfo?).ok()?;
+    let boots = sfo.title_id() == Some(title_id) && sfo.category() == Some(Category::GameData);
+    boots.then(|| sfo.app_version().map(str::to_string)).flatten()
 }
 
 fn downloads_dir(app: &AppHandle) -> Result<PathBuf, String> {
@@ -484,6 +554,191 @@ mod tests {
         assert_eq!(versions(&chain(&all, "01.02", "01.10")), ["01.09", "01.10"]);
         assert!(chain(&all, "01.10", "01.10").is_empty());
         assert!(chain(&all, "01.10", "01.02").is_empty(), "going back is not a chain");
+    }
+
+    /// A PARAM.SFO with these keys as null-terminated text, as real ones
+    /// carry them.
+    fn sfo(entries: &[(&str, &str)]) -> Vec<u8> {
+        const HEADER: usize = 20;
+        let (mut keys, mut data, mut index) = (Vec::new(), Vec::new(), Vec::new());
+        for (key, value) in entries {
+            let key_offset = keys.len();
+            keys.extend_from_slice(key.as_bytes());
+            keys.push(0);
+
+            let data_offset = data.len();
+            data.extend_from_slice(value.as_bytes());
+            data.push(0);
+            let len = value.len() + 1;
+
+            index.extend_from_slice(&(key_offset as u16).to_le_bytes());
+            index.extend_from_slice(&0x0204u16.to_le_bytes());
+            index.extend_from_slice(&(len as u32).to_le_bytes());
+            index.extend_from_slice(&(len as u32).to_le_bytes());
+            index.extend_from_slice(&(data_offset as u32).to_le_bytes());
+        }
+        while keys.len() % 4 != 0 {
+            keys.push(0);
+        }
+
+        let key_table = HEADER + index.len();
+        let mut out = Vec::new();
+        out.extend_from_slice(b"\0PSF");
+        out.extend_from_slice(&0x0101u32.to_le_bytes());
+        out.extend_from_slice(&(key_table as u32).to_le_bytes());
+        out.extend_from_slice(&((key_table + keys.len()) as u32).to_le_bytes());
+        out.extend_from_slice(&(entries.len() as u32).to_le_bytes());
+        out.extend_from_slice(&index);
+        out.extend_from_slice(&keys);
+        out.extend_from_slice(&data);
+        out
+    }
+
+    /// SWAP Force on the PS3, European disc.
+    const DISC: &str = "BLES01860";
+
+    #[test]
+    fn a_disc_with_nothing_installed_runs_its_own_version() {
+        assert_eq!(update_in(None, false, DISC), None);
+    }
+
+    #[test]
+    fn an_official_update_runs_however_it_went_in() {
+        let update = sfo(&[("APP_VER", "01.01"), ("CATEGORY", "GD"), ("TITLE_ID", DISC), ("VERSION", "01.00")]);
+        assert_eq!(update_in(Some(&update), true, DISC).as_deref(), Some("01.01"));
+    }
+
+    #[test]
+    fn an_update_with_no_app_ver_runs_its_version() {
+        let update = sfo(&[("CATEGORY", "GD"), ("TITLE_ID", DISC), ("VERSION", "01.01")]);
+        assert_eq!(update_in(Some(&update), true, DISC).as_deref(), Some("01.01"));
+    }
+
+    #[test]
+    fn data_the_game_wrote_for_itself_is_not_an_update() {
+        // What RPCS3 writes for a game's own data: GD, the game's id, its
+        // data version, no APP_VER and no program.
+        let data = sfo(&[("CATEGORY", "GD"), ("TITLE", "Skylanders SWAP Force"), ("TITLE_ID", DISC), ("VERSION", "00.03")]);
+        assert_eq!(update_in(Some(&data), false, DISC), None);
+    }
+
+    #[test]
+    fn a_package_with_no_program_is_not_an_update() {
+        // Add-on content, or a package the disc installs on its first boot.
+        let package = sfo(&[("APP_VER", "01.00"), ("CATEGORY", "GD"), ("TITLE_ID", DISC), ("VERSION", "01.00")]);
+        assert_eq!(update_in(Some(&package), false, DISC), None);
+    }
+
+    #[test]
+    fn an_update_for_another_game_is_not_booted() {
+        let other = sfo(&[("APP_VER", "01.05"), ("CATEGORY", "GD"), ("TITLE_ID", "BLES02055"), ("VERSION", "01.00")]);
+        assert_eq!(update_in(Some(&other), true, DISC), None);
+    }
+
+    #[test]
+    fn only_game_data_is_booted_in_a_discs_place() {
+        let installed = sfo(&[("APP_VER", "01.05"), ("CATEGORY", "HG"), ("TITLE_ID", DISC), ("VERSION", "01.00")]);
+        assert_eq!(update_in(Some(&installed), true, DISC), None);
+    }
+
+    #[test]
+    fn a_param_sfo_that_does_not_read_is_not_an_update() {
+        assert_eq!(update_in(Some(b"not a PARAM.SFO at all"), true, DISC), None);
+        assert_eq!(update_in(None, true, DISC), None);
+    }
+
+    struct TempDir(PathBuf);
+
+    impl TempDir {
+        fn new(name: &str) -> Self {
+            let path = std::env::temp_dir().join(format!("omoio-updates-{}-{name}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&path);
+            std::fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+
+        fn write(&self, relative: &str, bytes: &[u8]) {
+            let path = self.0.join(relative);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, bytes).unwrap();
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn game(title_id: &str, version: &str, path: PathBuf) -> Game {
+        Game {
+            console: crate::core::console::Console::Ps3,
+            title_id: title_id.to_string(),
+            title: "Skylanders SWAP Force".to_string(),
+            version: Some(version.to_string()),
+            update_version: None,
+            path,
+            size_bytes: 1,
+        }
+    }
+
+    #[test]
+    fn a_disc_runs_the_update_in_dev_hdd0() {
+        let dir = TempDir::new("disc");
+        dir.write("disc/PS3_DISC.SFB", &[0; 16]);
+        dir.write("disc/PS3_GAME/USRDIR/EBOOT.BIN", &[0; 16]);
+        let hdd0 = dir.0.join("dev_hdd0").join("game");
+        let disc = game(DISC, "01.00", dir.0.join("disc"));
+        assert_eq!(running_version_in(Some(&hdd0), &disc).as_deref(), Some("01.00"));
+
+        dir.write(
+            &format!("dev_hdd0/game/{DISC}/PARAM.SFO"),
+            &sfo(&[("APP_VER", "01.01"), ("CATEGORY", "GD"), ("TITLE_ID", DISC)]),
+        );
+        assert_eq!(running_version_in(Some(&hdd0), &disc).as_deref(), Some("01.00"), "no program, no update");
+        dir.write(&format!("dev_hdd0/game/{DISC}/USRDIR/EBOOT.BIN"), &[0; 16]);
+        assert_eq!(running_version_in(Some(&hdd0), &disc).as_deref(), Some("01.01"));
+
+        // The drive the disc is on unplugged: the update is still on this PC.
+        let unplugged = game(DISC, "01.00", dir.0.join("gone"));
+        assert_eq!(running_version_in(Some(&hdd0), &unplugged).as_deref(), Some("01.01"));
+        // A disc image has no folder of its own to look in.
+        let image = game(DISC, "01.00", dir.0.join("SWAP Force.iso"));
+        assert_eq!(running_version_in(Some(&hdd0), &image).as_deref(), Some("01.01"));
+        // A game noted from the catalogue has no files and no version yet.
+        let noted = Game::not_set_up(crate::core::console::Console::Ps3, DISC.to_string(), "SWAP Force".to_string());
+        assert_eq!(running_version_in(Some(&hdd0), &noted), None);
+    }
+
+    #[test]
+    fn an_installed_title_runs_its_own_folders_version_read_now() {
+        let dir = TempDir::new("installed");
+        let id = "NPEB01234";
+        dir.write("title/USRDIR/EBOOT.BIN", &[0; 16]);
+        dir.write("title/PARAM.SFO", &sfo(&[("APP_VER", "01.00"), ("CATEGORY", "HG"), ("TITLE_ID", id)]));
+        let hdd0 = dir.0.join("dev_hdd0").join("game");
+        let title = game(id, "01.00", dir.0.join("title"));
+        assert_eq!(running_version_in(Some(&hdd0), &title).as_deref(), Some("01.00"));
+
+        // Its update replaces the folder's PARAM.SFO; the library still says
+        // what it said at import.
+        dir.write("title/PARAM.SFO", &sfo(&[("APP_VER", "01.02"), ("CATEGORY", "HG"), ("TITLE_ID", id)]));
+        assert_eq!(running_version_in(Some(&hdd0), &title).as_deref(), Some("01.02"));
+
+        // Unplugged, it is the version the library has.
+        let unplugged = game(id, "01.00", dir.0.join("gone"));
+        assert_eq!(running_version_in(Some(&hdd0), &unplugged).as_deref(), Some("01.00"));
+    }
+
+    #[test]
+    fn a_title_id_that_is_not_one_folder_name_reads_nothing() {
+        // Laid out as an update one folder up, where ".." would reach.
+        let dir = TempDir::new("escape");
+        dir.write("dev_hdd0/PARAM.SFO", &sfo(&[("APP_VER", "09.99"), ("CATEGORY", "GD"), ("TITLE_ID", "..")]));
+        dir.write("dev_hdd0/USRDIR/EBOOT.BIN", &[0; 16]);
+        let hdd0 = dir.0.join("dev_hdd0").join("game");
+        assert_eq!(update_installed(&hdd0, ".."), None);
+        assert_eq!(update_installed(&hdd0, ""), None);
     }
 
     #[test]

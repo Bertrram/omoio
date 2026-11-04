@@ -126,10 +126,10 @@ export async function openUpdates(
     } catch (err) {
       busy = false;
       // Every update that finished before this one stays installed, and the
-      // library already says so.
+      // version the game now runs says so.
       const games = await listGames();
       store.setGames(games);
-      installed = games.find((g) => g.title_id === titleId)?.update_version ?? installed;
+      installed = games.find((g) => g.title_id === titleId)?.running_version ?? installed;
       onChanged();
       const message =
         err === "cancelled"
