@@ -1,5 +1,5 @@
-//! Working an emulator's Qt windows from outside, for its Skylanders portal
-//! and its Infinity Base.
+//! Working an emulator's Qt windows from outside, for its Skylanders portal,
+//! its Infinity Base and its Toy Pad.
 //!
 //! RPCS3 and Dolphin are both built with Qt, whose buttons and boxes are not
 //! windows of their own, so window messages can't reach them. Qt answers UI
@@ -271,6 +271,27 @@ pub fn gone(window: HWND) -> bool {
 pub fn arrives(pid: u32, wanted: &str) -> Option<HWND> {
     soon(WAIT, || {
         let window = showing(pid).into_iter().find(|&w| title(w) == wanted)?;
+        out_of_sight(window);
+        Some(window)
+    })
+}
+
+/// As `arrives`, for a window that `owner` owns. A Qt widget that is a
+/// window of its own gets its parent's window as its transient parent
+/// (`QWidgetPrivate::create`, src/widgets/kernel/qwidget.cpp lines 1280 to
+/// 1313), and Qt gives Windows that window as its owner
+/// (`WindowCreationData::fromWindow` and
+/// `QWindowsWindow::updateTransientParent`,
+/// src/plugins/platforms/windows/qwindowswindow.cpp lines 791 to 796 and
+/// 1939 to 1963; qt/qtbase v6.12.0, the Qt RPCS3's Windows build is made
+/// with, .github/workflows/rpcs3.yml line 288, RPCS3/rpcs3 b2e52d6; read 4
+/// November 2026). So of two of an emulator's dialogs with one title, such
+/// as RPCS3's two figure makers, this is the one the window `owner` opened.
+pub fn arrives_over(pid: u32, wanted: &str, owner: HWND) -> Option<HWND> {
+    soon(WAIT, || {
+        let window = showing(pid)
+            .into_iter()
+            .find(|&w| title(w) == wanted && unsafe { GetWindow(w, GW_OWNER) }.is_ok_and(|by| by == owner))?;
         out_of_sight(window);
         Some(window)
     })

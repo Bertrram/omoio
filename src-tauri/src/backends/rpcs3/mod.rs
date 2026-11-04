@@ -1,6 +1,8 @@
 pub mod account;
 pub mod compat;
 pub mod controllers;
+#[cfg(windows)]
+mod dimensions;
 pub mod firmware;
 pub mod fixes;
 pub mod game_config;
@@ -481,6 +483,7 @@ impl super::EmulatorBackend for Rpcs3 {
     fn toy_places(&self, pid: u32, toy: crate::core::toys::Toy) -> Result<Vec<String>, String> {
         match toy {
             crate::core::toys::Toy::Infinity => infinity::places(pid),
+            crate::core::toys::Toy::ToyPad => dimensions::places(pid),
             _ => Err(super::NO_TOY.to_string()),
         }
     }
@@ -488,6 +491,7 @@ impl super::EmulatorBackend for Rpcs3 {
     fn toy_load(&self, pid: u32, toy: crate::core::toys::Toy, place: usize, figure: &Path) -> Result<Vec<String>, String> {
         match toy {
             crate::core::toys::Toy::Infinity => infinity::load(pid, place, figure),
+            crate::core::toys::Toy::ToyPad => dimensions::load(pid, place, figure),
             _ => Err(super::NO_TOY.to_string()),
         }
     }
@@ -495,6 +499,7 @@ impl super::EmulatorBackend for Rpcs3 {
     fn toy_remove(&self, pid: u32, toy: crate::core::toys::Toy, place: usize) -> Result<Vec<String>, String> {
         match toy {
             crate::core::toys::Toy::Infinity => infinity::remove(pid, place),
+            crate::core::toys::Toy::ToyPad => dimensions::remove(pid, place),
             _ => Err(super::NO_TOY.to_string()),
         }
     }
@@ -507,6 +512,7 @@ impl super::EmulatorBackend for Rpcs3 {
     ) -> Result<Vec<crate::core::toys::ToyFigure>, String> {
         match toy {
             crate::core::toys::Toy::Infinity => infinity::list(app, pid),
+            crate::core::toys::Toy::ToyPad => dimensions::figures(pid),
             _ => Err(super::NO_TOY.to_string()),
         }
     }
@@ -521,14 +527,26 @@ impl super::EmulatorBackend for Rpcs3 {
     ) -> Result<Vec<String>, String> {
         match toy {
             crate::core::toys::Toy::Infinity => infinity::create(pid, place, figure, file),
+            crate::core::toys::Toy::ToyPad => dimensions::create(pid, place, figure, file),
             _ => Err(super::NO_TOY.to_string()),
         }
     }
 
     fn ready_toy(&self, pid: u32, toy: crate::core::toys::Toy) {
-        if toy == crate::core::toys::Toy::Infinity {
-            infinity::ready(pid);
+        match toy {
+            crate::core::toys::Toy::Infinity => infinity::ready(pid),
+            crate::core::toys::Toy::ToyPad => dimensions::ready(pid),
+            crate::core::toys::Toy::Skylanders => {}
         }
+    }
+
+    /// Through the Dimensions Manager's Move and its Figure Mover, as a
+    /// player moves a tag (dimensions.rs). RPCS3 answers the game's light
+    /// commands and keeps none of them (Emu/Io/Dimensions.cpp lines 647 to
+    /// 659, RPCS3/rpcs3 b2e52d6, read 4 November 2026), so `toypad_lights`
+    /// is left as the trait has it.
+    fn toypad_move(&self, pid: u32, from: usize, to: usize) -> Result<Vec<String>, String> {
+        dimensions::move_figure(pid, from, to)
     }
 
     fn is_game_window(&self, title: &str) -> bool {

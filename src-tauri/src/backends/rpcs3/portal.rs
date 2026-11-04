@@ -245,15 +245,20 @@ pub(super) fn is_message(pid: u32, window: HWND) -> bool {
 }
 
 /// Whether one of RPCS3's windows is one Omoio opens, by its title: the
-/// Skylanders Manager's here, and the Infinity Manager's (infinity.rs). The
-/// Infinity Manager is owned by RPCS3's main window and titled like any of
-/// its messages (`infinity_dialog::get_dlg`, rpcs3qt/main_window.cpp lines
-/// 3211 to 3215, and infinity_dialog.cpp line 718, RPCS3/rpcs3 b2e52d6,
-/// read 4 November 2026), so without its titles here the game would be
-/// left deaf after the base menu, with the keyboard on the manager, and
-/// Return would be pressed on its figure maker.
+/// Skylanders Manager's here, the Infinity Manager's (infinity.rs) and the
+/// Dimensions Manager's (dimensions.rs). The Infinity Manager is owned by
+/// RPCS3's main window and titled like any of its messages
+/// (`infinity_dialog::get_dlg`, rpcs3qt/main_window.cpp lines 3211 to 3215,
+/// and infinity_dialog.cpp line 718, RPCS3/rpcs3 b2e52d6, read 4 November
+/// 2026), so without its titles here the game would be left deaf after the
+/// base menu, with the keyboard on the manager, and Return would be pressed
+/// on its figure maker. The Dimensions Manager is made the same way
+/// (main_window.cpp lines 3217 to 3221, dimensions_dialog.cpp line 573),
+/// and its Figure Mover would be pressed away with Return the same.
 fn opened_by_omoio(title: &str) -> bool {
-    [MANAGER, CREATOR, OPEN_FIGURE, SAVE_FIGURE].contains(&title) || super::infinity::WINDOWS.contains(&title)
+    [MANAGER, CREATOR, OPEN_FIGURE, SAVE_FIGURE].contains(&title)
+        || super::infinity::WINDOWS.contains(&title)
+        || super::dimensions::WINDOWS.contains(&title)
 }
 
 /// Hands the keyboard back to the game's window when one of RPCS3's own
@@ -785,6 +790,15 @@ mod tests {
         // RPCS3's own messages over the Infinity Manager and its figure
         // maker (infinity_dialog.cpp lines 866, 873 and 589).
         for title in ["Failed to open the figure file!", "Failed to read the figure file!", "Failed to create figure file!"] {
+            assert!(!opened_by_omoio(title), "{title}");
+        }
+        for title in ["Dimensions Manager", "Figure Creator", "Figure Mover", "Select Dimensions File", "Create Figure File"] {
+            assert!(opened_by_omoio(title), "{title}");
+        }
+        // RPCS3's own messages over the Dimensions Manager's figure maker
+        // (dimensions_dialog.cpp lines 473 and 451). The manager's own two
+        // are titled as the Infinity Manager's above (lines 746 and 753).
+        for title in ["Failed to create minifig file!", "Error converting value"] {
             assert!(!opened_by_omoio(title), "{title}");
         }
     }

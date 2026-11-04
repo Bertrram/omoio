@@ -295,12 +295,12 @@ fn switch_off(app: &AppHandle, key: &str) {
 
 /// Whether a game starts with RPCS3's main window. --no-gui keeps it out of
 /// the way: the user asked to play a game, not to meet the emulator. But
-/// RPCS3 fills its Skylanders portal and its Infinity Base only from their
-/// managers, which open from that window's Manage menu (portal.rs and
-/// infinity.rs), so a game played with either starts with it, and Omoio
-/// hides it.
+/// RPCS3 fills its Skylanders portal, its Infinity Base and its Toy Pad only
+/// from their managers, which open from that window's Manage menu
+/// (portal.rs, infinity.rs and dimensions.rs), so a game played with any of
+/// them starts with it, and Omoio hides it.
 fn with_main_window(toy: Option<Toy>) -> bool {
-    matches!(toy, Some(Toy::Skylanders | Toy::Infinity))
+    matches!(toy, Some(Toy::Skylanders | Toy::Infinity | Toy::ToyPad))
 }
 
 pub fn launch(app: &AppHandle, game: &Game) -> Result<Launched, String> {
@@ -346,7 +346,8 @@ pub fn launch(app: &AppHandle, game: &Game) -> Result<Launched, String> {
     match toy {
         Some(Toy::Skylanders) => super::portal::prepare(child.id()),
         Some(Toy::Infinity) => super::infinity::prepare(child.id()),
-        _ => {}
+        Some(Toy::ToyPad) => super::dimensions::prepare(child.id()),
+        None => {}
     }
     // Before `child` is dropped as this returns, which closes the handle
     // the spawn gave it.
@@ -555,7 +556,11 @@ mod tests {
         assert!(with_main_window(toy("BLUS30977", "Disney Infinity")));
         assert!(with_main_window(toy("BLES02064", "Disney Infinity [2.0]")));
         assert!(with_main_window(toy("BLJS10323", "Disney Infinity 3.0")));
+        assert!(with_main_window(toy("BLES02105", "LEGO® DIMENSIONS™")));
+        assert!(with_main_window(toy("BLUS31473", "LEGO® DIMENSIONS™")));
         assert!(!with_main_window(toy("BCES00850", "LittleBigPlanet 2")));
+        // Another LEGO game is played without a toy.
+        assert!(!with_main_window(toy("", "LEGO Marvel Super Heroes")));
         // "Infinity" alone is no Disney Infinity game.
         assert!(!with_main_window(toy("", "Ace Combat Infinity")));
         assert!(!with_main_window(None));
@@ -587,7 +592,7 @@ mod tests {
 /// by decrypting with it, which Omoio never does. RPCS3 then never opens the
 /// game's window: it logs why (Emu/System.cpp, `check_disc_key`) and, with
 /// --no-gui, shows its own error, while a game started with its main window
-/// hidden, as a Skylanders or Disney Infinity game is, shows nothing at all
+/// hidden, as a game played with a toy is, shows nothing at all
 /// (rpcs3.cpp, the boot from the command line; RPCS3/rpcs3 c365ea7, read 27
 /// October 2026).
 pub fn refused_image(app: &AppHandle, since: std::time::SystemTime) -> Option<&'static str> {
