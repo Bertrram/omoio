@@ -856,8 +856,9 @@ fn read_emulator_log(
 /// their time is all that ties them to the end.
 const DISPLAY_BEFORE_END: std::time::Duration = std::time::Duration::from_secs(15);
 
-/// One writer at a time for sessions.json: a session's record is written a
-/// few seconds after it ends, and the next game's can end meanwhile.
+/// One writer at a time for sessions.json: a session's record can be
+/// written again a few seconds after it ends, once Windows' report is in,
+/// and the next game's can end meanwhile.
 static SESSIONS: Mutex<()> = Mutex::new(());
 
 /// Keeps what the emulator said about this session somewhere it will
@@ -868,8 +869,10 @@ static SESSIONS: Mutex<()> = Mutex::new(());
 /// An end Omoio didn't cause gets Omoio's note of the emulator's exit code,
 /// and of what Windows logged about the emulator's process as it ended,
 /// matched by its process id and the time it was made, never by its name.
-/// That takes a wait of a few seconds at most, so this runs on a thread of
-/// its own.
+/// The record is written at once, so closing Omoio straight after a game
+/// loses nothing. Only an end Windows may report on (`windows_reports`) is
+/// then waited for, a few seconds at most, on this thread of its own, and
+/// the record written again with what Windows said.
 fn keep_session_log(
     app: &AppHandle,
     ended: Ended,
@@ -878,54 +881,42 @@ fn keep_session_log(
     ended_at: std::time::SystemTime,
 ) {
     use crate::core::ending::{self, Evidence};
-    use crate::core::playlog::{self, Session as LoggedSession};
 
     let console = ended.playing.console;
     let backend = crate::backends::for_console(console);
     let emulator = backend.map(|backend| backend.name()).unwrap_or("The emulator");
-    if let Some(version) = backend.and_then(|backend| backend.version_from_log(&emulator_log)) {
-        learn_version(app, &ended.playing.title_id, version);
+    // A log an earlier session left says nothing about this one, its
+    // version included.
+    if fresh {
+        if let Some(version) = backend.and_then(|backend| backend.version_from_log(&emulator_log)) {
+            learn_version(app, &ended.playing.title_id, version);
+        }
     }
 
     let refusal = refused.as_ref().map(|refused| refused.shown.clone()).or(ended.refused.clone());
     let ours = refusal.is_some() || ended.stopped_by_us;
-    // A log an earlier session left says nothing about this one.
-    let (crash_line, problems) = if refusal.is_some() || !fresh {
-        (None, Vec::new())
-    } else {
-        (ending::log_crash(console, &emulator_log), ending::log_problems(console, &emulator_log, 40))
-    };
+    // A refused game's log is still worth reading: RPCS3 logs why it
+    // refused a disc image as an error, which the PS3 prompt passes on.
+    let problems = if fresh { ending::log_problems(console, &emulator_log, 40) } else { Vec::new() };
+    let crash_line = if fresh && refusal.is_none() { ending::log_crash(console, &emulator_log) } else { None };
     let exit_code = ended.process.as_ref().and_then(|process| process.exit_code());
-    let events = match ended.process.as_ref().filter(|_| !ours) {
-        Some(process) => {
-            let (pid, created, started) = (process.pid, process.created, process.started());
-            let about_it = crate::event_log::wait_for_events(started, ended_at, |xml| {
-                ending::parse_event(xml).is_some_and(|event| ending::is_about(&event, pid, created))
-            });
-            let display = crate::event_log::events_since(ended_at - DISPLAY_BEFORE_END)
-                .into_iter()
-                .filter(|xml| ending::parse_event(xml).is_some_and(|event| ending::is_display_event(&event)));
-            about_it.into_iter().chain(display).filter_map(|xml| ending::parse_event(&xml)).collect()
-        }
+    // The display driver's events name no process, so they are what Windows
+    // has already written about the last moments of the game.
+    let display = match ended.process.as_ref().filter(|_| !ours) {
+        Some(_) => crate::event_log::events_since(ended_at - DISPLAY_BEFORE_END)
+            .iter()
+            .filter_map(|xml| ending::parse_event(xml))
+            .filter(ending::is_display_event)
+            .collect(),
         None => Vec::new(),
     };
-    let evidence = Evidence {
+    let mut evidence = Evidence {
         refusal,
         stopped_by_us: ended.stopped_by_us,
         exit_code,
         crash_line,
-        events,
+        events: display,
     };
-    let how = ending::decide(&evidence);
-    let end_notes = ending::notes(emulator, &evidence);
-    let summary = ending::summary(console, emulator, how, &evidence, &problems);
-
-    // Omoio's notes go after the emulator's own lines, where nothing reads
-    // them for the emulator's marks.
-    let mut log = emulator_log;
-    for note in ended.notes.iter().chain(&end_notes) {
-        log.push_str(&format!("\n{note}\n"));
-    }
 
     let Ok(data_dir) = app.path().data_dir() else {
         return;
@@ -934,24 +925,77 @@ fn keep_session_log(
     if std::fs::create_dir_all(&logs).is_err() {
         return;
     }
-    let stamp = std::time::SystemTime::now()
+    // Stamped with the moment the game ended, so two games that end close
+    // together keep their order and their own log files.
+    let stamp = ended_at
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
     let log_file = logs.join(format!("{}-{stamp}.log", ended.playing.title_id));
-    let _ = std::fs::write(&log_file, &log);
+    let record = Record { ended: &ended, emulator, emulator_log: &emulator_log, problems: &problems, stamp, log_file: &log_file };
+
+    write_record(&data_dir, &logs, &record, &evidence);
+    let _ = app.emit("session-kept", ());
+
+    let waits = !ours && exit_code.is_some_and(ending::windows_reports);
+    if let Some(process) = ended.process.as_ref().filter(|_| waits) {
+        let (pid, created, started) = (process.pid, process.created, process.started());
+        let about_it: Vec<_> = crate::event_log::wait_for_events(started, ended_at, |xml| {
+            ending::parse_event(xml).is_some_and(|event| ending::is_about(&event, pid, created))
+        })
+        .iter()
+        .filter_map(|xml| ending::parse_event(xml))
+        .collect();
+        if !about_it.is_empty() {
+            evidence.events.splice(0..0, about_it);
+            write_record(&data_dir, &logs, &record, &evidence);
+            let _ = app.emit("session-kept", ());
+        }
+    }
+}
+
+/// What a session's record is made of, beside how it ended.
+struct Record<'a> {
+    ended: &'a Ended,
+    emulator: &'a str,
+    emulator_log: &'a str,
+    problems: &'a [String],
+    stamp: u64,
+    log_file: &'a std::path::Path,
+}
+
+/// Writes the kept log and the session's entry in sessions.json, or writes
+/// them again, the entry in its place, once Windows' report is in.
+fn write_record(data_dir: &std::path::Path, logs: &std::path::Path, record: &Record, evidence: &crate::core::ending::Evidence) {
+    use crate::core::ending;
+    use crate::core::playlog::{self, Session as LoggedSession};
+
+    let console = record.ended.playing.console;
+    let how = ending::decide(evidence);
+    let end_notes = ending::notes(record.emulator, evidence);
+    let summary = ending::summary(console, record.emulator, how, evidence, record.problems);
+
+    // Omoio's notes go after the emulator's own lines, where nothing reads
+    // them for the emulator's marks.
+    let mut log = record.emulator_log.to_string();
+    for note in record.ended.notes.iter().chain(&end_notes) {
+        log.push_str(&format!("\n{note}\n"));
+    }
+
+    let _one_writer = SESSIONS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _ = std::fs::write(record.log_file, &log);
 
     let session = LoggedSession {
         console,
-        title_id: ended.playing.title_id.clone(),
-        title: ended.playing.title.clone(),
-        started: stamp.to_string(),
-        seconds: ended.seconds,
+        title_id: record.ended.playing.title_id.clone(),
+        title: record.ended.playing.title.clone(),
+        started: record.stamp.to_string(),
+        seconds: record.ended.seconds,
         ending: how,
         machine: playlog::read_machine(&log),
-        problems,
-        log_file: log_file.to_string_lossy().into_owned(),
-        exit_code,
+        problems: record.problems.to_vec(),
+        log_file: record.log_file.to_string_lossy().into_owned(),
+        exit_code: evidence.exit_code,
         // The page lists them under a heading of their own, so the label
         // each carries in the kept log isn't repeated there.
         notes: end_notes
@@ -961,30 +1005,26 @@ fn keep_session_log(
         summary: Some(summary),
     };
 
-    {
-        let _one_writer = SESSIONS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        let index = logs.join("sessions.json");
-        let mut all: Vec<LoggedSession> = std::fs::read_to_string(&index)
-            .ok()
-            .and_then(|t| serde_json::from_str(&t).ok())
-            .unwrap_or_default();
-        all.insert(0, session);
-
-        // Keep as many as the user asked for and take the old logs with them,
-        // so this never grows without bound on someone's disk.
-        let keep = crate::core::settings::Settings::load(&data_dir.join("Omoio").join("settings.json"))
-            .keep_sessions;
-        for old in all.iter().skip(keep) {
-            let _ = std::fs::remove_file(&old.log_file);
-        }
-        all.truncate(keep);
-        if let Ok(text) = serde_json::to_string_pretty(&all) {
-            let _ = std::fs::write(&index, text);
-        }
+    let index = logs.join("sessions.json");
+    let mut all: Vec<LoggedSession> = std::fs::read_to_string(&index)
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_default();
+    match all.iter_mut().find(|kept| kept.log_file == session.log_file) {
+        Some(kept) => *kept = session,
+        None => all.insert(0, session),
     }
-    // The record is written a few seconds after "game-stopped", so whatever
-    // shows the last sessions reads them again now.
-    let _ = app.emit("session-kept", ());
+
+    // Keep as many as the user asked for and take the old logs with them, so
+    // this never grows without bound on someone's disk.
+    let keep = crate::core::settings::Settings::load(&data_dir.join("Omoio").join("settings.json")).keep_sessions;
+    for old in all.iter().skip(keep) {
+        let _ = std::fs::remove_file(&old.log_file);
+    }
+    all.truncate(keep);
+    if let Ok(text) = serde_json::to_string_pretty(&all) {
+        let _ = std::fs::write(&index, text);
+    }
 }
 
 /// Fills the content area, or the whole screen when the user asked for that
