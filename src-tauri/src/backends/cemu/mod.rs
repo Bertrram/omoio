@@ -15,6 +15,7 @@ pub mod portal;
 pub mod release;
 pub mod sdl;
 pub mod start_errors;
+pub mod toypad;
 pub mod wua;
 
 use crate::core::console::{Console, Features};
@@ -358,12 +359,14 @@ fn product_code(image: &Path) -> Option<String> {
 }
 
 /// The game's English name, where the disc's product code says which
-/// Skylanders or Disney Infinity game it is and the name it was given
-/// doesn't (`figures::disc_english_name`, `infinity::disc_english_name`).
+/// Skylanders, Disney Infinity or LEGO Dimensions game it is and the name
+/// it was given doesn't (`figures::disc_english_name`,
+/// `infinity::disc_english_name`, `dimensions::disc_english_name`).
 fn named_by_disc(image: &Path, title: &str) -> Option<&'static str> {
     let code = product_code(image)?;
     crate::core::figures::disc_english_name(&code, title)
         .or_else(|| crate::core::infinity::disc_english_name(&code, title))
+        .or_else(|| crate::core::dimensions::disc_english_name(&code, title))
 }
 
 fn identify_disc(image: &Path) -> Game {
@@ -856,19 +859,10 @@ const FIRST_SETTINGS: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
 
 /// The toy a game is played with, which Cemu emulates for it and for no
 /// other game (`toys::toy_of`): a Skylanders game is one by name, as it
-/// always was, and a Disney Infinity game by its title id or its name.
+/// always was, and a Disney Infinity or LEGO Dimensions game by its title
+/// id or its name.
 fn toy(game: &Game) -> Option<Toy> {
     crate::core::toys::toy_of(Console::WiiU, &game.title_id, &game.title)
-}
-
-/// The trait's toy calls reach the Infinity Base, whose commands Cemu's
-/// server takes (infinity.rs). The portal has calls of its own.
-fn infinity_only(toy: Toy) -> Result<(), String> {
-    if toy == Toy::Infinity {
-        Ok(())
-    } else {
-        Err(super::NO_TOY.to_string())
-    }
 }
 
 /// Where the inside of the element nested as `parents` sits in settings.xml,
@@ -989,7 +983,8 @@ const ENGLISH: &str = "175";
 /// - The portal server of the build of Cemu made for Omoio (portal.rs) is
 ///   on for a game played with any of the three, listening on `port`, and
 ///   off for any other, so no port is held for a game that has no toy. It
-///   fills the Infinity Base as well as the portal (infinity.rs). Off is
+///   fills the Infinity Base and the Toy Pad as well as the portal
+///   (infinity.rs, toypad.rs). Off is
 ///   the build's default, so a file that never had the element is left
 ///   without it for a game with no toy. The build reads `<SkylandersIPC>`
 ///   as it starts and saves it with its other settings (its CemuConfig.cpp
@@ -1094,9 +1089,9 @@ impl super::EmulatorBackend for Cemu {
             mouse_aims: true,
             // Cemu emulates the Infinity Base and the Toy Pad beside the
             // portal (`tune_settings`), and Omoio fills them through the
-            // portal server alone (infinity.rs). A Cemu without their
-            // commands is found out once the game runs, and the menu says
-            // so.
+            // portal server alone (infinity.rs, toypad.rs). A Cemu without
+            // their commands is found out once the game runs, and the menu
+            // says so.
             infinity: true,
             toypad: true,
             ..Features::default()
@@ -1295,24 +1290,39 @@ impl super::EmulatorBackend for Cemu {
         portal::ready(pid)
     }
 
+    // The Infinity Base and the Toy Pad each go through the portal server's
+    // commands of their own (infinity.rs, toypad.rs). The portal has calls
+    // of its own.
     fn toy_places(&self, pid: u32, toy: Toy) -> Result<Vec<String>, String> {
-        infinity_only(toy)?;
-        infinity::places(pid)
+        match toy {
+            Toy::Infinity => infinity::places(pid),
+            Toy::ToyPad => toypad::places(pid),
+            Toy::Skylanders => Err(super::NO_TOY.to_string()),
+        }
     }
 
     fn toy_load(&self, pid: u32, toy: Toy, place: usize, figure: &Path) -> Result<Vec<String>, String> {
-        infinity_only(toy)?;
-        infinity::load(pid, place, figure)
+        match toy {
+            Toy::Infinity => infinity::load(pid, place, figure),
+            Toy::ToyPad => toypad::load(pid, place, figure),
+            Toy::Skylanders => Err(super::NO_TOY.to_string()),
+        }
     }
 
     fn toy_remove(&self, pid: u32, toy: Toy, place: usize) -> Result<Vec<String>, String> {
-        infinity_only(toy)?;
-        infinity::remove(pid, place)
+        match toy {
+            Toy::Infinity => infinity::remove(pid, place),
+            Toy::ToyPad => toypad::remove(pid, place),
+            Toy::Skylanders => Err(super::NO_TOY.to_string()),
+        }
     }
 
     fn toy_list(&self, _app: &AppHandle, pid: u32, toy: Toy) -> Result<Vec<ToyFigure>, String> {
-        infinity_only(toy)?;
-        infinity::list(pid)
+        match toy {
+            Toy::Infinity => infinity::list(pid),
+            Toy::ToyPad => toypad::list(pid),
+            Toy::Skylanders => Err(super::NO_TOY.to_string()),
+        }
     }
 
     fn toy_create(
@@ -1323,8 +1333,19 @@ impl super::EmulatorBackend for Cemu {
         figure: &ToyFigure,
         file: &Path,
     ) -> Result<Vec<String>, String> {
-        infinity_only(toy)?;
-        infinity::create(pid, place, figure, file)
+        match toy {
+            Toy::Infinity => infinity::create(pid, place, figure, file),
+            Toy::ToyPad => toypad::create(pid, place, figure, file),
+            Toy::Skylanders => Err(super::NO_TOY.to_string()),
+        }
+    }
+
+    fn toypad_move(&self, pid: u32, from: usize, to: usize) -> Result<Vec<String>, String> {
+        toypad::move_figure(pid, from, to)
+    }
+
+    fn toypad_lights(&self, pid: u32) -> Option<[crate::core::dimensions::PadLight; 3]> {
+        toypad::lights(pid)
     }
 
     /// Imaginators turns away the Senseis and Creation Crystals Cemu makes
@@ -2151,14 +2172,23 @@ Deluxe");
         // The Japanese 3.0, whose meta.xml names it in Japanese (WiiUBrew,
         // read 4 November 2026).
         assert_eq!(toy(&wii_u_game("00050000101DDC00", "ディズニーインフィニティ3.0")), Some(Toy::Infinity));
+        // LEGO Dimensions, US and Europe, named as WiiUBrew's title database
+        // names them (read 4 November 2026).
+        assert_eq!(toy(&wii_u_game("0005000010194200", "LEGO® Dimensions™")), Some(Toy::ToyPad));
+        assert_eq!(toy(&wii_u_game("0005000010195D00", "LEGO® DIMENSIONS™")), Some(Toy::ToyPad));
         assert_eq!(toy(&wii_u_game("000500001010EC00", "Mario Kart 8")), None);
     }
 
     #[test]
-    fn the_trait_reaches_the_base_alone_of_the_toys_that_arent_skylanders() {
-        assert_eq!(infinity_only(Toy::Infinity), Ok(()));
-        assert!(infinity_only(Toy::ToyPad).is_err());
-        assert!(infinity_only(Toy::Skylanders).is_err());
+    fn the_toy_calls_never_reach_the_portal() {
+        use crate::backends::EmulatorBackend;
+        let refused = Err(super::super::NO_TOY.to_string());
+        let figure = ToyFigure { name: "Spyro".into(), number: 1, series: None };
+        let file = Path::new("C:\\Figures\\Spyro.sky");
+        assert_eq!(Cemu.toy_places(0, Toy::Skylanders), refused);
+        assert_eq!(Cemu.toy_load(0, Toy::Skylanders, 0, file), refused);
+        assert_eq!(Cemu.toy_remove(0, Toy::Skylanders, 0), refused);
+        assert_eq!(Cemu.toy_create(0, Toy::Skylanders, 0, &figure, file), refused);
     }
 
     #[test]
