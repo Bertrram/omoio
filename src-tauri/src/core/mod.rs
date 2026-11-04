@@ -1,6 +1,7 @@
 pub mod catalogue;
 pub mod community;
 pub mod console;
+pub mod ending;
 pub mod figure_data;
 pub mod figures;
 pub mod game_settings;
