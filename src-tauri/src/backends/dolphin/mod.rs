@@ -155,6 +155,45 @@ fn discs<'a>(game: &'a Game, library: &'a [Game]) -> Vec<&'a Path> {
     all
 }
 
+/// Dolphin's arguments that start a game in the Game language picked in
+/// Omoio's settings, none while it is on its default, so Dolphin's own Wii
+/// and GameCube languages stay the user's. A Wii game reads the Wii's
+/// system settings (`SYSCONF_LANGUAGE`, `IPL.LNG`,
+/// Core/Config/SYSCONFSettings.cpp lines 13 and 14), a GameCube game
+/// Dolphin.ini's `[Core] SelectedLanguage` (`MAIN_GC_LANGUAGE`,
+/// Core/Config/MainSettings.cpp line 70), each numbered in core/language.rs.
+///
+/// `--config` sets a value for that run alone, in a layer whose `Save`
+/// writes nothing (`CommandLineConfigLayerLoader`, UICommon/CommandLineParse.cpp
+/// lines 21 to 78, `SYSCONF` and `Dolphin` being system names it knows,
+/// Common/Config/Config.cpp lines 157 to 183), above the NAND's SYSCONF and
+/// Dolphin.ini and below a game's own settings (`SEARCH_ORDER`,
+/// Common/Config/Enums.h lines 39 to 47). Dolphin copies the run's Wii
+/// values into the NAND's SYSCONF for the game (Core/BootManager.cpp lines
+/// 163 to 184) and writes its own back as the game ends
+/// (`TransferSYSCONFControlFromGuest`, Core/ConfigLoaders/BaseConfigLoader.cpp
+/// lines 44 to 81), and after a crash, or Omoio ending it, at its next start
+/// from the copy it kept (`RestoreWiiSettings`, UICommon/UICommon.cpp lines
+/// 126 to 136, Core/WiiRoot.cpp lines 257 to 278). With
+/// `OverrideRegionSettings` off, as it ships (MainSettings.cpp lines 71 and
+/// 72) and as Omoio leaves it, Dolphin then fits the language to the disc's
+/// region (`GetLanguageAdjustedForRegion`, Core/ConfigManager.cpp lines 503
+/// to 549, called from BootManager.cpp lines 90 to 102): a disc from Japan
+/// keeps Japanese, a US disc is in English, or in French or Spanish on the
+/// Wii, and only a European disc takes German, Italian or Dutch. Dolphin
+/// 2609a, read 4 November 2026.
+fn language_args(console: Console, game_language: Option<&str>) -> Vec<String> {
+    use crate::core::language;
+    let setting = match console {
+        Console::Wii => game_language.and_then(language::wii).map(|value| format!("SYSCONF.IPL.LNG={value}")),
+        Console::GameCube => {
+            game_language.and_then(language::gamecube).map(|value| format!("Dolphin.Core.SelectedLanguage={value}"))
+        }
+        Console::Ps3 | Console::WiiU => None,
+    };
+    setting.into_iter().flat_map(|setting| ["--config".to_string(), setting]).collect()
+}
+
 impl Dolphin {
     /// The toy a Wii game is played with, which is plugged in for it, its
     /// window ready to be filled: the Skylanders portal for a Skylanders
@@ -483,7 +522,9 @@ impl super::EmulatorBackend for Dolphin {
     /// (UICommon/CommandLineParse.cpp); named outright, no setting of
     /// another Dolphin's in the registry can send it elsewhere
     /// (`UICommon::SetUserDirectory`). A Wii game starts with the GameCube
-    /// ports Omoio drives empty (controllers.rs, `gamecube_ports_off`).
+    /// ports Omoio drives empty (controllers.rs, `gamecube_ports_off`), and
+    /// any game in the Game language picked in Omoio, if one is
+    /// (`language_args`).
     fn launch(&self, app: &AppHandle, game: &Game) -> Result<crate::process_watch::Launched, String> {
         let exe = install::exe_path(app)?;
         if !exe.is_file() {
@@ -520,6 +561,9 @@ impl super::EmulatorBackend for Dolphin {
             // game alone and is never saved (`CommandLineConfigLayerLoader`).
             command.arg("--config").arg("Dolphin.Core.AutoDiscChange=True");
         }
+        let omoio = app.path().data_dir().map(|dir| dir.join("Omoio").join("settings.json"));
+        let game_language = omoio.ok().and_then(|file| crate::core::settings::Settings::load(&file).game_language);
+        command.args(language_args(self.console, game_language.as_deref()));
         for disc in discs {
             command.arg("--exec").arg(disc);
         }
@@ -669,6 +713,37 @@ mod tests {
         assert_eq!(names(2), ["third.iso", "first.iso", "second.iso"]);
         assert_eq!(names(3), ["another.iso"], "a game of one disc");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_picked_language_goes_to_dolphin_for_the_run_alone() {
+        let config = |setting: &str| vec!["--config".to_string(), setting.to_string()];
+        assert_eq!(language_args(Console::Wii, Some("de")), config("SYSCONF.IPL.LNG=2"));
+        assert_eq!(language_args(Console::GameCube, Some("de")), config("Dolphin.Core.SelectedLanguage=1"));
+        assert_eq!(language_args(Console::Wii, Some("fr")), config("SYSCONF.IPL.LNG=3"));
+        assert_eq!(language_args(Console::GameCube, Some("fr")), config("Dolphin.Core.SelectedLanguage=2"));
+        assert_eq!(language_args(Console::Wii, Some("nl")), config("SYSCONF.IPL.LNG=6"));
+        assert_eq!(language_args(Console::GameCube, Some("nl")), config("Dolphin.Core.SelectedLanguage=5"));
+        assert_eq!(language_args(Console::Wii, Some("en-gb")), config("SYSCONF.IPL.LNG=1"));
+        assert_eq!(language_args(Console::GameCube, Some("en-us")), config("Dolphin.Core.SelectedLanguage=0"));
+
+        // A language the console hasn't got starts its games in English.
+        assert_eq!(language_args(Console::Wii, Some("da")), config("SYSCONF.IPL.LNG=1"));
+        assert_eq!(language_args(Console::GameCube, Some("ru")), config("Dolphin.Core.SelectedLanguage=0"));
+        assert_eq!(language_args(Console::GameCube, Some("ja")), config("Dolphin.Core.SelectedLanguage=0"));
+
+        // The default leaves Dolphin's own languages to it.
+        assert!(language_args(Console::Wii, None).is_empty());
+        assert!(language_args(Console::GameCube, None).is_empty());
+        assert!(language_args(Console::Wii, Some("tlh")).is_empty(), "an id this Omoio doesn't know");
+
+        for language in crate::core::language::LANGUAGES {
+            for console in [Console::Wii, Console::GameCube] {
+                let args = language_args(console, Some(language.id));
+                assert_eq!(args.len(), 2, "{} on the {}", language.id, console.short());
+                assert!(!args.concat().contains("OverrideRegionSettings"), "the disc's region still decides");
+            }
+        }
     }
 
     #[test]
