@@ -672,6 +672,20 @@ button {
   white-space: pre-wrap;
   word-break: break-word;
 }
+/* Sets Omoio's own notes apart from the emulator's lines above them. */
+.session-list-label {
+  display: block;
+  margin-bottom: 2px;
+  font-family: var(--ui);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+.session-lines + .session-list-label {
+  margin-top: 10px;
+}
 .notice.plain,
 .note.plain {
   border-left-color: var(--line2);

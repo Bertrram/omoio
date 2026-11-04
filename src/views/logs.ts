@@ -38,6 +38,13 @@ async function copy(text: string, button: HTMLButtonElement, done: string): Prom
   setTimeout(() => (button.textContent = was), 1600);
 }
 
+function span(className: string, text: string): HTMLSpanElement {
+  const element = document.createElement("span");
+  element.className = className;
+  element.textContent = text;
+  return element;
+}
+
 function sessionCard(session: PlaySession): HTMLElement {
   const ending = ENDING[session.ending];
   const card = document.createElement("div");
@@ -68,32 +75,48 @@ function sessionCard(session: PlaySession): HTMLElement {
   const problems = card.querySelector<HTMLElement>(".session-problems")!;
   const summary = document.createElement("div");
   summary.className = "session-summary";
-  // Only RPCS3's log is read for errors (read_problems in core/playlog.rs
-  // looks for its own marks), so for another emulator a problem is Omoio's
+  // Omoio keeps the line to show with each session (summary, Session in
+  // core/playlog.rs). Sessions kept before it did have none, and back then
+  // only RPCS3's log was read for errors (read_problems in core/playlog.rs
+  // looked for its own marks), so for another emulator a problem is Omoio's
   // own words for why the game didn't start (keep_session_log in
   // session.rs), and is said in full.
-  const ourWords = session.console !== undefined && session.console !== "ps3";
+  const said = session.summary || null;
+  const ourWords = !said && session.console !== undefined && session.console !== "ps3";
   summary.textContent =
-    session.problems.length === 0
+    said ??
+    (session.problems.length === 0
       ? `${emulator} logged no errors.`
       : ourWords
         ? session.problems.join(" ")
-        : `${session.problems.length} error${session.problems.length === 1 ? "" : "s"} logged.`;
+        : `${session.problems.length} error${session.problems.length === 1 ? "" : "s"} logged.`);
   problems.appendChild(summary);
+
+  // The summary is said once, above the list, even when a note says the same.
+  const unsaid = (line: string) => line !== said;
+  const lines = session.problems.filter(unsaid);
+  const notes = (session.notes ?? []).filter(unsaid);
 
   const list = document.createElement("pre");
   list.className = "session-list";
   list.hidden = true;
-  list.textContent = session.problems.join("\n");
+  if (lines.length > 0) list.appendChild(span("session-lines", lines.join("\n")));
+  if (notes.length > 0) {
+    list.append(span("session-list-label", "Omoio's notes"), span("session-lines", notes.join("\n")));
+  }
   problems.appendChild(list);
 
   const show = card.querySelector<HTMLButtonElement>('[data-act="show"]')!;
-  show.disabled = session.problems.length === 0;
+  // Errors are the emulator's own lines. When there are none, only Omoio's
+  // notes, the button names notes, so nobody looks for errors that aren't there.
+  const what = lines.length === 0 && notes.length > 0 ? "notes" : "errors";
+  show.textContent = `Show ${what}`;
+  show.disabled = lines.length === 0 && notes.length === 0;
   // Nothing more to show than the summary says.
   if (ourWords) show.classList.add("gone");
   show.onclick = () => {
     list.hidden = !list.hidden;
-    show.textContent = list.hidden ? "Show errors" : "Hide errors";
+    show.textContent = `${list.hidden ? "Show" : "Hide"} ${what}`;
   };
 
   const promptButton = card.querySelector<HTMLButtonElement>('[data-act="prompt"]')!;
@@ -126,12 +149,14 @@ export async function renderLogs(): Promise<View> {
     );
   } else {
     // The list can hold sessions from every emulator, so the note names none.
-    // RPCS3 and Cemu each start their log afresh when they start (RPCS3
-    // opens it with fs::rewrite, logs::file_writer in rpcs3/util/logs.cpp,
-    // v0.0.43-20267, commit ff91404b; Cemu 2.6 opens log.txt with
-    // std::ios::out, cemuLog_createLogFile in
-    // src/Cemu/Logging/CemuLogging.cpp), and Dolphin only adds to its log, so
-    // Omoio empties it before each game (backends/dolphin/log.rs).
+    // RPCS3 starts its log afresh when it starts (it opens it with
+    // fs::rewrite, logs::file_writer in rpcs3/util/logs.cpp, v0.0.43-20267,
+    // commit ff91404b) and Cemu once a game loads (cemuLog_createLogFile in
+    // src/Cemu/Logging/CemuLogging.cpp opens log.txt with std::ios::out, and
+    // until something calls it the lines wait in memory; for a game that is
+    // InfoLog_TitleLoaded in src/Cafe/CafeSystem.cpp, Omoio's Cemu build
+    // v2.6-2, read 4 November 2026). Dolphin only adds to its log, so Omoio
+    // empties it before each game (backends/dolphin/log.rs).
     const note = document.createElement("div");
     note.className = "notice plain";
     note.textContent =
