@@ -37,8 +37,14 @@ const EXTENSIONS: [&str; 4] = ["sky", "bin", "dump", "dmp"];
 const RECENT: usize = 30;
 
 /// The kind of pad that opened the menu, so its buttons are named as printed
-/// on that pad.
+/// on that pad, or `BY_KEYBOARD` when Insert, Tab or the Portal button
+/// opened it, so the menu names the keys instead (src/portal.ts, `named`).
 static FAMILY: Mutex<String> = Mutex::new(String::new());
+
+/// What `FAMILY` holds for a menu no pad opened: the family the keyboard and
+/// mouse have as a player's pad (core/pad_layout.rs, `Pad::keyboard`), which
+/// no pad plugged in has (pads.rs, `family_of`).
+const BY_KEYBOARD: &str = "keyboard";
 
 /// The key that opens and closes the menu as the pad button does, for a
 /// player with no pad Omoio can read (a player tried F8 and other keys,
@@ -765,7 +771,14 @@ pub fn open_by_button(app: &AppHandle) -> Result<(), String> {
     let (done, opened) = std::sync::mpsc::channel();
     let handle = app.clone();
     app.run_on_main_thread(move || {
-        let _ = done.send(if showing(&handle) { Ok(()) } else { open(&handle) });
+        let _ = done.send(if showing(&handle) {
+            Ok(())
+        } else {
+            // The button is clicked, or pressed with Enter or Space, in
+            // Omoio's window (src/components/playingBar.ts): no pad opens it.
+            *FAMILY.lock().unwrap() = BY_KEYBOARD.to_string();
+            open(&handle)
+        });
     })
     .map_err(|_| "Couldn't open the portal menu.".to_string())?;
     opened
@@ -849,9 +862,10 @@ pub fn watch(app: AppHandle, pid: u32) {
             let by_key = (key && !with_shift_or_ctrl() && omoio_or_game_in_front(session.window()))
                 || (second && !key_held(VK_CONTROL) && !switched && game_or_menu_in_front(&app, session.window()));
             if by_pad || by_key {
-                if let Some(pad) = pressing.filter(|_| by_pad) {
-                    *FAMILY.lock().unwrap() = pad.family;
-                }
+                *FAMILY.lock().unwrap() = match pressing.filter(|_| by_pad) {
+                    Some(pad) => pad.family,
+                    None => BY_KEYBOARD.to_string(),
+                };
                 let handle = app.clone();
                 // Windows are made and shown on the main thread.
                 let _ = app.run_on_main_thread(move || {

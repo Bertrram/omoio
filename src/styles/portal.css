@@ -137,14 +137,26 @@ body {
   border-bottom-color: var(--brand);
 }
 
+/* The labels at the ends of the tab bar are buttons as well. A press moves
+   to the next tab on pointer-down and the bar is drawn again at once, so the
+   tab moving is the feedback. */
 .portal-bumper {
   flex: none;
   padding: 3px 8px;
+  background: none;
   border: 1px solid var(--line2);
   border-radius: 5px;
   color: var(--mute);
+  font: inherit;
   font-size: 12px;
   font-weight: 700;
+  cursor: pointer;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .portal-bumper:hover {
+    color: var(--ink);
+  }
 }
 
 /* ---- the figures ---- */
@@ -1977,7 +1989,8 @@ body {
   color: var(--mute);
 }
 
-/* "B or Insert Close": the pad's button and the keyboard's key. */
+/* "B or Tab Close": the pad's button and the keyboard's key, or "Esc or Tab
+   Close" when the menu names the keys. */
 .portal-or {
   margin-right: 7px;
 }

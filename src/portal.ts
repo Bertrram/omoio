@@ -10,6 +10,7 @@ import {
   figures as listFigures,
   onCommunityProgress,
   onPortalMenu,
+  padsConnected,
   padsHeld,
   portalClear,
   portalCreate,
@@ -30,6 +31,7 @@ import {
   type MadeFigures,
   type Movement,
   type Offer,
+  type Pad,
   type PadFamily,
   type SkylandersGame,
   type Terrain,
@@ -46,11 +48,12 @@ import swapperIcon from "./icons/swappers.svg";
 /// each element, then swappers, items such as the treasure chest and the
 /// swords, and adventure packs. SuperChargers puts its garage of vehicles
 /// next to Saved instead, and the older pieces last. Imaginators puts its
-/// Creation Crystals and its Senseis there, the Senseis by battle class. The
-/// d-pad or left stick moves, the bottom face button puts a figure on the
-/// portal, the left one takes it off, the right one closes, and in
-/// SuperChargers the top one puts a SuperCharger and its vehicle on
-/// together. Mouse and keyboard work as well.
+/// Creation Crystals and its Senseis there, the Senseis by battle class, and
+/// SWAP Force its swappers. The d-pad or left stick moves, the bottom face
+/// button puts a figure on the portal, the left one takes it off, the right
+/// one closes, and in SuperChargers the top one puts a SuperCharger and its
+/// vehicle on together. Mouse and keyboard work as well, and the menu names
+/// the keys when it was opened with one or one was pressed last.
 ///
 /// A character is made by the emulator's own figure maker the first time it
 /// is chosen, and saved. After that the saved figure goes on, so it keeps
@@ -64,6 +67,26 @@ const COLUMNS = 5;
 /// every keyboard has one). The page itself does nothing
 /// with it: Omoio reads it from wherever it is pressed.
 const MENU_KEY = "Tab";
+
+/// Holding the top face button on a saved figure, which deletes it, named as
+/// a place of its own: the keyboard holds Y for it, since its top face
+/// button, P, pairs.
+const HOLD = "North held";
+
+/// The keys that do each place's job, as the page's own key handler maps
+/// them (the keydown listener at the end of this file), named as Big
+/// Picture names the same keys (src/bigpicture/keys.ts). Backspace and
+/// Delete both take a figure off; Backspace is the one named, since
+/// "Delete" beside "Take off" would read as deleting the figure.
+const KEYS: Record<string, string> = {
+  South: "Enter",
+  East: "Esc",
+  West: "Backspace",
+  North: "P",
+  [HOLD]: "Y",
+  LB: "PgUp",
+  RB: "PgDn",
+};
 
 /// A direction held down keeps moving after a pause, as on a console.
 const REPEAT_AFTER = 380;
@@ -350,7 +373,13 @@ const root = document.getElementById("portal")!;
 
 /// The game running, which decides the order of the tabs.
 let game: SkylandersGame | null = null;
-let family: PadFamily = "generic";
+/// The kind of pad whose buttons the menu names, as printed on it: the one
+/// that opened the menu. `null` while only keys have opened it.
+let family: PadFamily | null = null;
+/// Whether the menu names the keyboard's keys instead of a pad's buttons:
+/// it was opened with Insert, Tab or the Portal button, or a key was pressed
+/// since.
+let keysNamed = false;
 let shown = false;
 let asking = false;
 let onPortal: string[] = [];
@@ -398,6 +427,41 @@ let pictures: {
   firstOf: Map<number, string>;
   elsewhere: Record<string, string>;
 } | null = null;
+
+/// A place on the pad, such as "South", as the menu names it to the player:
+/// the key that does its job, or the button as printed on the pad.
+function named(place: string): string {
+  if (keysNamed) return KEYS[place] ?? place;
+  return nameOf(family ?? "generic", place === HOLD ? "North" : place);
+}
+
+/// Takes in what opened the menu, as Omoio tells it (`family` in
+/// src-tauri/src/portal_menu.rs): a kind of pad, or "keyboard" for Insert,
+/// Tab and the Portal button. The kind of pad that opened it last is kept
+/// for when a pad is pressed in a menu a key opened.
+function openedBy(opener: string) {
+  keysNamed = opener === "keyboard";
+  if (!keysNamed) family = opener as PadFamily;
+}
+
+/// The names follow what was pressed last, as Big Picture's hints do (`act`
+/// in src/bigpicture/bigPicture.ts): a key the menu takes names the keys.
+function pressedKey() {
+  if (keysNamed) return;
+  keysNamed = true;
+  render();
+}
+
+/// A pad pressed names the pad's buttons again. Omoio reads only what is
+/// held on the pads, not on which one, so in a menu only keys have opened
+/// the first pad plugged in stands for it, as in Big Picture (`readPads`
+/// there).
+async function pressedPad() {
+  if (!keysNamed) return;
+  if (!family) family = (await padsConnected().catch((): Pad[] => []))[0]?.family ?? "generic";
+  keysNamed = false;
+  render();
+}
 
 /// A figure's picture, or its plain version's when its variant has none of
 /// its own, or failing that any version's: Trap Team names its pictures by
@@ -700,14 +764,16 @@ function buildTabs() {
   // games before, which do smaller things in it, come last. Imaginators is
   // about the Imaginators made in its Creation Crystals and the Senseis who
   // teach them, so those come next to Saved, and the older pieces last as
-  // well; it catches no villains. Everywhere else traps sit next to Saved,
-  // since they go on and off all through a Trap Team game, with the
-  // villains they hold right after.
-  const orders: Partial<Record<SkylandersGame, (Tab | null)[]>> = {
-    superchargers: [garage(offers.filter((offer) => offer.kind === "vehicle").map(entry)), ...elementTabs, otherTab, swapperTab, trophies, trapTab, kindTab("item"), kindTab("adventure")],
-    imaginators: [crystalTab, senseiTab, ...elementTabs, otherTab, swapperTab, trapTab, kindTab("item"), kindTab("adventure"), kindTab("vehicle"), trophies],
-  };
-  const order: (Tab | null)[] = (game && orders[game]) || [
+  // well; it catches no villains. SWAP Force is about its swappers, whose
+  // bottom halves' ways of getting about are what open its side areas, the
+  // Swap Zone Challenges (Wikipedia's "Skylanders: Swap Force", read 4
+  // November 2026), so they come next to Saved there, and the rest follow
+  // in the usual order. After the elements and Other they sat past the
+  // window's edge, and a player looking for them found "they just aren't
+  // there" (SCAREalth on Omoio's Discord, passed on 4 November 2026). In
+  // the usual order traps sit next to Saved, since they go on and off all
+  // through a Trap Team game, with the villains they hold right after.
+  const usual: (Tab | null)[] = [
     trapTab,
     villainTab,
     ...elementTabs,
@@ -718,6 +784,12 @@ function buildTabs() {
     kindTab("vehicle"),
     kindTab("trophy"),
   ];
+  const orders: Partial<Record<SkylandersGame, (Tab | null)[]>> = {
+    superchargers: [garage(offers.filter((offer) => offer.kind === "vehicle").map(entry)), ...elementTabs, otherTab, swapperTab, trophies, trapTab, kindTab("item"), kindTab("adventure")],
+    imaginators: [crystalTab, senseiTab, ...elementTabs, otherTab, swapperTab, trapTab, kindTab("item"), kindTab("adventure"), kindTab("vehicle"), trophies],
+    swapforce: [swapperTab, ...usual.filter((each) => each !== swapperTab)],
+  };
+  const order: (Tab | null)[] = (game && orders[game]) || usual;
   tabs = [saved, ...order.filter((each): each is Tab => Boolean(each && (each.tray || each.entries.length > 0)))];
   const again = tabs.findIndex((each) => each.label === kept);
   tab = again >= 0 ? again : Math.min(tab, tabs.length - 1);
@@ -1212,8 +1284,25 @@ function renderTabs(): HTMLElement {
     button.onclick = () => showTab(index);
     bar.appendChild(button);
   });
-  nav.append(node("span", "portal-bumper", nameOf(family, "LB")), bar, node("span", "portal-bumper", nameOf(family, "RB")));
+  nav.append(bumper("LB", "Previous tab"), bar, bumper("RB", "Next tab"));
   return nav;
+}
+
+/// The label at an end of the tab bar names the button or key that goes to
+/// the tab before or after, and a click on it does the same, through the
+/// same `press`. It goes on pointer-down, as all of Omoio's feedback does, and the
+/// press is kept from taking the focus: the menu keeps its selection itself,
+/// and the keys and the pad move it.
+function bumper(place: "LB" | "RB", words: string): HTMLElement {
+  const label = node("button", "portal-bumper", named(place));
+  label.tabIndex = -1;
+  label.setAttribute("aria-label", words);
+  label.onpointerdown = (event) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    press(place);
+  };
+  return label;
 }
 
 function renderBody(): HTMLElement {
@@ -1639,7 +1728,7 @@ function renderVehicle(entry: Entry | undefined): HTMLElement {
   }
   if (pair && !pairOn(entry)) {
     const both = node("button", "portal-card-action");
-    both.append(node("kbd", "", nameOf(family, "North")), pairWords(entry, pair.other));
+    both.append(node("kbd", "", named("North")), pairWords(entry, pair.other));
     both.onclick = () => {
       zone = "grid";
       void act(pairUp);
@@ -1681,7 +1770,7 @@ function patchWords(): { title: string; detail: string } | null {
     case "not_downloaded":
       return {
         title: "Cemu's packs aren't here yet",
-        detail: `Imaginators checks a factory signature that the Senseis and crystals Omoio makes can't carry. Cemu's ${pack}, one of its community packs, takes that check away. ${nameOf(family, "South")} on a new Sensei or crystal gets them.`,
+        detail: `Imaginators checks a factory signature that the Senseis and crystals Omoio makes can't carry. Cemu's ${pack}, one of its community packs, takes that check away. ${named("South")} on a new Sensei or crystal gets them.`,
       };
     case "missing":
       return {
@@ -2078,7 +2167,7 @@ function renderFoot(): HTMLElement {
     hints.push(["South", southWords(entry)]);
     if (entry && isOn(entry)) hints.push(["West", "Take off"]);
     const pair = pairOf(entry);
-    if (deletable(entry)) hints.push(["North", "Hold to delete"]);
+    if (deletable(entry)) hints.push([HOLD, "Hold to delete"]);
     else if (entry && pair && !pairOn(entry)) hints.push(["North", pairWords(entry, pair.other)]);
   }
   const closing = !gettingPacks && !pickedTop;
@@ -2092,7 +2181,7 @@ function hintRow(hints: [string, string][], closing: boolean): HTMLElement {
   const row = node("div", "portal-hints");
   for (const [input, words] of hints) {
     const hint = node("span", "portal-hint");
-    hint.append(node("kbd", "", nameOf(family, input)));
+    hint.append(node("kbd", "", named(input)));
     // The keyboard's Tab, on every keyboard, opens and closes the menu as
     // the pad's button does, and so does Insert (MENU_KEY and
     // SECOND_MENU_KEY in src-tauri/src/portal_menu.rs), for a player whose
@@ -2525,7 +2614,7 @@ function tellDriving(id: number, leaving: string[]) {
   const words = [
     leaving.length > 0 ? `${leaving.join(" and ")} came off.` : "",
     "Put a Skylander on with it.",
-    driver ? `${nameOf(family, "North")} puts ${driver} on.` : "",
+    driver ? `${named("North")} puts ${driver} on.` : "",
   ];
   notify({
     kind: "hint",
@@ -2722,9 +2811,12 @@ async function loadOffers() {
     // vehicle needs a Skylander on the portal to drive it (Stevivor's review
     // of the game, read 7 October 2026), so a Skylander comes first. Nothing
     // found says what Imaginators asks for first, a Skylander, a Sensei or a
-    // crystal, so it opens there too.
+    // crystal, so it opens there too. So does SWAP Force, as it did before
+    // its swappers moved next to Saved: a swapper takes two places on the
+    // portal and a pick of each half (`putSwapper`), a Skylander of an
+    // element one place and one press.
     const firstElement = tabs.findIndex((each) => each.element);
-    const elementFirst = game === "superchargers" || game === "imaginators";
+    const elementFirst = game === "superchargers" || game === "imaginators" || game === "swapforce";
     if (mine.length === 0 && tab === 0 && tabs.length > 1) tab = elementFirst && firstElement > 0 ? firstElement : 1;
     render();
   }
@@ -2825,6 +2917,7 @@ window.setInterval(async () => {
     for (const input of now) {
       if (!held.has(input)) {
         downSince.set(input, time);
+        if (keysNamed) await pressedPad();
         press(input);
       } else if (
         MOVES[input] &&
@@ -2873,7 +2966,7 @@ function startHold(by: "pad" | "key") {
   const entry = tabs[tab]?.entries[at];
   if (!deletable(entry) || holding || acting) return;
   if (isOn(entry)) {
-    notify({ kind: "info", title: `Take ${entry.name} off the portal first`, detail: `Then hold ${nameOf(family, "North")} on it to delete it.` });
+    notify({ kind: "info", title: `Take ${entry.name} off the portal first`, detail: `Then hold ${named(HOLD)} on it to delete it.` });
     return;
   }
   holding = { path: entry.figure.path, name: entry.name, since: Date.now(), by };
@@ -2932,10 +3025,12 @@ document.addEventListener("keydown", (event) => {
     event.preventDefault();
     if (!event.repeat) {
       keyHeld = true;
+      pressedKey();
       if (deletable(tabs[tab]?.entries[at])) startHold("key");
     }
     return;
   }
+  // KEYS at the top names these keys to the player, so it changes with them.
   const keys: Record<string, () => void> = {
     ArrowUp: () => press("Up"),
     ArrowDown: () => press("Down"),
@@ -2957,6 +3052,7 @@ document.addEventListener("keydown", (event) => {
     // A key held down repeats; only moving through the menu should, the
     // arrows and the page keys, so a held Enter never makes a second figure.
     if (event.repeat && !event.key.startsWith("Arrow") && !event.key.startsWith("Page")) return;
+    pressedKey();
     act();
   }
 });
@@ -2966,7 +3062,7 @@ document.addEventListener("keydown", (event) => {
 async function show() {
   notify(working);
   try {
-    family = (await portalMenuFamily()) as PadFamily;
+    openedBy(await portalMenuFamily());
     // Nothing is asked of the portal over a game the menu isn't offered in.
     unavailable = await portalMenuNote().catch(() => null);
     if (unavailable) {
@@ -3002,7 +3098,7 @@ async function show() {
 }
 
 void onPortalMenu((state) => {
-  family = state.family as PadFamily;
+  openedBy(state.family);
   if (state.open) void show();
   else {
     shown = false;
