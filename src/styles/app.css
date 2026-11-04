@@ -1185,9 +1185,9 @@ img.cover-behind {
   margin-left: auto;
 }
 /* Played in Omoio, beside the rating. On a narrow tile it is what gives way,
-   and its title says the whole of it. */
+   long before the title id does, and its title says the whole of it. */
 .meta .played {
-  flex: 0 1 auto;
+  flex: 0 1000 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
