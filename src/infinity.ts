@@ -22,6 +22,7 @@ import {
 import { node, svg } from "./menu/dom";
 import { bumper, drive, hintRow, HOLD, keyHeld, MOVES, named, openedBy, skipHeld, type Move } from "./menu/input";
 import { notice, notify, problem, type Notice } from "./menu/notices";
+import { drawPiece, pictureOf, readPictures } from "./menu/pictures";
 import { act, acting, inTurn } from "./menu/turns";
 
 /// The Disney Infinity base menu, drawn by Omoio over the running game in
@@ -40,7 +41,8 @@ import { act, acting, inTurn } from "./menu/turns";
 /// A figure made here is kept, and put on from then on, since the game keeps
 /// a figure's progress on the figure. Omoio never reads a figure file: one
 /// it made it knows from its own record, and one the player brought only by
-/// the name the emulator gives it once it is on the base.
+/// the name the emulator gives it once it is on the base. A piece shows its
+/// own picture where Omoio has read the game's (src/menu/pictures.ts).
 
 /// How many tiles sit side by side, which is also how far up or down moves.
 const COLUMNS = 4;
@@ -284,6 +286,23 @@ function pieceOn(spot: number): Piece {
   return pieceOf(kept?.kind) ?? pieceOf(offers.find((offer) => offer.name === places[spot])?.kind) ?? SPOTS[spot].piece;
 }
 
+/// The number of what is on a place, for its picture: its file's figure
+/// when Omoio put that on and knows it, or the figure the emulator names it
+/// as, among those it can make and then the player's. `null` for a figure
+/// Omoio doesn't know.
+function numberOn(spot: number): number | null {
+  const name = places[spot];
+  if (!name) return null;
+  const kept = placeFiles[spot] && files.find((file) => file.path === placeFiles[spot]!.path)?.figure;
+  if (kept?.name === name) return kept.number;
+  return offers.find((offer) => offer.name === name)?.number ?? files.find((file) => file.figure?.name === name)?.figure?.number ?? null;
+}
+
+/// The number of what a tile stands for, for its picture.
+function numberOf(entry: Entry): number | null {
+  return entry.offer?.number ?? entry.file?.figure?.number ?? null;
+}
+
 function tint(piece: Piece | null): string {
   return `toy-${piece ?? "unknown"}`;
 }
@@ -320,7 +339,7 @@ function renderSpot(spot: number): HTMLElement {
   const shape = node("span", "toy-spot-shape");
   shape.innerHTML = `<svg viewBox="0 0 100 100" aria-hidden="true">${info.piece === "character" || info.piece === "round_disc" ? ROUND_EDGE : HEX_EDGE}</svg>`;
   const piece = node("span", `toy-spot-piece ${tint(name ? pieceOn(spot) : info.piece)}`);
-  piece.innerHTML = shapeOf(name ? pieceOn(spot) : info.piece);
+  drawPiece(piece, pictureOf(numberOn(spot)), shapeOf(name ? pieceOn(spot) : info.piece));
   shape.appendChild(piece);
   button.append(shape, node("span", "toy-spot-label", info.name));
   button.appendChild(node("span", name ? "toy-spot-name" : "toy-spot-name empty", name || "Empty"));
@@ -372,7 +391,7 @@ function renderTile(entry: Entry, index: number): HTMLElement {
   const spot = placeOf(entry);
   const tile = node("button", `portal-item${index === at ? " sel" : ""}${spot >= 0 ? " on" : ""}`);
   const art = node("span", `portal-art ${tint(entry.piece)}`);
-  art.innerHTML = shapeOf(entry.piece);
+  drawPiece(art, pictureOf(numberOf(entry)), shapeOf(entry.piece));
   if (spot >= 0) {
     const badge = node("span", "portal-badge on");
     badge.innerHTML = svg(BADGE_ON);
@@ -766,6 +785,7 @@ async function show() {
     playing = await toyGame().catch(() => null);
     await skipHeld();
     shown = true;
+    await readPictures();
     await refresh();
     await loadOffers();
   } finally {

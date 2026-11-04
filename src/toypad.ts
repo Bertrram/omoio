@@ -24,6 +24,7 @@ import {
 import { node, svg } from "./menu/dom";
 import { bumper, drive, hintRow, HOLD, keyHeld, MOVES, named, openedBy, skipHeld, type Move } from "./menu/input";
 import { notice, notify, problem, type Notice } from "./menu/notices";
+import { drawPiece, pictureOf, readPictures } from "./menu/pictures";
 import { act, acting, inTurn } from "./menu/turns";
 
 /// The LEGO Dimensions Toy Pad menu, drawn by Omoio over the running game in
@@ -43,7 +44,8 @@ import { act, acting, inTurn } from "./menu/turns";
 /// and one the player brought only by the name the emulator gives it once it
 /// is on the Toy Pad. It makes minifigures and Blank Tags, never a vehicle
 /// from its number: the game writes a vehicle or gadget to a Blank Tag when
-/// the player builds it.
+/// the player builds it. A tag shows its own picture where Omoio has read the
+/// game's (src/menu/pictures.ts).
 
 /// How many tiles sit side by side, which is also how far up or down moves.
 const COLUMNS = 4;
@@ -364,6 +366,25 @@ function pieceOn(spot: number): Piece | null {
   return kept ? filePiece(kept) : null;
 }
 
+/// The number of what is on a place, for its picture: its file's figure
+/// when Omoio put that on and knows what the game has written to it, or the
+/// minifigure the emulator names it as, or one of the player's tags of that
+/// name. Only a tag's own record knows a vehicle's number, since Omoio
+/// makes none. `null` for a tag Omoio doesn't know.
+function numberOn(spot: number): number | null {
+  const name = places[spot];
+  if (!name) return null;
+  const kept = placeFiles[spot] && files.find((file) => file.path === placeFiles[spot]!.path)?.figure;
+  if (kept?.name === name) return kept.number;
+  return offers.find((offer) => offer.name === name)?.number ?? files.find((file) => file.figure?.name === name)?.figure?.number ?? null;
+}
+
+/// The number of what a tile stands for, for its picture: for a Blank Tag
+/// the game has built on, the vehicle or gadget on it.
+function numberOf(entry: Entry): number | null {
+  return entry.offer?.number ?? entry.file?.figure?.number ?? null;
+}
+
 function tint(piece: Piece | null): string {
   return `toy-${piece ?? "unknown"}`;
 }
@@ -604,7 +625,7 @@ function renderSpot(spot: number): HTMLElement {
   if (spot === place) button.setAttribute("aria-current", "true");
   const piece = ghost ? pieceOn(ghost.from) : name ? pieceOn(spot) : null;
   const tag = node("span", `toypad-tag${name || ghost ? ` ${tint(piece)}` : ""}`);
-  if (name || ghost) tag.innerHTML = shapeOf(piece);
+  if (name || ghost) drawPiece(tag, pictureOf(numberOn(ghost ? ghost.from : spot)), shapeOf(piece));
   // An empty place the tag can go to says so by its shape as well as its
   // ring, since the game may light the pad in the ring's own colour.
   else if (lifted && canGo(spot)) tag.innerHTML = svg(DROP);
@@ -693,7 +714,7 @@ function renderTile(entry: Entry, index: number): HTMLElement {
   const spot = placeOf(entry);
   const tile = node("button", `portal-item${index === at ? " sel" : ""}${spot >= 0 ? " on" : ""}`);
   const art = node("span", `portal-art ${tint(entry.piece)}`);
-  art.innerHTML = shapeOf(entry.piece);
+  drawPiece(art, pictureOf(numberOf(entry)), shapeOf(entry.piece));
   if (spot >= 0) {
     const badge = node("span", "portal-badge on");
     badge.innerHTML = svg(BADGE_ON);
@@ -1219,6 +1240,7 @@ async function show() {
     await skipHeld();
     shown = true;
     watchLights(true);
+    await readPictures();
     await refresh();
     await loadOffers();
   } finally {

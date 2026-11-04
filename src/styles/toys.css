@@ -143,6 +143,25 @@
   filter: drop-shadow(0 4px 12px color-mix(in srgb, var(--tint) 45%, transparent));
 }
 
+/* A piece's own picture fills more of its place than Omoio's drawing, as
+   the toy would, with room left for the place's ring: a Power Disc sits
+   inside it, and a character stands a little over it. */
+.toy-spot-piece.pictured {
+  inset: 14%;
+}
+
+.toy-spot.big .toy-spot-piece.pictured {
+  inset: 9%;
+}
+
+.toy-spot-piece > img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  filter: drop-shadow(0 4px 10px rgb(var(--shadow) / 0.5));
+}
+
 .toy-spot:not(.on) .toy-spot-piece {
   color: var(--dim);
   opacity: 0.55;
@@ -503,6 +522,14 @@
   filter: drop-shadow(0 4px 10px color-mix(in srgb, var(--tint) 45%, transparent));
 }
 
+/* A tag's own picture, nearly as wide as the tag, as the toy stands on it. */
+.toypad-tag > img {
+  width: 80%;
+  height: 80%;
+  object-fit: contain;
+  filter: drop-shadow(0 4px 10px rgb(var(--shadow) / 0.5));
+}
+
 .toypad-spot.on .toypad-tag {
   border: 3px solid var(--go);
   background: color-mix(in srgb, var(--raise2) 88%, transparent);
@@ -546,8 +573,8 @@
   border-style: dashed;
 }
 
-.toypad-spot.from .toypad-tag svg,
-.toypad-spot.ghost .toypad-tag svg {
+.toypad-spot.from .toypad-tag > *,
+.toypad-spot.ghost .toypad-tag > * {
   opacity: 0.5;
 }
 
