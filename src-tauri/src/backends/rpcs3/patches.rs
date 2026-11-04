@@ -250,11 +250,16 @@ pub fn for_title(app: &AppHandle, title_id: &str, app_version: &str) -> Vec<Patc
 /// looks for the game's own serial first and falls back to "All". An "All"
 /// patch is only listed when it is on Omoio's list of fixes for this game:
 /// the list holds hundreds of them, and most do nothing for a given game.
+///
+/// A patch shows as on only where RPCS3 applies it to the version it runs:
+/// its switch sits under the keys `entry_keys` gives for that version. A
+/// switch left under another version is that version's alone, so it shows
+/// as off, and switching the patch on writes the running version's.
 fn match_title(
     top: &Hash,
     title_id: &str,
     app_version: &str,
-    enabled: &[(String, String)],
+    switched_on: &[[String; 5]],
 ) -> Vec<Patch> {
     let mut found = Vec::new();
 
@@ -278,9 +283,9 @@ fn match_title(
                 let versions: Vec<String> = versions.iter().filter_map(scalar).collect();
                 let applies = versions.iter().any(|v| v == K_ALL || v == app_version);
 
-                found.push(Patch {
+                let mut patch = Patch {
                     applies,
-                    enabled: enabled.iter().any(|(h, n)| *h == hash && *n == name),
+                    enabled: false,
                     hash: hash.clone(),
                     name: name.clone(),
                     game: game.clone(),
@@ -290,7 +295,9 @@ fn match_title(
                     version: text(info, K_PATCH_VERSION),
                     versions,
                     fix: fix.map(str::to_string),
-                });
+                };
+                patch.enabled = switched_on.contains(&entry_keys(&patch, title_id, app_version));
+                found.push(patch);
             }
         }
     }
@@ -334,23 +341,39 @@ fn entries_last_wins(map: &Hash) -> Vec<(String, &Yaml)> {
     out
 }
 
-/// Which patches are switched on, as hash and name. RPCS3 writes an entry only
-/// while a patch is enabled, so presence is the whole answer.
-fn read_enabled(app: &AppHandle) -> Vec<(String, String)> {
+/// The switches in RPCS3's patch_config.yml that are on (`switched_on`).
+fn read_enabled(app: &AppHandle) -> Vec<[String; 5]> {
     let Ok(root) = config_path(app).and_then(|p| load(&p)) else {
         return Vec::new();
     };
-    let Some(top) = root.as_hash() else {
-        return Vec::new();
-    };
+    root.as_hash().map(switched_on).unwrap_or_default()
+}
+
+/// Every switch that is on, by where it sits: hash, name, game, serial and
+/// version, the keys RPCS3 reads it by (`entry_keys`). RPCS3 keeps a patch
+/// switched off only when its own values were changed, as an entry without
+/// `Enabled`, which it reads as off, and an entry in RPCS3's older form is
+/// the switch alone (Utilities/bin_patch.cpp, `save_config` and
+/// `load_config`, RPCS3/rpcs3 b2e52d6, read 4 November 2026).
+fn switched_on(top: &Hash) -> Vec<[String; 5]> {
+    fn maps(map: &Hash) -> impl Iterator<Item = (String, &Hash)> {
+        entries_last_wins(map).into_iter().filter_map(|(key, value)| Some((key, value.as_hash()?)))
+    }
     let mut on = Vec::new();
-    for (hash_key, entries) in top {
-        let (Some(hash), Some(entries)) = (hash_key.as_str(), entries.as_hash()) else {
-            continue;
-        };
-        for (name_key, _) in entries {
-            if let Some(name) = name_key.as_str() {
-                on.push((hash.to_string(), name.to_string()));
+    for (hash, names) in maps(top) {
+        for (name, games) in maps(names) {
+            for (game, serials) in maps(games) {
+                for (serial, versions) in maps(serials) {
+                    for (version, values) in entries_last_wins(versions) {
+                        let enabled = match values {
+                            Yaml::Hash(values) => last(values, K_ENABLED) == Some(&Yaml::Boolean(true)),
+                            legacy => *legacy == Yaml::Boolean(true),
+                        };
+                        if enabled {
+                            on.push([hash.clone(), name.clone(), game.clone(), serial.clone(), version]);
+                        }
+                    }
+                }
             }
         }
     }
@@ -408,16 +431,7 @@ pub fn set_enabled(
         _ => Hash::new(),
     };
 
-    let [hash, name, game, serial, version] = entry_keys(patch, title_id, app_version);
-    if on {
-        let leaf = nested(
-            nested(nested(nested(nested(&mut root, &hash), &name), &game), &serial),
-            &version,
-        );
-        leaf.insert(Yaml::String(K_ENABLED.into()), Yaml::Boolean(true));
-    } else {
-        remove(&mut root, &[&hash, &name, &game, &serial, &version]);
-    }
+    switch(&mut root, &entry_keys(patch, title_id, app_version), on);
 
     if root.is_empty() {
         if path.exists() {
@@ -434,6 +448,17 @@ pub fn set_enabled(
         .dump(&Yaml::Hash(root))
         .map_err(|e| e.to_string())?;
     std::fs::write(&path, out).map_err(|e| e.to_string())
+}
+
+/// Puts one patch's switch in under `keys` (`entry_keys`), or takes it out.
+fn switch(root: &mut Hash, keys: &[String; 5], on: bool) {
+    let [hash, name, game, serial, version] = keys;
+    if on {
+        let leaf = nested(nested(nested(nested(nested(root, hash), name), game), serial), version);
+        leaf.insert(Yaml::String(K_ENABLED.into()), Yaml::Boolean(true));
+    } else {
+        remove(root, &[hash.as_str(), name.as_str(), game.as_str(), serial.as_str(), version.as_str()]);
+    }
 }
 
 /// Takes one entry out and tidies up behind it, so switching a patch off does
@@ -711,6 +736,95 @@ SPU-def:
         assert!(!found.iter().any(|p| p.name.starts_with("Some other patch")));
         let lbp1 = match_title(root.as_hash().unwrap(), "BCES00141", "01.30", &[]);
         assert!(lbp1.is_empty(), "nothing in this list is for LittleBigPlanet 1");
+    }
+
+    /// A patch written for two versions of one game, as an update leaves a
+    /// game with a choice of two.
+    const TWO_VERSIONS: &str = "\
+PPU-sf:
+  \"60 FPS\":
+    Games:
+      \"Skylanders SWAP Force\":
+        BLES01860: [ 01.00, 01.01 ]
+";
+
+    #[test]
+    fn a_patch_shows_as_on_only_for_the_version_its_switch_was_written_for() {
+        let list = parse(TWO_VERSIONS).unwrap();
+        let shown = |config: &Hash, version: &str| {
+            let found = match_title(list.as_hash().unwrap(), "BLES01860", version, &switched_on(config));
+            found.into_iter().find(|p| p.name == "60 FPS").unwrap()
+        };
+        let mut config = Hash::new();
+        // Switched on while the disc's 01.00 ran.
+        let on_disc = shown(&config, "01.00");
+        switch(&mut config, &entry_keys(&on_disc, "BLES01860", "01.00"), true);
+        assert!(shown(&config, "01.00").enabled);
+        // Updated to 01.01, which RPCS3 reads its own switch for.
+        let updated = shown(&config, "01.01");
+        assert!(updated.applies && !updated.enabled, "01.00's switch isn't 01.01's");
+        // On, and off again, for the version that runs.
+        switch(&mut config, &entry_keys(&updated, "BLES01860", "01.01"), true);
+        assert!(shown(&config, "01.01").enabled);
+        switch(&mut config, &entry_keys(&updated, "BLES01860", "01.01"), false);
+        assert!(!shown(&config, "01.01").enabled, "not stuck on");
+        assert!(shown(&config, "01.00").enabled, "01.00's own is left as it was");
+    }
+
+    #[test]
+    fn a_switch_for_every_version_holds_whatever_version_runs() {
+        let list = parse(LIST).unwrap();
+        let mlaa = |config: &Hash, version: &str| {
+            match_title(list.as_hash().unwrap(), "BCES01663", version, &switched_on(config))
+                .into_iter()
+                .find(|p| p.name.starts_with("Disable SPU MLAA"))
+                .unwrap()
+        };
+        let mut config = Hash::new();
+        let keys = entry_keys(&mlaa(&config, "01.26"), "BCES01663", "01.26");
+        switch(&mut config, &keys, true);
+        // Written out and read back, as set_enabled and for_title do.
+        let mut out = String::new();
+        YamlEmitter::new(&mut out).dump(&Yaml::Hash(config)).unwrap();
+        let config = parse(&out).unwrap();
+        let config = config.as_hash().unwrap();
+        assert!(mlaa(config, "01.26").enabled);
+        assert!(mlaa(config, "01.30").enabled, "an update keeps it on");
+    }
+
+    #[test]
+    fn reads_the_switches_rpcs3_writes() {
+        // Switched on; switched off with a value of its own changed, which
+        // RPCS3 keeps without Enabled; and switched on in RPCS3's older form.
+        let text = "\
+PPU-abc:
+  \"Unlock FPS\":
+    \"LittleBigPlanet 3\":
+      BCES01663:
+        01.26:
+          Enabled: true
+SPU-def:
+  \"Changed, then switched off\":
+    All:
+      All:
+        All:
+          Configurable Values:
+            Speed: 2
+PPU-old:
+  \"From before values\":
+    \"LittleBigPlanet 2\":
+      BCES00850:
+        01.33: true
+";
+        let root = parse(text).unwrap();
+        let keys = |keys: [&str; 5]| keys.map(str::to_string);
+        assert_eq!(
+            switched_on(root.as_hash().unwrap()),
+            [
+                keys(["PPU-abc", "Unlock FPS", "LittleBigPlanet 3", "BCES01663", "01.26"]),
+                keys(["PPU-old", "From before values", "LittleBigPlanet 2", "BCES00850", "01.33"]),
+            ]
+        );
     }
 
     #[test]

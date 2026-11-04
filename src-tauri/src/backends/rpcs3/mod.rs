@@ -744,11 +744,13 @@ impl super::EmulatorBackend for Rpcs3 {
     /// A switch is kept under the version it was made for (`entry_keys` in
     /// patches.rs), and RPCS3 reads only the one under the version it runs
     /// (Utilities/bin_patch.cpp, `patch_engine::apply`, lines 1484 to 1535,
-    /// RPCS3/rpcs3 b2e52d6, read 4 November 2026), but this list reads
-    /// switches by patch alone (`read_enabled`). Until 4 November 2026 Omoio
-    /// took a game updated outside it for its disc's version, so a patch
-    /// written for both versions and switched on then shows on here while
-    /// RPCS3 leaves it off, and switching it off here doesn't clear it.
+    /// RPCS3/rpcs3 b2e52d6, read 4 November 2026), so this list reads the
+    /// same one (`match_title`). Until 4 November 2026 Omoio took a game
+    /// updated outside it for its disc's version, so a patch written for
+    /// both versions may have been switched on under the disc's: it shows
+    /// as off for the update, as RPCS3 has it, and switching it on here
+    /// writes the update's. A patch written for every version keeps its one
+    /// switch whatever version runs.
     fn community_packs(
         &self,
         app: &AppHandle,
