@@ -995,10 +995,41 @@ const ENGLISH: &str = "175";
 ///   from its settings window, GeneralSettings2.cpp line 1075), so there the
 ///   element does nothing and is gone after Cemu's next save, until it is
 ///   written again before the next game.
-fn tune_settings(settings: &Path, toy: Option<Toy>, port: u16) -> std::io::Result<()> {
+/// - The language games start in is the Game language picked in Omoio's
+///   settings (`omoio`), and Cemu's own until one is. It is
+///   `<console_language>`, not the interface's `<language>` above, and Cemu
+///   reads it once as it starts and writes it back with every save
+///   (CemuConfig.cpp lines 50 and 383). A game asking for `cafe.language`
+///   is given it as it is, whatever the game's region (`UCReadSysConfig`,
+///   coreinit_MCP.cpp lines 496 to 505; Bertrram/Cemu v2.6-2, read 4
+///   November 2026). So the value Cemu had before Omoio first changed it is
+///   kept in Omoio's settings, and put back once the setting is back on its
+///   default, after which every game is as it was. A file Cemu hasn't
+///   written it in yet is on Cemu's default, English, which is 1
+///   (`console_language{ CafeConsoleLanguage::EN }`, CemuConfig.h lines
+///   160 to 174 and 401, read 4 November 2026).
+fn tune_settings(settings: &Path, toy: Option<Toy>, port: u16, omoio: &mut Settings) -> std::io::Result<()> {
     let on = |wanted: bool| if wanted { "true" } else { "false" };
     let before = std::fs::read_to_string(settings)?;
     let mut text = set_setting(&before, &[], "language", ENGLISH);
+    let had = setting(&text, &[], "console_language");
+    match omoio.game_language.as_deref().and_then(crate::core::language::cemu) {
+        Some(picked) => {
+            let picked = picked.to_string();
+            if had.as_deref().map(str::trim) != Some(picked.as_str()) {
+                omoio
+                    .language_kept
+                    .entry("cemu".to_string())
+                    .or_insert_with(|| had.unwrap_or_else(|| "1".to_string()));
+                text = set_setting(&text, &[], "console_language", &picked);
+            }
+        }
+        None => {
+            if let Some(kept) = omoio.language_kept.remove("cemu") {
+                text = set_setting(&text, &[], "console_language", &kept);
+            }
+        }
+    }
     for (device, plugged) in [
         ("EmulateSkylanderPortal", Toy::Skylanders),
         ("EmulateInfinityBase", Toy::Infinity),
@@ -1150,7 +1181,17 @@ impl super::EmulatorBackend for Cemu {
         let portable = dir.join("portable");
         let _ = write_first_settings(&portable);
         let toy = toy(game);
-        let _ = tune_settings(&portable.join("settings.xml"), toy, portal::server_port(toy.is_some()));
+        let omoio_file = settings_file(app);
+        let mut omoio = omoio_file.as_deref().map(Settings::load).unwrap_or_default();
+        let kept = omoio.language_kept.clone();
+        let tuned = tune_settings(&portable.join("settings.xml"), toy, portal::server_port(toy.is_some()), &mut omoio);
+        // Only once Cemu's file holds the change, so a value is never
+        // forgotten that wasn't put back.
+        if let (Ok(()), Ok(file)) = (tuned, &omoio_file) {
+            if omoio.language_kept != kept {
+                let _ = omoio.save(file);
+            }
+        }
         if toy == Some(Toy::Skylanders) {
             if let Ok(data) = app.path().data_dir() {
                 portal::know_kept_names(&data.join("Omoio").join(crate::core::figures::characters_file(Console::WiiU)));
@@ -1927,7 +1968,7 @@ Deluxe");
         let file = dir.join("settings.xml");
 
         write_first_settings(&dir).unwrap();
-        tune_settings(&file, SKYLANDERS, 28014).unwrap();
+        tune_settings(&file, SKYLANDERS, 28014, &mut Settings::default()).unwrap();
         let text = std::fs::read_to_string(&file).unwrap();
         assert!(text.contains("<EmulateSkylanderPortal>true</EmulateSkylanderPortal>"), "{text}");
         assert!(text.contains("<api>1</api>"), "the rest is left alone");
@@ -1939,7 +1980,7 @@ Deluxe");
         assert!(text.contains("<y>-30000</y>"), "{text}");
         assert_eq!(text.matches("<language>175</language>").count(), 1, "{text}");
 
-        tune_settings(&file, None, 28014).unwrap();
+        tune_settings(&file, None, 28014, &mut Settings::default()).unwrap();
         let text = std::fs::read_to_string(&file).unwrap();
         assert!(text.contains("<EmulateSkylanderPortal>false</EmulateSkylanderPortal>"));
         assert_eq!(text.matches("<EmulatedUsbDevices>").count(), 1, "switched, not added twice");
@@ -1985,7 +2026,7 @@ Deluxe");
     fn tuned(dir: &Path, before: &str, toy: Option<Toy>) -> String {
         let file = dir.join("settings.xml");
         std::fs::write(&file, before).unwrap();
-        tune_settings(&file, toy, 28014).unwrap();
+        tune_settings(&file, toy, 28014, &mut Settings::default()).unwrap();
         std::fs::read_to_string(&file).unwrap()
     }
 
@@ -2062,11 +2103,11 @@ Deluxe");
 
         // Another game first: a file that never had the element stays so.
         write_first_settings(&dir).unwrap();
-        tune_settings(&file, None, 28014).unwrap();
+        tune_settings(&file, None, 28014, &mut Settings::default()).unwrap();
         let text = std::fs::read_to_string(&file).unwrap();
         assert!(!text.contains("SkylandersIPC"), "{text}");
 
-        tune_settings(&file, SKYLANDERS, 28014).unwrap();
+        tune_settings(&file, SKYLANDERS, 28014, &mut Settings::default()).unwrap();
         let text = std::fs::read_to_string(&file).unwrap();
         assert!(
             text.contains("<SkylandersIPC><enabled>true</enabled><port>28014</port>\n</SkylandersIPC>\n</content>"),
@@ -2074,19 +2115,19 @@ Deluxe");
         );
 
         // Another port, when another program has Omoio's.
-        tune_settings(&file, SKYLANDERS, 51234).unwrap();
+        tune_settings(&file, SKYLANDERS, 51234, &mut Settings::default()).unwrap();
         let text = std::fs::read_to_string(&file).unwrap();
         assert_eq!(server(&text), (Some("true".to_string()), Some("51234".to_string())));
         assert_eq!(text.matches("<SkylandersIPC>").count(), 1, "replaced, not added twice: {text}");
         assert_eq!(text.matches("<port>").count(), 1, "{text}");
 
-        tune_settings(&file, None, 28014).unwrap();
+        tune_settings(&file, None, 28014, &mut Settings::default()).unwrap();
         let text = std::fs::read_to_string(&file).unwrap();
         assert_eq!(server(&text), (Some("false".to_string()), Some("28014".to_string())));
         assert_eq!(text.matches("<SkylandersIPC>").count(), 1, "{text}");
 
         // On again for a Disney Infinity game.
-        tune_settings(&file, Some(Toy::Infinity), 28014).unwrap();
+        tune_settings(&file, Some(Toy::Infinity), 28014, &mut Settings::default()).unwrap();
         let text = std::fs::read_to_string(&file).unwrap();
         assert_eq!(server(&text), (Some("true".to_string()), Some("28014".to_string())));
         assert_eq!(text.matches("<SkylandersIPC>").count(), 1, "{text}");
@@ -2098,7 +2139,7 @@ Deluxe");
             "    <SkylandersIPC>\n        <enabled>false</enabled>\n        <port>28014</port>\n    </SkylandersIPC>\n</content>",
         );
         std::fs::write(&file, &saved).unwrap();
-        tune_settings(&file, SKYLANDERS, 28014).unwrap();
+        tune_settings(&file, SKYLANDERS, 28014, &mut Settings::default()).unwrap();
         let text = std::fs::read_to_string(&file).unwrap();
         assert_eq!(server(&text), (Some("true".to_string()), Some("28014".to_string())));
         assert!(text.contains("<SkylandersIPC>\n        <enabled>true</enabled>\n        <port>28014</port>"), "{text}");
@@ -2136,15 +2177,120 @@ Deluxe");
             "<TVDevice>{0.0.0.00000000}.{abc}</TVDevice><TVVolume>55</TVVolume>",
         );
         std::fs::write(&file, &chosen).unwrap();
-        tune_settings(&file, SKYLANDERS, 28014).unwrap();
+        tune_settings(&file, SKYLANDERS, 28014, &mut Settings::default()).unwrap();
         let text = std::fs::read_to_string(&file).unwrap();
         assert!(text.contains("<TVDevice>{0.0.0.00000000}.{abc}</TVDevice>"), "{text}");
         assert!(text.contains("<TVVolume>55</TVVolume>"), "a volume someone chose stays: {text}");
 
         std::fs::write(&file, CEMU_SETTINGS).unwrap();
-        tune_settings(&file, SKYLANDERS, 28014).unwrap();
+        tune_settings(&file, SKYLANDERS, 28014, &mut Settings::default()).unwrap();
         let text = std::fs::read_to_string(&file).unwrap();
         assert!(text.contains("<TVDevice>default</TVDevice>"), "an empty one is filled in");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn picked(language: &str) -> Settings {
+        Settings { game_language: Some(language.to_string()), ..Settings::default() }
+    }
+
+    fn tuned_with(dir: &Path, before: &str, toy: Option<Toy>, omoio: &mut Settings) -> String {
+        let file = dir.join("settings.xml");
+        std::fs::write(&file, before).unwrap();
+        tune_settings(&file, toy, 28014, omoio).unwrap();
+        std::fs::read_to_string(&file).unwrap()
+    }
+
+    fn console_language(text: &str) -> Option<String> {
+        setting(text, &[], "console_language")
+    }
+
+    /// `CEMU_SETTINGS` with the console language Cemu writes on every save,
+    /// where it writes it, among the settings straight inside `<content>`.
+    fn saved_in(language: &str) -> String {
+        CEMU_SETTINGS.replace(
+            "    <fullscreen>true</fullscreen>\n",
+            &format!("    <fullscreen>true</fullscreen>\n    <console_language>{language}</console_language>\n"),
+        )
+    }
+
+    #[test]
+    fn a_picked_language_is_set_inside_content() {
+        let dir = scratch("language-first");
+        let mut omoio = picked("de");
+        let text = tuned_with(&dir, FIRST_SETTINGS, SKYLANDERS, &mut omoio);
+        assert_eq!(console_language(&text).as_deref(), Some("3"), "{text}");
+        assert!(
+            text.contains("</Graphic>\n<console_language>3</console_language>\n"),
+            "straight inside <content>: {text}"
+        );
+        assert_eq!(setting(&text, &["Graphic"], "console_language"), None, "{text}");
+        assert_eq!(text.matches("<language>175</language>").count(), 1, "the interface stays English: {text}");
+        assert_eq!(devices(&text)[0].as_deref(), Some("true"), "the portal as before: {text}");
+        assert_eq!(setting(&text, &["SkylandersIPC"], "port").as_deref(), Some("28014"));
+        assert_eq!(omoio.language_kept["cemu"], "1", "a file without one is on Cemu's default, English");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_picked_language_replaces_the_one_cemu_saved() {
+        let dir = scratch("language-saved");
+        let mut omoio = picked("de");
+        let text = tuned_with(&dir, &saved_in("1"), None, &mut omoio);
+        assert_eq!(console_language(&text).as_deref(), Some("3"), "{text}");
+        assert_eq!(text.matches("<console_language>").count(), 1, "replaced, not added twice: {text}");
+        assert!(text.contains("\n    <console_language>3</console_language>\n"), "where Cemu had it: {text}");
+        assert_eq!(text.matches("<language>").count(), 1, "{text}");
+        assert_eq!(omoio.language_kept["cemu"], "1");
+
+        // Another language later: what is kept is still what Cemu had first.
+        omoio.game_language = Some("fr".to_string());
+        let text = tuned_with(&dir, &text, None, &mut omoio);
+        assert_eq!(console_language(&text).as_deref(), Some("2"), "{text}");
+        assert_eq!(omoio.language_kept["cemu"], "1");
+
+        // Cemu has no Danish, so its games start in English.
+        let mut omoio = picked("da");
+        let text = tuned_with(&dir, &saved_in("3"), None, &mut omoio);
+        assert_eq!(console_language(&text).as_deref(), Some("1"), "{text}");
+        assert_eq!(omoio.language_kept["cemu"], "3");
+
+        // A language Cemu is on already changes nothing, so nothing is kept.
+        let mut omoio = picked("ja");
+        let text = tuned_with(&dir, &saved_in("0"), None, &mut omoio);
+        assert_eq!(console_language(&text).as_deref(), Some("0"));
+        assert!(omoio.language_kept.is_empty(), "{:?}", omoio.language_kept);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_default_leaves_cemus_own_language_alone() {
+        let dir = scratch("language-default");
+        let mut omoio = Settings::default();
+        // One set in Omoio's Cemu by hand.
+        let text = tuned_with(&dir, &saved_in("4"), None, &mut omoio);
+        assert_eq!(console_language(&text).as_deref(), Some("4"), "{text}");
+        assert_eq!(text.matches("<console_language>").count(), 1);
+        let text = tuned_with(&dir, FIRST_SETTINGS, SKYLANDERS, &mut omoio);
+        assert!(!text.contains("console_language"), "none is added: {text}");
+        assert!(omoio.language_kept.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_language_cemu_had_is_put_back_once_on_the_default() {
+        let dir = scratch("language-back");
+        let mut omoio = Settings::default();
+        omoio.language_kept.insert("cemu".to_string(), "1".to_string());
+        omoio.language_kept.insert("rpcs3".to_string(), "English (UK)".to_string());
+        let text = tuned_with(&dir, &saved_in("3"), None, &mut omoio);
+        assert_eq!(console_language(&text).as_deref(), Some("1"), "{text}");
+        assert_eq!(text.matches("<console_language>").count(), 1, "{text}");
+        assert!(!omoio.language_kept.contains_key("cemu"), "forgotten once it is back");
+        assert_eq!(omoio.language_kept["rpcs3"], "English (UK)", "RPCS3's is left to RPCS3");
+
+        // From then on Cemu's own is left alone, as before any was picked.
+        let text = tuned_with(&dir, &saved_in("4"), None, &mut omoio);
+        assert_eq!(console_language(&text).as_deref(), Some("4"), "{text}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
