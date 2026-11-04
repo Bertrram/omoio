@@ -14,6 +14,7 @@ pub mod compat;
 pub mod controllers;
 pub mod copy;
 pub mod disc;
+pub mod infinity;
 pub mod ini;
 pub mod install;
 pub mod log;
@@ -31,6 +32,7 @@ use crate::core::console::{Console, Features};
 use crate::core::figures::{self, Character};
 use crate::core::library::{Game, Library};
 use crate::core::pad_layout::{Pad, Player};
+use crate::core::toys::{self, Toy, ToyFigure};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use tauri::{AppHandle, Manager};
@@ -154,10 +156,29 @@ fn discs<'a>(game: &'a Game, library: &'a [Game]) -> Vec<&'a Path> {
 }
 
 impl Dolphin {
-    /// A Skylanders game on the Wii has the portal plugged in, and its
-    /// window ready to be filled. The GameCube has no Skylanders game.
-    fn wants_portal(&self, game: &Game) -> bool {
-        self.console == Console::Wii && figures::is_skylanders(&game.title)
+    /// The toy a Wii game is played with, which is plugged in for it, its
+    /// window ready to be filled: the Skylanders portal for a Skylanders
+    /// game, as it always was (`toys::toy_of` asks `figures::is_skylanders`
+    /// first), and the Infinity Base for Disney Infinity, whose first game
+    /// alone came out on the Wii (core/infinity.rs). Dolphin has no Toy Pad:
+    /// its emulated USB devices are the portal, the base, Wii Speak and
+    /// Logitech's USB microphone (Core/Config/MainSettings.cpp lines 626 to
+    /// 648, Dolphin 2609a, read 4 November 2026). The GameCube has none of
+    /// these games.
+    fn toy(&self, game: &Game) -> Option<Toy> {
+        if self.console != Console::Wii {
+            return None;
+        }
+        toys::toy_of(self.console, &game.title_id, &game.title).filter(|&toy| toy != Toy::ToyPad)
+    }
+
+    /// The base's errands are for the Wii's Infinity Base alone.
+    fn base(&self, toy: Toy) -> Result<(), String> {
+        if self.console == Console::Wii && toy == Toy::Infinity {
+            Ok(())
+        } else {
+            Err(super::NO_TOY.to_string())
+        }
     }
 
     fn identify_here(&self, picked: &Path) -> Result<Game, String> {
@@ -206,6 +227,9 @@ impl super::EmulatorBackend for Dolphin {
         Features {
             packs: true,
             portal: self.console == Console::Wii,
+            infinity: self.console == Console::Wii,
+            // Dolphin has no Toy Pad (`toy`).
+            toypad: false,
             saves: true,
             quiet_behind: true,
             // The mouse moves the Wii Remote's pointer and a GameCube stick
@@ -259,8 +283,9 @@ impl super::EmulatorBackend for Dolphin {
     /// (`MainWindow::~MainWindow`, DolphinQt/MainWindow.cpp), and it holds
     /// the log this empties. A Dolphin.ini that can't be changed stops the
     /// start, since the game would come up behind Dolphin's own questions
-    /// and warnings, and a Skylanders game without its portal. A Hotkeys.ini
-    /// or a log left as it was harms nothing, and is tried again next time.
+    /// and warnings, and a Skylanders or Disney Infinity game without its
+    /// toy. A Hotkeys.ini or a log left as it was harms nothing, and is
+    /// tried again next time.
     fn prepare(&self, app: &AppHandle, game: &Game) -> Result<(), String> {
         let Ok(exe) = install::exe_path(app) else {
             return Ok(());
@@ -273,7 +298,7 @@ impl super::EmulatorBackend for Dolphin {
             return Ok(());
         };
         let config = user.join("Config");
-        settings::prepare(&config, self.wants_portal(game), &figures)
+        settings::prepare(&config, self.toy(game), &figures)
             .map_err(|_| "Couldn't change Dolphin's settings, so the game can't start. Try again in a moment.".to_string())?;
         let _ = settings::quiet_hotkeys(&config);
         let _ = log::prepare(&user);
@@ -313,6 +338,48 @@ impl super::EmulatorBackend for Dolphin {
 
     fn ready_portal(&self, pid: u32) {
         portal::ready(pid)
+    }
+
+    /// The Infinity Base of a Disney Infinity game on the Wii, filled through
+    /// Dolphin's Infinity Manager (infinity.rs). Any other toy is refused.
+    fn toy_places(&self, pid: u32, toy: Toy) -> Result<Vec<String>, String> {
+        self.base(toy)?;
+        infinity::places(pid)
+    }
+
+    fn toy_load(&self, pid: u32, toy: Toy, place: usize, figure: &Path) -> Result<Vec<String>, String> {
+        self.base(toy)?;
+        infinity::load(pid, place, figure)
+    }
+
+    fn toy_remove(&self, pid: u32, toy: Toy, place: usize) -> Result<Vec<String>, String> {
+        self.base(toy)?;
+        infinity::remove(pid, place)
+    }
+
+    /// Dolphin's own list, read from its figure maker (infinity.rs,
+    /// `figures`).
+    fn toy_list(&self, _app: &AppHandle, pid: u32, toy: Toy) -> Result<Vec<ToyFigure>, String> {
+        self.base(toy)?;
+        infinity::figures(pid)
+    }
+
+    fn toy_create(
+        &self,
+        pid: u32,
+        toy: Toy,
+        place: usize,
+        figure: &ToyFigure,
+        file: &Path,
+    ) -> Result<Vec<String>, String> {
+        self.base(toy)?;
+        infinity::create(pid, place, figure, file)
+    }
+
+    fn ready_toy(&self, pid: u32, toy: Toy) {
+        if self.base(toy).is_ok() {
+            infinity::ready(pid)
+        }
     }
 
     /// A game unpacked into a folder is read as it is, from the folder of its
@@ -406,10 +473,11 @@ impl super::EmulatorBackend for Dolphin {
         settings::size_picture(&config, display_width, display_height, graphics_memory).map_err(|e| e.to_string())
     }
 
-    /// A Skylanders game starts with Dolphin's main window, which the portal
-    /// window is opened from, hidden the moment it shows. Every other game
-    /// starts in batch mode, where Dolphin never shows its main window and
-    /// closes once the game has (`--batch`, `MainWindow::OnStopComplete`,
+    /// A Skylanders or Disney Infinity game starts with Dolphin's main
+    /// window, which the portal's or the base's window is opened from,
+    /// hidden the moment it shows (`toy`). Every other game starts in batch
+    /// mode, where Dolphin never shows its main window and closes once the
+    /// game has (`--batch`, `MainWindow::OnStopComplete`,
     /// DolphinQt). `--exec` names the game, once for each of its discs
     /// (`discs`), and `--user` the folder Dolphin keeps everything in
     /// (UICommon/CommandLineParse.cpp); named outright, no setting of
@@ -424,7 +492,7 @@ impl super::EmulatorBackend for Dolphin {
         if !game.path.exists() {
             return Err("This game isn't where it was. Reconnect the drive it's on.".to_string());
         }
-        let portal = self.wants_portal(game);
+        let toy = self.toy(game);
         let user = install::user_dir(app)?;
         let mut command = install::command(&exe);
         command.arg("--user").arg(&user);
@@ -434,7 +502,7 @@ impl super::EmulatorBackend for Dolphin {
             let dolphin_ini = ini::read(&user.join("Config").join("Dolphin.ini")).unwrap_or_default();
             command.args(controllers::gamecube_ports_off(&dolphin_ini));
         }
-        if portal {
+        if toy.is_some() {
             command.env("QT_QPA_PLATFORM", portal::QT_PLATFORM);
         } else {
             command.arg("--batch");
@@ -459,8 +527,10 @@ impl super::EmulatorBackend for Dolphin {
         // Before `child` is dropped as this returns, which closes the
         // handle the spawn gave it.
         let launched = crate::process_watch::Launched::from_child(&child);
-        if portal {
-            portal::prepare(launched.pid);
+        match toy {
+            Some(Toy::Skylanders) => portal::prepare(launched.pid),
+            Some(Toy::Infinity) => infinity::prepare(launched.pid),
+            _ => {}
         }
         Ok(launched)
     }
@@ -469,10 +539,16 @@ impl super::EmulatorBackend for Dolphin {
     /// empties by itself: each of the game's writes reaches the file only
     /// with the next one, or as Dolphin quits (`SkylanderPortal::WriteBlock`
     /// in Core/IOS/USB/Emulated/Skylanders/Skylander.cpp, `SkylanderFigure::Save`,
-    /// `IOFile::WriteArray` in Common/IOFile.h). A GameCube memory card is
-    /// written a second after the game's last change, or as the game stops
-    /// (`GCMemcardDirectory`, Core/HW/GCMemcard/GCMemcardDirectory.cpp).
-    /// Ended at once, Dolphin would lose both.
+    /// `IOFile::WriteArray` in Common/IOFile.h). A figure on the Infinity
+    /// Base is written the same way, the whole file again at each of the
+    /// game's writes, which reaches it with the next write, when the figure
+    /// is taken off, or as Dolphin quits (`InfinityBase::WriteBlock`,
+    /// `InfinityFigure::Save` and `InfinityBase::RemoveFigure`,
+    /// Core/IOS/USB/Emulated/Infinity.cpp lines 513 to 539, 944 to 951 and
+    /// 643 to 652, Dolphin 2609a, read 4 November 2026). A GameCube memory
+    /// card is written a second after the game's last change, or as the game
+    /// stops (`GCMemcardDirectory`, Core/HW/GCMemcard/GCMemcardDirectory.cpp).
+    /// Ended at once, Dolphin would lose them all.
     fn closes_when_asked(&self) -> bool {
         true
     }
@@ -593,6 +669,44 @@ mod tests {
         assert_eq!(names(2), ["third.iso", "first.iso", "second.iso"]);
         assert_eq!(names(3), ["another.iso"], "a game of one disc");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_base_is_offered_on_the_wii_alone() {
+        use crate::backends::EmulatorBackend;
+        assert!(WII.features().infinity);
+        assert!(!GAMECUBE.features().infinity);
+        assert!(!WII.features().toypad && !GAMECUBE.features().toypad, "Dolphin has no Toy Pad");
+        assert!(WII.features().portal && !GAMECUBE.features().portal, "the portal as before");
+    }
+
+    #[test]
+    fn a_wii_game_gets_the_toy_it_is_played_with() {
+        let game = |console, title_id: &str, title: &str| Game {
+            console,
+            title_id: title_id.to_string(),
+            title: title.to_string(),
+            version: None,
+            update_version: None,
+            path: PathBuf::new(),
+            size_bytes: 0,
+        };
+        assert_eq!(WII.toy(&game(Console::Wii, "SSPE52", "Skylanders Spyro's Adventure")), Some(Toy::Skylanders));
+        assert_eq!(WII.toy(&game(Console::Wii, "SKYE52", "Skylanders Giants")), Some(Toy::Skylanders));
+        assert_eq!(WII.toy(&game(Console::Wii, "SQIE4Q", "Disney Infinity")), Some(Toy::Infinity));
+        assert_eq!(WII.toy(&game(Console::Wii, "RMCE01", "Mario Kart Wii")), None);
+        assert_eq!(GAMECUBE.toy(&game(Console::GameCube, "GALE01", "Super Smash Bros. Melee")), None);
+    }
+
+    #[test]
+    fn only_the_wiis_infinity_base_is_worked_through_the_toy_calls() {
+        use crate::backends::EmulatorBackend;
+        let refused = Err(crate::backends::NO_TOY.to_string());
+        assert_eq!(WII.toy_places(0, Toy::ToyPad), refused);
+        assert_eq!(WII.toy_places(0, Toy::Skylanders), refused, "the portal has calls of its own");
+        assert_eq!(GAMECUBE.toy_places(0, Toy::Infinity), refused);
+        assert_eq!(GAMECUBE.toy_remove(0, Toy::Infinity, 0), refused);
+        assert!(WII.toy_load(0, Toy::Infinity, 9, Path::new("C:\\Figures\\Woody.bin")).is_err(), "no tenth place");
     }
 
     #[test]

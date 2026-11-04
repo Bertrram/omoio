@@ -7,6 +7,7 @@
 //! in Dolphin itself stays.
 
 use super::ini;
+use crate::core::toys::Toy;
 use std::path::Path;
 
 /// Settings for every game, set before each one.
@@ -79,16 +80,33 @@ pub const EVERY_GAME: [(&str, &str, &str); 10] = [
 ///   tried on a real PC.
 pub const EVERY_GAME_GRAPHICS: [(&str, &str, &str); 1] = [("Settings", "BorderlessFullscreen", "True")];
 
-/// Dolphin.ini, with what a game needs set: `EVERY_GAME`, and the Skylanders
-/// portal plugged in for a Skylanders game only, with Omoio's figures folder
-/// as the place Dolphin's own portal window looks for figures first. And
-/// GFX.ini with `EVERY_GAME_GRAPHICS`.
-pub fn prepare(config: &Path, skylanders: bool, figures: &Path) -> std::io::Result<()> {
+/// Dolphin.ini, with what a game needs set: `EVERY_GAME`, and the toy the
+/// game is played with plugged in, the others not. The Skylanders portal
+/// comes with Omoio's figures folder as the place Dolphin's own portal
+/// window looks for figures first. And GFX.ini with `EVERY_GAME_GRAPHICS`.
+///
+/// Dolphin plugs the Infinity Base in only while `EmulateInfinityBase` is on
+/// as the game starts, and its window can't switch it while a game runs
+/// (`MAIN_EMULATE_INFINITY_BASE`, Core/Config/MainSettings.cpp lines 631 to
+/// 632; `USBScanner::AddEmulatedDevices`, Core/IOS/USB/USBScanner.cpp lines
+/// 183 to 187; `OnEmulationStateChanged`, DolphinQt/InfinityBase/
+/// InfinityBaseWindow.cpp lines 335 to 340), so it is set here, before
+/// Dolphin starts, as the portal is. It is off as Dolphin ships, and
+/// written as False for every other game: Dolphin reads "False" as its
+/// default (`TryParse`, Common/StringUtil.cpp lines 269 to 281), so for
+/// those games the line changes nothing but the file, which keeps it from
+/// then on, as Dolphin writes back every value it read
+/// (`BaseConfigLayerLoader::Save`, Core/ConfigLoaders/BaseConfigLoader.cpp
+/// lines 179 to 230). All in Dolphin 2609a, read 4 November 2026. Dolphin
+/// has no folder setting for the base; its file windows start where the
+/// last one was left (`s_last_figure_path`, InfinityBaseWindow.cpp line 34).
+pub fn prepare(config: &Path, toy: Option<Toy>, figures: &Path) -> std::io::Result<()> {
     let figures = figures.to_string_lossy();
-    let portal = if skylanders { "True" } else { "False" };
+    let plugged_in = |wanted: Toy| if toy == Some(wanted) { "True" } else { "False" };
     let mut values: Vec<(&str, &str, &str)> = EVERY_GAME.to_vec();
-    values.push(("EmulatedUSBDevices", "EmulateSkylanderPortal", portal));
-    if skylanders {
+    values.push(("EmulatedUSBDevices", "EmulateSkylanderPortal", plugged_in(Toy::Skylanders)));
+    values.push(("EmulatedUSBDevices", "EmulateInfinityBase", plugged_in(Toy::Infinity)));
+    if toy == Some(Toy::Skylanders) {
         values.push(("General", "SkylandersCollectionPath", &figures));
     }
     ini::update(&config.join("Dolphin.ini"), &values)?;
@@ -252,14 +270,66 @@ mod tests {
     fn the_portal_is_plugged_in_for_skylanders_only() {
         let dir = std::env::temp_dir().join(format!("omoio-dolphin-ini-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        prepare(&dir, true, Path::new("C:\\Figures")).unwrap();
+        prepare(&dir, Some(Toy::Skylanders), Path::new("C:\\Figures")).unwrap();
         let text = std::fs::read_to_string(dir.join("Dolphin.ini")).unwrap();
         assert_eq!(ini::get(&text, "EmulatedUSBDevices", "EmulateSkylanderPortal").as_deref(), Some("True"));
         assert_eq!(ini::get(&text, "General", "SkylandersCollectionPath").as_deref(), Some("C:\\Figures"));
         assert_eq!(ini::get(&text, "AutoUpdate", "UpdateTrack").as_deref(), Some(""));
-        prepare(&dir, false, Path::new("C:\\Figures")).unwrap();
+        prepare(&dir, None, Path::new("C:\\Figures")).unwrap();
         let text = std::fs::read_to_string(dir.join("Dolphin.ini")).unwrap();
         assert_eq!(ini::get(&text, "EmulatedUSBDevices", "EmulateSkylanderPortal").as_deref(), Some("False"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_base_is_plugged_in_for_disney_infinity_only() {
+        let dir = std::env::temp_dir().join(format!("omoio-dolphin-base-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let plugged_in = |toy| {
+            prepare(&dir, toy, Path::new("C:\\Figures")).unwrap();
+            let text = std::fs::read_to_string(dir.join("Dolphin.ini")).unwrap();
+            let get = |key| ini::get(&text, "EmulatedUSBDevices", key).unwrap();
+            (get("EmulateSkylanderPortal"), get("EmulateInfinityBase"))
+        };
+        assert_eq!(plugged_in(Some(Toy::Infinity)), ("False".into(), "True".into()));
+        let text = std::fs::read_to_string(dir.join("Dolphin.ini")).unwrap();
+        assert_eq!(ini::get(&text, "General", "SkylandersCollectionPath"), None, "the portal's folder is the portal's");
+        assert_eq!(plugged_in(None), ("False".into(), "False".into()), "unplugged for the next game");
+        assert_eq!(plugged_in(Some(Toy::Infinity)), ("False".into(), "True".into()));
+        assert_eq!(plugged_in(Some(Toy::Skylanders)), ("True".into(), "False".into()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_skylanders_games_settings_are_as_before_but_for_the_base_switched_off() {
+        let dir = std::env::temp_dir().join(format!("omoio-dolphin-as-before-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // A Dolphin.ini as a Skylanders game left it before the base was
+        // known.
+        let before = concat!(
+            "[General]\nISOPaths = 0\nSkylandersCollectionPath = C:\\Figures\n",
+            "[Interface]\nConfirmStop = False\n",
+            "[EmulatedUSBDevices]\nEmulateSkylanderPortal = True\n",
+            "[Core]\nCPUThread = True\n",
+        );
+        std::fs::write(dir.join("Dolphin.ini"), before).unwrap();
+        prepare(&dir, Some(Toy::Skylanders), Path::new("C:\\Figures")).unwrap();
+        let now = std::fs::read_to_string(dir.join("Dolphin.ini")).unwrap();
+        // What a Skylanders game was given until now.
+        let mut then: Vec<(&str, &str, &str)> = EVERY_GAME.to_vec();
+        then.push(("EmulatedUSBDevices", "EmulateSkylanderPortal", "True"));
+        then.push(("General", "SkylandersCollectionPath", "C:\\Figures"));
+        let then = then
+            .iter()
+            .fold(before.to_string(), |text, (section, key, value)| ini::set(&text, section, key, value));
+        let without_the_base = ini::remove(&now, "EmulatedUSBDevices", "EmulateInfinityBase");
+        assert_eq!(without_the_base, then, "the base's line is all that is new");
+        assert!(
+            now.contains("[EmulatedUSBDevices]\nEmulateSkylanderPortal = True\nEmulateInfinityBase = False\n[Core]"),
+            "switched off, beside the portal: {now}"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -306,7 +376,7 @@ CursorVisibility = 1
         let dir = std::env::temp_dir().join(format!("omoio-dolphin-warnings-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("Dolphin.ini"), "[Interface]\r\nUsePanicHandlers = True\r\n").unwrap();
-        prepare(&dir, true, Path::new("C:\\Figures")).unwrap();
+        prepare(&dir, Some(Toy::Skylanders), Path::new("C:\\Figures")).unwrap();
         let text = std::fs::read_to_string(dir.join("Dolphin.ini")).unwrap();
         assert_eq!(ini::get(&text, "Interface", "UsePanicHandlers").as_deref(), Some("False"));
         let _ = std::fs::remove_dir_all(&dir);
@@ -317,7 +387,7 @@ CursorVisibility = 1
         let dir = std::env::temp_dir().join(format!("omoio-dolphin-borderless-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("GFX.ini"), "[Settings]\r\nInternalResolution = 3\r\n").unwrap();
-        prepare(&dir, true, Path::new("C:\\Figures")).unwrap();
+        prepare(&dir, Some(Toy::Skylanders), Path::new("C:\\Figures")).unwrap();
         let text = std::fs::read_to_string(dir.join("GFX.ini")).unwrap();
         assert_eq!(ini::get(&text, "Settings", "BorderlessFullscreen").as_deref(), Some("True"));
         assert_eq!(ini::get(&text, "Settings", "InternalResolution").as_deref(), Some("3"));

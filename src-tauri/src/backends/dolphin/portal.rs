@@ -74,14 +74,15 @@ const LOAD_FAILED: &str = "Dolphin couldn't put that figure on the portal. It ma
 const MAKE_FAILED: &str = "Dolphin couldn't make that figure. Try again.";
 
 /// How long Dolphin may take to show its main window after it starts.
-const START_WAIT: Duration = Duration::from_secs(30);
+pub(super) const START_WAIT: Duration = Duration::from_secs(30);
 
 /// One errand in Dolphin's windows at a time: the manager opening while a
 /// game starts and a figure the user picked meanwhile would each open
-/// windows the other is waiting for.
+/// windows the other is waiting for. The Infinity Base's errands
+/// (infinity.rs) take the same turn, as they work the same main window.
 static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
 
-fn turn() -> MutexGuard<'static, ()> {
+pub(super) fn turn() -> MutexGuard<'static, ()> {
     ONE_AT_A_TIME.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
@@ -137,7 +138,7 @@ fn is_main_title(title: &str) -> bool {
     title.starts_with("Dolphin ") && !title.contains(" | ")
 }
 
-fn main_window(pid: u32) -> Option<HWND> {
+pub(super) fn main_window(pid: u32) -> Option<HWND> {
     all_windows(pid)
         .into_iter()
         .find(|&window| !owned_by(pid, window) && is_main_title(&title(window)))
@@ -146,12 +147,25 @@ fn main_window(pid: u32) -> Option<HWND> {
 /// A window Dolphin put up by itself, such as an error about a figure's
 /// file: one of its dialogs other than those Omoio opens. Qt's menus are
 /// windows of their own kind.
-fn is_message(pid: u32, window: HWND) -> bool {
+pub(super) fn is_message(pid: u32, window: HWND) -> bool {
     let title = title(window);
     owned_by(pid, window)
         && !title.is_empty()
         && !class(window).contains("Popup")
-        && ![MANAGER, OPEN_FIGURE, SAVE_FIGURE].contains(&title.as_str())
+        && !opened_by_omoio(&title)
+}
+
+/// Whether one of Dolphin's windows is one Omoio opens, by its title: the
+/// Skylanders Manager's here, and the Infinity Manager's (infinity.rs). The
+/// Infinity Manager's figure maker and file windows are titled like any of
+/// Dolphin's messages and owned like them: the maker and the window that
+/// opens a figure by the manager, the window that saves a new one by the
+/// maker (InfinityBaseWindow.cpp lines 147, 161 and 295, Dolphin 2609a, read
+/// 4 November 2026). Without their titles here the game would be left deaf
+/// after the base menu, with the keyboard on one of them, and Return would
+/// be pressed on the figure maker, which makes a figure.
+fn opened_by_omoio(title: &str) -> bool {
+    [MANAGER, OPEN_FIGURE, SAVE_FIGURE].contains(&title) || super::infinity::WINDOWS.contains(&title)
 }
 
 /// Hands the keyboard back to the game's window when one of Dolphin's own
@@ -189,7 +203,7 @@ pub fn give_back_to_game(pid: u32) {
 /// Closes a message Dolphin put up, so it doesn't sit over the game, and
 /// says whether there was one. Dolphin's own words name the file's whole
 /// path, so Omoio says what happened in its own.
-fn dismiss_message(pid: u32) -> bool {
+pub(super) fn dismiss_message(pid: u32) -> bool {
     let Some(message) = showing(pid).into_iter().find(|&w| is_message(pid, w)) else {
         return false;
     };
@@ -216,20 +230,27 @@ fn maker_window(automation: &Automation, pid: u32) -> Option<HWND> {
 /// Closes what a try that gave up left open: a message, a file window, the
 /// Customize window. Each would stand in the way of the next errand.
 fn put_away_leftovers(automation: &Automation, pid: u32) {
+    put_away(pid, &[OPEN_FIGURE, SAVE_FIGURE]);
+    if let Some(maker) = maker_window(automation, pid) {
+        key(maker, VK_ESCAPE);
+        gone(maker);
+    }
+}
+
+/// Closes Dolphin's messages, then the windows titled as in `leftovers`, in
+/// that order: a file window before the figure maker it opened over. A
+/// message that won't close is left after a few tries.
+pub(super) fn put_away(pid: u32, leftovers: &[&str]) {
     for _ in 0..3 {
         if !dismiss_message(pid) {
             break;
         }
     }
-    for leftover in [OPEN_FIGURE, SAVE_FIGURE] {
+    for &leftover in leftovers {
         for window in showing(pid).into_iter().filter(|&w| title(w) == leftover) {
             key(window, VK_ESCAPE);
             gone(window);
         }
-    }
-    if let Some(maker) = maker_window(automation, pid) {
-        key(maker, VK_ESCAPE);
-        gone(maker);
     }
 }
 
@@ -321,8 +342,8 @@ pub fn close_after_game(pid: u32) -> bool {
 /// has stopped, and in batch mode it quits after the game whichever window
 /// was closed (`MainWindow::OnStopComplete`; DolphinQt/MainWindow.cpp,
 /// Dolphin 2609a). So the main window is asked when there is one, hidden or
-/// not, and the game's otherwise; never the Skylanders Manager, which would
-/// only close itself.
+/// not, and the game's otherwise; never the Skylanders Manager or the
+/// Infinity Manager, which would only close themselves.
 pub fn ask_to_close(pid: u32) -> bool {
     let window = main_window(pid).or_else(|| {
         all_windows(pid)
@@ -427,17 +448,17 @@ fn pick_slot(automation: &Automation, window: HWND, slot: usize) -> Result<IUIAu
 
 /// Puts a figure's file in one of Qt's file windows and presses Enter, which
 /// presses its Open or Save button, then waits for it to close.
-fn choose_file(automation: &Automation, picker: HWND, file: &Path) -> Result<(), String> {
-    let window = automation.window(picker)?;
+/// `looks_different` is what to say when the window isn't as Omoio knows it.
+pub(super) fn choose_file(automation: &Qt, picker: HWND, file: &Path, looks_different: &str) -> Result<(), String> {
+    let window = automation.window(picker).ok_or(looks_different)?;
     let name_box = soon(WAIT, || {
         automation
-            .0
             .of_kind(&window, UIA_EditControlTypeId)
             .into_iter()
             .find(|edit| automation_id(edit).ends_with(FILE_NAME))
     })
-    .ok_or(LOOKS_DIFFERENT)?;
-    qt::set_value(&name_box, &file.to_string_lossy()).ok_or(LOOKS_DIFFERENT)?;
+    .ok_or(looks_different)?;
+    qt::set_value(&name_box, &file.to_string_lossy()).ok_or(looks_different)?;
     key(picker, VK_RETURN);
     if gone(picker) {
         Ok(())
@@ -480,7 +501,7 @@ pub fn load(pid: u32, slot: usize, file: &Path) -> Result<Vec<String>, String> {
     let buttons = automation.window(window)?;
     qt::press(&automation.button(&buttons, LOAD)?, window).ok_or(LOOKS_DIFFERENT)?;
     let picker = arrives(pid, OPEN_FIGURE).ok_or("Dolphin didn't ask for the figure. Try again.")?;
-    choose_file(&automation, picker, file)?;
+    choose_file(&automation.0, picker, file, LOOKS_DIFFERENT)?;
     settled(&automation, pid, window, LOAD_FAILED)
 }
 
@@ -535,7 +556,7 @@ fn make(automation: &Automation, pid: u32, maker: HWND, character: &Character, f
     qt::set_value(variant_box, &character.variant.to_string()).ok_or(LOOKS_DIFFERENT)?;
     qt::press(&automation.button(&window, CREATE)?, maker).ok_or(LOOKS_DIFFERENT)?;
     let saver = arrives(pid, SAVE_FIGURE).ok_or("Dolphin didn't ask where to keep the figure. Try again.")?;
-    choose_file(automation, saver, file)?;
+    choose_file(&automation.0, saver, file, LOOKS_DIFFERENT)?;
     // Dolphin writes the figure, puts it on the portal and closes the
     // Customize window, or says why it couldn't.
     let done = soon(WAIT, || {
@@ -721,6 +742,26 @@ mod tests {
         assert!(!is_game_title("Skylanders Manager"));
         assert!(is_main_title("Dolphin 2609a"));
         assert!(!is_main_title("Dolphin 2609a | JIT64 DC | Direct3D 11 | HLE"));
+    }
+
+    #[test]
+    fn the_managers_windows_are_omoios_and_dolphins_messages_are_not() {
+        for title in ["Skylanders Manager", "Select Skylander File", "Create Skylander File"] {
+            assert!(opened_by_omoio(title), "{title}");
+        }
+        for title in ["Infinity Manager", "Infinity Figure Creator", "Select Figure File", "Create Infinity File"] {
+            assert!(opened_by_omoio(title), "{title}");
+        }
+        // Dolphin's own messages over the Infinity Manager and its figure
+        // maker (InfinityBaseWindow.cpp lines 174, 184, 275 and 305).
+        for title in [
+            "Failed to open the Infinity file!",
+            "Failed to read the Infinity file!",
+            "Error converting value",
+            "Failed to create Infinity file",
+        ] {
+            assert!(!opened_by_omoio(title), "{title}");
+        }
     }
 
     #[test]
