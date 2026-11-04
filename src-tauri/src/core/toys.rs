@@ -4,6 +4,7 @@
 //! before there were other toys, so nothing it does changes.
 
 use crate::core::console::{Console, Features};
+use crate::core::dimensions;
 use crate::core::figures;
 use crate::core::infinity::{self, InfinityGame};
 use serde::{Deserialize, Serialize};
@@ -14,8 +15,7 @@ use serde::{Deserialize, Serialize};
 pub enum Toy {
     Skylanders,
     Infinity,
-    /// LEGO Dimensions' Toy Pad. No game is known by it yet: its games
-    /// come with its menu.
+    /// LEGO Dimensions' Toy Pad.
     ToyPad,
 }
 
@@ -74,14 +74,13 @@ impl Toy {
 
     /// How many places the toy has: the portal menu's slots
     /// (backends/cemu/portal.rs, `SLOTS`), the base's nine, and the Toy
-    /// Pad's seven, three on each side pad and one in the middle (Cemu's
-    /// nsyshid/Dimensions.h line 84, v2.6-2; RPCS3's rpcs3/Emu/Io/Dimensions.h
-    /// line 9, master b2e52d6; read 4 November 2026).
+    /// Pad's seven, three on each side pad and one in the middle
+    /// (dimensions.rs).
     pub fn places(self) -> usize {
         match self {
             Self::Skylanders => 16,
             Self::Infinity => infinity::PLACES,
-            Self::ToyPad => 7,
+            Self::ToyPad => dimensions::PLACES,
         }
     }
 }
@@ -100,12 +99,16 @@ pub struct ToyFigure {
 /// The toy a game is played with, or `None` for a game with no toy.
 /// Skylanders exactly where `figures::is_skylanders` says so, asked first,
 /// so every Skylanders game takes the paths it always took. Then Disney
-/// Infinity, by its id and then its name (infinity.rs).
+/// Infinity, by its id and then its name (infinity.rs), and then LEGO
+/// Dimensions the same way (dimensions.rs).
 pub fn toy_of(console: Console, title_id: &str, title: &str) -> Option<Toy> {
     if figures::is_skylanders(title) {
         return Some(Toy::Skylanders);
     }
-    InfinityGame::of(console, title_id, title).map(|_| Toy::Infinity)
+    if InfinityGame::of(console, title_id, title).is_some() {
+        return Some(Toy::Infinity);
+    }
+    dimensions::is_dimensions(console, title_id, title).then_some(Toy::ToyPad)
 }
 
 /// Where the base menu is offered: every Disney Infinity release, on each
@@ -153,16 +156,38 @@ const INFINITY_MENU: [(Console, InfinityGame); 7] = [
     (Console::Wii, InfinityGame::One),
 ];
 
+/// Where the Toy Pad menu is offered: LEGO Dimensions on each console whose
+/// emulator fills the Toy Pad, every release there, known by its id or its
+/// name (dimensions.rs). Of the consoles Omoio runs, the game came out on
+/// the PS3 and the Wii U alone (Wikipedia and GameTDB), and Dolphin has no
+/// Toy Pad. It hasn't been played with the menu in Omoio yet, and it is
+/// offered so players can say how it goes. All of it, and what is known of
+/// the game in each emulator, was read on 4 November 2026.
+const TOYPAD_MENU: [Console; 2] = [
+    // Untested in Omoio until Bertram has played it. RPCS3's list rates
+    // both discs, BLES02105 and BLUS31473, Playable (4 August 2024, build
+    // f6b5511). The US disc crashes in the Phantom Zone level as the Zod
+    // battle changes phase (RPCS3 issue 19156, open since August 2026).
+    // RPCS3 keeps none of the lights the game sets on the pads
+    // (rpcs3/Emu/Io/Dimensions.cpp lines 647 to 659, master b2e52d6), so
+    // the menu can't show them there.
+    Console::Ps3,
+    // Untested in Omoio until Bertram has played it. Cemu's wiki rates it
+    // Playable (revision 19675, 25 January 2026), with shadows wrong away
+    // from 720p and voices quiet. The menu fills Cemu's Toy Pad through the
+    // commands of an Omoio Cemu newer than v2.6-2.
+    Console::WiiU,
+];
+
 /// Whether the toy's menu works in this game on this console. Skylanders'
-/// is `figures::has_portal_menu`, as it always was. No game has the Toy Pad
-/// menu yet.
+/// is `figures::has_portal_menu`, as it always was.
 pub fn has_menu(toy: Toy, console: Console, title_id: &str, title: &str) -> bool {
     match toy {
         Toy::Skylanders => figures::has_portal_menu(console, title),
         Toy::Infinity => {
             InfinityGame::of(console, title_id, title).is_some_and(|game| INFINITY_MENU.contains(&(console, game)))
         }
-        Toy::ToyPad => false,
+        Toy::ToyPad => dimensions::is_dimensions(console, title_id, title) && TOYPAD_MENU.contains(&console),
     }
 }
 
@@ -204,13 +229,19 @@ pub fn menu_note(features: Features, console: Console, title_id: &str, title: &s
 /// whose own version doesn't. None where its version has it, and the
 /// emulator is what can't fill the toy.
 fn elsewhere(toy: Toy, console: Console, title_id: &str, title: &str) -> Vec<Console> {
-    if toy != Toy::Infinity || has_menu(toy, console, title_id, title) {
+    if has_menu(toy, console, title_id, title) {
         return Vec::new();
     }
-    let Some(game) = InfinityGame::of(console, title_id, title) else {
-        return Vec::new();
-    };
-    Console::ALL.into_iter().filter(|&other| INFINITY_MENU.contains(&(other, game))).collect()
+    match toy {
+        Toy::Infinity => {
+            let Some(game) = InfinityGame::of(console, title_id, title) else {
+                return Vec::new();
+            };
+            Console::ALL.into_iter().filter(|&other| INFINITY_MENU.contains(&(other, game))).collect()
+        }
+        Toy::ToyPad => Console::ALL.into_iter().filter(|other| TOYPAD_MENU.contains(other)).collect(),
+        Toy::Skylanders => Vec::new(),
+    }
 }
 
 #[cfg(test)]
@@ -218,8 +249,8 @@ mod tests {
     use super::*;
 
     /// Every title figures.rs's own tests use, Skylanders or not, and the
-    /// Disney Infinity names.
-    const TITLES: [&str; 38] = [
+    /// Disney Infinity and LEGO Dimensions names.
+    const TITLES: [&str; 40] = [
         "Skylanders: Spyro's Adventure",
         "Skylanders Spyro's Adventure",
         "Skylanders Giants™",
@@ -257,12 +288,15 @@ mod tests {
         "Infinity Runner",
         "LEGO Marvel Super Heroes",
         "LEGO Dimensions",
+        "LEGO® DIMENSIONS™",
+        "LEGO® Dimensions™",
         "",
     ];
 
     /// Ids of every shape the library keeps: a PS3 serial, a Wii U title id
-    /// and disc image id, a Wii game id, and one of each Disney Infinity's.
-    const IDS: [&str; 9] = [
+    /// and disc image id, a Wii game id, one of each Disney Infinity's and
+    /// one of each LEGO Dimensions'.
+    const IDS: [&str; 11] = [
         "BLES02055",
         "0005000010142D00",
         "WUD0123456789ABC",
@@ -272,6 +306,8 @@ mod tests {
         "00050000101DDC00",
         "SQIE4Q",
         "000500001016DC00",
+        "BLUS31473",
+        "0005000010195D00",
     ];
 
     fn every(features: Features) -> [Features; 4] {
@@ -306,7 +342,7 @@ mod tests {
                     if toy == Some(Toy::Skylanders) {
                         assert_eq!(has_menu(Toy::Skylanders, console, id, title), figures::has_portal_menu(console, title));
                     }
-                    if toy != Some(Toy::Infinity) {
+                    if matches!(toy, Some(Toy::Skylanders) | None) {
                         for features in every(Features::default()) {
                             let note = menu_note(features, console, id, title);
                             assert_eq!(note, figures::menu_note(features, console, title), "{title}");
@@ -328,23 +364,104 @@ mod tests {
         assert_eq!(toy_of(Console::WiiU, "WUD0123456789ABC", "DISNEY INFINITY 3.0 EDITION"), Some(Toy::Infinity));
         assert_eq!(toy_of(Console::Wii, "SQIY4Q", "Disney Infinity"), Some(Toy::Infinity));
         assert_eq!(toy_of(Console::Ps3, "BLUS31522", "Disney Infinity 3.0"), Some(Toy::Infinity));
-        for title in ["Infinity Runner", "Ace Combat Infinity", "LEGO Marvel Super Heroes", "LEGO Dimensions", "Mario Kart 8"] {
+        for title in ["Infinity Runner", "Ace Combat Infinity", "LEGO Marvel Super Heroes", "Mario Kart 8"] {
             for console in Console::ALL {
                 assert_eq!(toy_of(console, "BLES02055", title), None, "{title}");
+            }
+        }
+        for console in Console::ALL {
+            assert_ne!(toy_of(console, "BLES02055", "LEGO Dimensions"), Some(Toy::Infinity));
+        }
+    }
+
+    #[test]
+    fn a_game_is_disney_infinity_exactly_where_infinity_rs_says() {
+        for title in TITLES {
+            for console in Console::ALL {
+                for id in IDS {
+                    let infinity = InfinityGame::of(console, id, title).is_some() && !figures::is_skylanders(title);
+                    assert_eq!(toy_of(console, id, title) == Some(Toy::Infinity), infinity, "{title} {id}");
+                }
             }
         }
     }
 
     #[test]
-    fn no_game_is_taken_for_the_toy_pads_yet() {
+    fn lego_dimensions_is_known_by_its_id_and_its_name() {
+        use Console::*;
+        let releases = [(WiiU, "0005000010194200"), (WiiU, "0005000010195D00"), (Ps3, "BLES02105"), (Ps3, "BLUS31473")];
+        for (console, id) in releases {
+            assert_eq!(toy_of(console, id, ""), Some(Toy::ToyPad), "{id}");
+            assert_eq!(toy_of(console, id, "LEGO® DIMENSIONS™"), Some(Toy::ToyPad), "{id}");
+        }
+        for title in ["LEGO® DIMENSIONS™", "LEGO® Dimensions™", "LEGO Dimensions", "LEGO_Dimensions"] {
+            for console in Console::ALL {
+                assert_eq!(toy_of(console, "WUD0123456789ABC", title), Some(Toy::ToyPad), "{title}");
+            }
+        }
+        for title in ["LEGO Marvel Super Heroes", "LEGO Batman 3: Beyond Gotham", "Hyperdimension Neptunia"] {
+            for console in Console::ALL {
+                assert_eq!(toy_of(console, "BLES02055", title), None, "{title}");
+            }
+        }
+        // A game takes the Toy Pad only where dimensions.rs says it is LEGO
+        // Dimensions.
         for title in TITLES {
             for console in Console::ALL {
                 for id in IDS {
-                    assert_ne!(toy_of(console, id, title), Some(Toy::ToyPad));
-                    assert!(!has_menu(Toy::ToyPad, console, id, title));
+                    let toypad = toy_of(console, id, title) == Some(Toy::ToyPad);
+                    assert_eq!(
+                        toypad,
+                        dimensions::is_dimensions(console, id, title)
+                            && !figures::is_skylanders(title)
+                            && InfinityGame::of(console, id, title).is_none(),
+                        "{title} {id}"
+                    );
+                    assert!(!has_menu(Toy::ToyPad, console, id, title) || dimensions::is_dimensions(console, id, title));
                 }
             }
         }
+    }
+
+    #[test]
+    fn the_toy_pad_menu_is_offered_for_every_release_where_the_emulator_fills_the_toy_pad() {
+        use Console::*;
+        let releases = [
+            (Ps3, "BLES02105", "LEGO® DIMENSIONS™"),
+            (Ps3, "BLUS31473", "LEGO® DIMENSIONS™"),
+            (Ps3, "BLES99999", "LEGO Dimensions"),
+            (WiiU, "0005000010194200", "LEGO® Dimensions™"),
+            (WiiU, "0005000010195D00", "LEGO® DIMENSIONS™"),
+            (WiiU, "WUD0123456789ABC", "LEGO Dimensions"),
+        ];
+        let toypad = Features { toypad: true, ..Features::default() };
+        for (console, id, title) in releases {
+            assert!(has_menu(Toy::ToyPad, console, id, title), "{title}");
+            assert!(offers_menu(toypad, console, id, title), "{title}");
+            assert!(!offers_menu(Features::default(), console, id, title), "{title}");
+            assert!(!offers_menu(Features { portal: true, infinity: true, ..Features::default() }, console, id, title));
+            assert_eq!(menu_note(toypad, console, id, title), None, "{title}");
+        }
+        // There is no LEGO Dimensions for the Wii or the GameCube.
+        assert!(!has_menu(Toy::ToyPad, Wii, "", "LEGO Dimensions"));
+        assert!(!has_menu(Toy::ToyPad, GameCube, "", "LEGO Dimensions"));
+        assert!(!has_menu(Toy::ToyPad, Ps3, "BLES02055", "Skylanders Trap Team"));
+        assert!(!has_menu(Toy::ToyPad, Ps3, "BLES01844", "Disney Infinity"));
+        assert!(!offers_menu(toypad, Ps3, "", "LEGO Marvel Super Heroes"));
+    }
+
+    #[test]
+    fn the_toy_pad_menus_key_says_why_where_the_menu_isnt_offered() {
+        let toypad = Features { toypad: true, ..Features::default() };
+        assert_eq!(
+            menu_note(Features::default(), Console::Ps3, "BLES02105", "LEGO® DIMENSIONS™").as_deref(),
+            Some("The Toy Pad menu doesn't work in this game yet.")
+        );
+        assert_eq!(
+            menu_note(toypad, Console::Wii, "", "LEGO Dimensions").as_deref(),
+            Some("The Toy Pad menu doesn't work in this version yet. It works in the PS3 and Wii U versions.")
+        );
+        assert_eq!(menu_note(toypad, Console::Ps3, "", "LEGO Marvel Super Heroes"), None);
     }
 
     #[test]
