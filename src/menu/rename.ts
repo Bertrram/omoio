@@ -28,9 +28,15 @@ export function renaming(): boolean {
 /// Opens the box on `file`, its name typed in it and selected, so typing
 /// replaces it. `saved` is given the file's new path once it has one.
 export function startRename(file: ToyFile, noun: string, saved: (path: string) => Promise<void>) {
+  // The box covers the menu, so a click can't change the menu beneath it
+  // while a name is typed, nor take the keyboard out of the box.
   const box = node("div", "portal-rename");
-  box.setAttribute("role", "dialog");
-  box.setAttribute("aria-label", `Rename ${file.name}`);
+  box.addEventListener("pointerdown", (event) => {
+    if (event.target !== field) event.preventDefault();
+  });
+  const card = node("div", "portal-rename-card");
+  card.setAttribute("role", "dialog");
+  card.setAttribute("aria-label", `Rename ${file.name}`);
   const field = node("input", "portal-rename-field");
   field.type = "text";
   field.value = file.name;
@@ -48,7 +54,8 @@ export function startRename(file: ToyFile, noun: string, saved: (path: string) =
       stopRename();
     }
   });
-  box.append(
+  box.appendChild(card);
+  card.append(
     node("div", "portal-rename-title", `Rename ${file.name}`),
     field,
     hintRow(

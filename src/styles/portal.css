@@ -2252,14 +2252,17 @@ body {
 
 /* ---- naming one of the player's figures ---- */
 
-/* Over the menu, which stays as it was beneath. The name is human text, so
-   it is in the interface face. */
+/* Over the menu, which stays as it was beneath and takes no clicks while a
+   name is typed. The name is human text, so it is in the interface face. */
 .portal-rename {
   position: fixed;
-  top: 50%;
-  left: 50%;
+  inset: 0;
   z-index: 10;
-  transform: translate(-50%, -50%);
+  display: grid;
+  place-items: center;
+}
+
+.portal-rename-card {
   display: flex;
   flex-direction: column;
   gap: 18px;

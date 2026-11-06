@@ -211,9 +211,13 @@ impl Known {
     }
 
     /// What is known of `from`, known of `to` instead.
+    /// Anything still known under `to` is of a file deleted by hand before,
+    /// since no file had that name, so it goes.
     fn rename(&mut self, from: &str, to: &str) {
         for record in [&mut self.made, &mut self.seen] {
-            if let Some(figure) = record.remove(from) {
+            let figure = record.remove(from);
+            record.remove(to);
+            if let Some(figure) = figure {
                 record.insert(to.to_string(), figure);
             }
         }
@@ -863,7 +867,7 @@ pub fn rename(app: &AppHandle, figure: &str, name: &str) -> Result<String, Strin
     if !same_file && target.exists() {
         return Err(format!("You have a {noun} called {clean} already."));
     }
-    move_without_replacing(path, &target).map_err(|_| format!("Couldn't rename that {noun}. Try another name."))?;
+    move_without_replacing(path, &target).map_err(|_| format!("Couldn't rename that {noun}."))?;
     if let Ok(record) = known_file(app, toy) {
         let mut known = read_known(&record);
         known.rename(&old, &new);
@@ -873,13 +877,16 @@ pub fn rename(app: &AppHandle, figure: &str, name: &str) -> Result<String, Strin
         let file = data.join("settings.json");
         let mut settings = Settings::load(&file);
         if let Some(list) = recent_of(&mut settings, toy) {
-            if let Some(used) = list.iter_mut().find(|used| **used == old) {
-                *used = new.clone();
+            if list.contains(&old) {
+                list.retain(|used| *used != new);
+                if let Some(used) = list.iter_mut().find(|used| **used == old) {
+                    *used = new.clone();
+                }
                 let _ = settings.save(&file);
             }
         }
     }
-    move_backups(&dir.join("Backups"), &old, &new);
+    move_backups(&dir.join("Backups"), &old, &new, same_file);
     Ok(target.to_string_lossy().into_owned())
 }
 
@@ -898,13 +905,14 @@ fn move_without_replacing(from: &Path, to: &Path) -> Result<(), String> {
 /// A renamed figure's backups (`back_up`) go with it, so putting it back as
 /// it was still finds them. Where copies are kept under the new name
 /// already, from a figure of that name deleted before, they stay, and these
-/// join them under names of their own.
-fn move_backups(backups: &Path, old: &str, new: &str) {
+/// join them under names of their own. Where only the case changes, Windows
+/// sees one folder, which is renamed.
+fn move_backups(backups: &Path, old: &str, new: &str, same_file: bool) {
     let (from, to) = (backups.join(old), backups.join(new));
     if !from.is_dir() {
         return;
     }
-    if !to.exists() {
+    if same_file || !to.exists() {
         let _ = move_without_replacing(&from, &to);
         return;
     }
@@ -1024,6 +1032,8 @@ mod tests {
         let mut known = Known::default();
         known.made.insert("Blank Tag 2.bin".to_string(), blank.clone());
         known.seen.insert("Blank Tag 2.bin".to_string(), car.clone());
+        // A record left from a file of the new name deleted by hand goes.
+        known.seen.insert("My car.bin".to_string(), blank.clone());
         known.rename("Blank Tag 2.bin", "My car.bin");
         assert_eq!(known.figure(Toy::ToyPad, "My car.bin"), Some(&car));
         assert_eq!(known.figure(Toy::ToyPad, "Blank Tag 2.bin"), None);
@@ -1054,11 +1064,20 @@ mod tests {
         assert!(names.contains(&"blank tag.bin".to_string()), "{names:?}");
 
         // Backups go along; where the new name has some already, both stay.
-        move_backups(&dir.join("Backups"), "Blank Tag.bin", "Police Car.bin");
+        move_backups(&dir.join("Backups"), "Blank Tag.bin", "Police Car.bin", false);
         assert_eq!(std::fs::read(dir.join("Backups").join("Police Car.bin").join("100.bin")).unwrap(), b"old tag");
         std::fs::create_dir_all(dir.join("Backups").join("Bat.bin")).unwrap();
         std::fs::write(dir.join("Backups").join("Bat.bin").join("100.bin"), b"older").unwrap();
-        move_backups(&dir.join("Backups"), "Batman.bin", "Bat.bin");
+        move_backups(&dir.join("Backups"), "Batman.bin", "Bat.bin", false);
+        // Only the case changing: the folder itself is renamed.
+        move_backups(&dir.join("Backups"), "Bat.bin", "BAT.bin", true);
+        let folders: Vec<String> = std::fs::read_dir(dir.join("Backups"))
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert!(folders.contains(&"BAT.bin".to_string()), "{folders:?}");
+        assert_eq!(std::fs::read(dir.join("Backups").join("BAT.bin").join("101.bin")).unwrap(), b"old batman");
         assert_eq!(std::fs::read(dir.join("Backups").join("Bat.bin").join("100.bin")).unwrap(), b"older");
         assert_eq!(std::fs::read(dir.join("Backups").join("Bat.bin").join("101.bin")).unwrap(), b"old batman");
         assert!(!dir.join("Backups").join("Batman.bin").exists());
