@@ -2239,6 +2239,13 @@ pub fn toy_files(app: AppHandle) -> Vec<crate::toy_menu::ToyFile> {
     crate::toy_menu::files(&app)
 }
 
+/// Gives one of the player's toy figures the name they typed, and resolves
+/// to its new path.
+#[tauri::command]
+pub fn rename_toy_figure(app: AppHandle, path: String, name: String) -> Result<String, String> {
+    crate::toy_menu::rename(&app, &path, &name)
+}
+
 /// Moves one of the player's toy figures to the Recycle Bin.
 #[tauri::command]
 pub fn delete_toy_figure(app: AppHandle, path: String) -> Result<(), String> {

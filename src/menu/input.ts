@@ -31,6 +31,7 @@ const KEYS: Record<string, string> = {
   [HOLD]: "Y",
   LB: "PgUp",
   RB: "PgDn",
+  Start: "F2",
 };
 
 /// A direction held down keeps moving after a pause, as on a console.
@@ -201,6 +202,8 @@ export function drive(menu: Page) {
   });
 
   document.addEventListener("keydown", (event) => {
+    // A name being typed (src/menu/rename.ts) keeps its keys.
+    if (event.target instanceof HTMLInputElement) return;
     // Y held deletes a saved figure, as the pad's top face button does.
     if (event.key === "y" || event.key === "Y") {
       event.preventDefault();
@@ -223,6 +226,8 @@ export function drive(menu: Page) {
       Delete: () => page.press("West"),
       Backspace: () => page.press("West"),
       Escape: () => page.press("East"),
+      // F2 renames, as it does a file in Windows.
+      F2: () => page.press("Start"),
       // P for pair: a SuperCharger and its vehicle together.
       p: () => page.press("North"),
       P: () => page.press("North"),

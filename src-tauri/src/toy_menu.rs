@@ -188,6 +188,9 @@ struct Known {
     /// name (`seen`).
     #[serde(default)]
     seen: BTreeMap<String, ToyFigure>,
+    /// Files the player named themselves in the menu (`rename`).
+    #[serde(default)]
+    named: std::collections::BTreeSet<String>,
 }
 
 impl Known {
@@ -203,7 +206,19 @@ impl Known {
 
     fn forget(&mut self, file: &str) -> bool {
         let made = self.made.remove(file).is_some();
-        self.seen.remove(file).is_some() || made
+        let named = self.named.remove(file);
+        self.seen.remove(file).is_some() || made || named
+    }
+
+    /// What is known of `from`, known of `to` instead.
+    fn rename(&mut self, from: &str, to: &str) {
+        for record in [&mut self.made, &mut self.seen] {
+            if let Some(figure) = record.remove(from) {
+                record.insert(to.to_string(), figure);
+            }
+        }
+        self.named.remove(from);
+        self.named.insert(to.to_string());
     }
 }
 
@@ -416,6 +431,8 @@ pub struct ToyFile {
     pub places: Vec<usize>,
     /// Used lately, so listed first.
     pub recent: bool,
+    /// Named by the player in the menu, so its name is the one to show.
+    pub named: bool,
 }
 
 fn files_in(dir: &Path, known: &Known, recent: &[String], game: &ToyGame) -> Vec<ToyFile> {
@@ -460,6 +477,7 @@ fn files_in(dir: &Path, known: &Known, recent: &[String], game: &ToyGame) -> Vec
                             kind,
                             places,
                             recent: rank.is_some(),
+                            named: known.named.contains(&file),
                         },
                     ))
                 })
@@ -796,6 +814,118 @@ pub fn used(app: &AppHandle, toy: Toy, figure: &Path) {
     let _ = settings.save(&file);
 }
 
+/// What a toy calls one of the player's figure files, and where they go on.
+fn words(toy: Toy) -> (&'static str, &'static str) {
+    match toy {
+        Toy::ToyPad => ("tag", "the Toy Pad"),
+        Toy::Infinity => ("figure", "the base"),
+        Toy::Skylanders => ("figure", "the portal"),
+    }
+}
+
+/// Whether the file of this name is on the toy of the running game, as
+/// Omoio put it there.
+fn on_the_toy(file: &str) -> bool {
+    let on = ON_TOY.lock().unwrap_or_else(PoisonError::into_inner);
+    on.as_ref().is_some_and(|on| on.files.values().any(|on| on == file))
+}
+
+/// Gives one of the player's toy figures the name they typed. The file
+/// takes it by `figures::free_name`'s rules, without a number added: a name
+/// another file has already is refused, and no file is ever replaced. What
+/// Omoio keeps under the file's name moves with it: which figure it is
+/// (`Known`), its place among the ones used lately, and its backups. One on
+/// the toy is refused, as deleting it is in the menu, since the emulator
+/// holds its file open and writes to it (`delete` in src/toypad.ts).
+/// Returns the file's new path.
+pub fn rename(app: &AppHandle, figure: &str, name: &str) -> Result<String, String> {
+    let path = Path::new(figure);
+    let (toy, old) = TOYS
+        .into_iter()
+        .find_map(|toy| Some((toy, saved(app, toy, path).ok()?)))
+        .ok_or("That isn't one of your saved figures.")?;
+    let (noun, on) = words(toy);
+    if on_the_toy(&old) {
+        return Err(format!("Take it off {on} first, then rename it."));
+    }
+    let clean = figures::file_safe(name);
+    if clean.is_empty() {
+        return Err(format!("Type a name for the {noun}."));
+    }
+    let new = format!("{clean}.{EXTENSION}");
+    if new == old {
+        return Ok(figure.to_string());
+    }
+    let dir = path.parent().ok_or("That isn't one of your saved figures.")?;
+    let target = dir.join(&new);
+    // Only the case changes: Windows sees one file, and renames it.
+    let same_file = new.to_lowercase() == old.to_lowercase();
+    if !same_file && target.exists() {
+        return Err(format!("You have a {noun} called {clean} already."));
+    }
+    move_without_replacing(path, &target).map_err(|_| format!("Couldn't rename that {noun}. Try another name."))?;
+    if let Ok(record) = known_file(app, toy) {
+        let mut known = read_known(&record);
+        known.rename(&old, &new);
+        write_known(&record, &known);
+    }
+    if let Ok(data) = crate::portal_menu::data_dir(app) {
+        let file = data.join("settings.json");
+        let mut settings = Settings::load(&file);
+        if let Some(list) = recent_of(&mut settings, toy) {
+            if let Some(used) = list.iter_mut().find(|used| **used == old) {
+                *used = new.clone();
+                let _ = settings.save(&file);
+            }
+        }
+    }
+    move_backups(&dir.join("Backups"), &old, &new);
+    Ok(target.to_string_lossy().into_owned())
+}
+
+/// Renames a file, failing rather than replacing one already there:
+/// MoveFileExW without MOVEFILE_REPLACE_EXISTING (Microsoft Learn), where
+/// `std::fs::rename` replaces.
+fn move_without_replacing(from: &Path, to: &Path) -> Result<(), String> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::core::PCWSTR;
+    use windows::Win32::Storage::FileSystem::{MoveFileExW, MOVE_FILE_FLAGS};
+    let wide = |path: &Path| path.as_os_str().encode_wide().chain(Some(0)).collect::<Vec<u16>>();
+    let (from, to) = (wide(from), wide(to));
+    unsafe { MoveFileExW(PCWSTR(from.as_ptr()), PCWSTR(to.as_ptr()), MOVE_FILE_FLAGS(0)) }.map_err(|err| err.to_string())
+}
+
+/// A renamed figure's backups (`back_up`) go with it, so putting it back as
+/// it was still finds them. Where copies are kept under the new name
+/// already, from a figure of that name deleted before, they stay, and these
+/// join them under names of their own.
+fn move_backups(backups: &Path, old: &str, new: &str) {
+    let (from, to) = (backups.join(old), backups.join(new));
+    if !from.is_dir() {
+        return;
+    }
+    if !to.exists() {
+        let _ = move_without_replacing(&from, &to);
+        return;
+    }
+    for copy in std::fs::read_dir(&from).into_iter().flatten().flatten() {
+        let copy = copy.path();
+        let (Some(second), Some(extension)) =
+            (copy.file_stem().and_then(|s| s.to_str()).and_then(|s| s.parse::<u64>().ok()), copy.extension())
+        else {
+            continue;
+        };
+        let mut second = second;
+        let mut into = to.join(second.to_string()).with_extension(extension);
+        while into.exists() {
+            second += 1;
+            into = to.join(second.to_string()).with_extension(extension);
+        }
+        let _ = move_without_replacing(&copy, &into);
+    }
+    let _ = std::fs::remove_dir(&from);
+}
+
 /// Moves one of the player's toy figures to the Recycle Bin, as the
 /// Skylanders menu's delete does (`portal_menu::delete`), and forgets which
 /// figure it was and that it was used. Only a figure file in one of the
@@ -885,6 +1015,54 @@ mod tests {
         assert_eq!(free_name("Star Wars: Rise Against the Empire", |_| false), "Star Wars Rise Against the Empire.bin");
         assert_eq!(free_name("Who? <Me>|*", |_| false), "Who Me.bin");
         assert_eq!(free_name(":::", |_| false), "Figure.bin");
+    }
+
+    #[test]
+    fn a_renamed_tag_keeps_what_omoio_knows_of_it() {
+        let blank = ToyFigure { name: "Blank Tag".to_string(), number: 0, series: None };
+        let car = ToyFigure { name: "Police Car".to_string(), number: 1000, series: None };
+        let mut known = Known::default();
+        known.made.insert("Blank Tag 2.bin".to_string(), blank.clone());
+        known.seen.insert("Blank Tag 2.bin".to_string(), car.clone());
+        known.rename("Blank Tag 2.bin", "My car.bin");
+        assert_eq!(known.figure(Toy::ToyPad, "My car.bin"), Some(&car));
+        assert_eq!(known.figure(Toy::ToyPad, "Blank Tag 2.bin"), None);
+        assert!(known.named.contains("My car.bin") && !known.named.contains("Blank Tag 2.bin"));
+        assert!(known.forget("My car.bin"));
+        assert!(known.named.is_empty());
+    }
+
+    #[test]
+    fn a_rename_never_replaces_a_file_and_takes_its_backups_along() {
+        let dir = std::env::temp_dir().join(format!("omoio-rename-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("Backups").join("Blank Tag.bin")).unwrap();
+        std::fs::create_dir_all(dir.join("Backups").join("Batman.bin")).unwrap();
+        std::fs::write(dir.join("Blank Tag.bin"), b"tag").unwrap();
+        std::fs::write(dir.join("Batman.bin"), b"batman").unwrap();
+        std::fs::write(dir.join("Backups").join("Blank Tag.bin").join("100.bin"), b"old tag").unwrap();
+        std::fs::write(dir.join("Backups").join("Batman.bin").join("100.bin"), b"old batman").unwrap();
+
+        // Onto a name another file has: refused, and both files as they were.
+        assert!(move_without_replacing(&dir.join("Blank Tag.bin"), &dir.join("Batman.bin")).is_err());
+        assert_eq!(std::fs::read(dir.join("Batman.bin")).unwrap(), b"batman");
+        assert_eq!(std::fs::read(dir.join("Blank Tag.bin")).unwrap(), b"tag");
+        // Only the case changing is the same file, renamed.
+        move_without_replacing(&dir.join("Blank Tag.bin"), &dir.join("blank tag.bin")).unwrap();
+        let names: Vec<String> =
+            std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+        assert!(names.contains(&"blank tag.bin".to_string()), "{names:?}");
+
+        // Backups go along; where the new name has some already, both stay.
+        move_backups(&dir.join("Backups"), "Blank Tag.bin", "Police Car.bin");
+        assert_eq!(std::fs::read(dir.join("Backups").join("Police Car.bin").join("100.bin")).unwrap(), b"old tag");
+        std::fs::create_dir_all(dir.join("Backups").join("Bat.bin")).unwrap();
+        std::fs::write(dir.join("Backups").join("Bat.bin").join("100.bin"), b"older").unwrap();
+        move_backups(&dir.join("Backups"), "Batman.bin", "Bat.bin");
+        assert_eq!(std::fs::read(dir.join("Backups").join("Bat.bin").join("100.bin")).unwrap(), b"older");
+        assert_eq!(std::fs::read(dir.join("Backups").join("Bat.bin").join("101.bin")).unwrap(), b"old batman");
+        assert!(!dir.join("Backups").join("Batman.bin").exists());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

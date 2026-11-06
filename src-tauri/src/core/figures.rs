@@ -703,11 +703,7 @@ pub fn offers(characters: Vec<Character>, game: Option<Game>, console: Console) 
 /// name, then " 2", " 3" and so on. Characters Windows does not allow in a
 /// file name are left out.
 pub fn free_name(name: &str, taken: impl Fn(&str) -> bool) -> String {
-    let clean: String = name
-        .chars()
-        .filter(|c| !matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*'))
-        .collect();
-    let clean = clean.trim().trim_end_matches('.').to_string();
+    let clean = file_safe(name);
     let base = if clean.is_empty() { "Figure".to_string() } else { clean };
     let first = format!("{base}.sky");
     if !taken(&first) {
@@ -717,6 +713,18 @@ pub fn free_name(name: &str, taken: impl Fn(&str) -> bool) -> String {
         .map(|n| format!("{base} {n}.sky"))
         .find(|file| !taken(file))
         .unwrap_or(first)
+}
+
+/// A name as a file may carry it: without the characters Windows does not
+/// allow in a file name (Naming Files, Paths, and Namespaces, Microsoft
+/// Learn), and without spaces around it or dots at its end. Empty when
+/// nothing is left.
+pub fn file_safe(name: &str) -> String {
+    let clean: String = name
+        .chars()
+        .filter(|c| !c.is_control() && !matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*'))
+        .collect();
+    clean.trim().trim_end_matches('.').to_string()
 }
 
 #[cfg(test)]

@@ -23,6 +23,7 @@ import { node, svg } from "./menu/dom";
 import { bumper, drive, hintRow, HOLD, keyHeld, MOVES, named, openedBy, skipHeld, type Move } from "./menu/input";
 import { notice, notify, problem, type Notice } from "./menu/notices";
 import { drawPiece, pictureOf, readPictures } from "./menu/pictures";
+import { attachRename, pressRename, renaming, startRename, stopRename } from "./menu/rename";
 import { act, acting, inTurn } from "./menu/turns";
 
 /// The Disney Infinity base menu, drawn by Omoio over the running game in
@@ -443,7 +444,7 @@ function renderFoot(): HTMLElement {
   const hints: [string, string][] = [];
   if (entry) hints.push(["South", "Put on"]);
   if (places[place]) hints.push(["West", "Take off"]);
-  if (deletable(entry)) hints.push([HOLD, "Hold to delete"]);
+  if (deletable(entry)) hints.push(["Start", "Rename"], [HOLD, "Hold to delete"]);
   hints.push(["East", "Close"]);
   foot.append(hintRow(hints, true));
   return foot;
@@ -480,6 +481,7 @@ function render() {
   panel.querySelector<HTMLElement>(".toy-list")!.scrollTop = scrolled;
   panel.querySelector(".portal-item.sel")?.scrollIntoView({ block: "nearest" });
   drawHold();
+  attachRename(root);
 }
 
 // ---- moving ----
@@ -669,6 +671,7 @@ function press(input: string) {
     if (input === "East") void closePortalMenu();
     return;
   }
+  if (renaming()) return pressRename(input);
   // Anything else pressed lets go of a figure being held to delete it.
   if (holding && input !== "North") stopHold();
   const move = MOVES[input];
@@ -679,6 +682,26 @@ function press(input: string) {
   if (input === "South") void act(choose);
   else if (input === "West") void act(takeOff);
   else if (input === "North" && deletable(selected())) startHold("pad");
+  else if (input === "Start") rename();
+}
+
+/// Opens the box to name the selected figure, unless it is on the base,
+/// which is dealt with as deleting it is (`startHold`, below).
+function rename() {
+  const entry = selected();
+  if (!deletable(entry) || acting || holding) return;
+  if (placeOf(entry) >= 0) {
+    notify({ kind: "info", title: `Take ${entry.name} off the base first`, detail: `Then press ${named("Start")} on it to rename it.` });
+    return;
+  }
+  startRename(entry.file, "figure", async (path) => {
+    files = await toyFiles().catch(() => files);
+    const now = entries().findIndex((each) => each.file?.path === path);
+    if (now >= 0) at = now;
+    render();
+    const name = files.find((file) => file.path === path)?.name;
+    if (name) notify({ kind: "done", title: `Renamed to ${name}` });
+  });
 }
 
 // ---- deleting one of the player's figures ----
@@ -803,6 +826,7 @@ void onPortalMenu((state) => {
   else {
     shown = false;
     holding = null;
+    stopRename();
   }
 });
 void show();
