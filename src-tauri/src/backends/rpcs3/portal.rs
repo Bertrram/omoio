@@ -682,7 +682,7 @@ pub fn characters(pid: u32) -> Result<Listed<Character>, String> {
 /// The figure maker's list, read one step at a time (qt.rs, `step_through`).
 /// Each step fills the ID and Variant boxes for the character it lands on.
 /// The list is sorted by name and opens on Whirlwind (skylander_dialog.cpp
-/// lines 520 to 523).
+/// lines 520 to 523, RPCS3 master eee3f0f, read 6 November 2026).
 fn list(automation: &Automation, maker: HWND) -> Result<Listed<Character>, String> {
     let window = automation.window(maker)?;
     let shown = automation.first(&window, MAKER_LIST)?;
