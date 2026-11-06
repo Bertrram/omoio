@@ -10,7 +10,7 @@
 //! brought only as far as its plain first blocks, to tell a Creation Crystal.
 //! Before a figure goes on, a copy of its file is kept aside (`back_up`).
 
-use crate::backends::EmulatorBackend;
+use crate::backends::{self, EmulatorBackend, Listed};
 use crate::core::console::Console;
 use crate::core::figure_data::{self, Trapped};
 use crate::core::figures::{self, Character, Class, Element, Kind, Movement};
@@ -544,10 +544,14 @@ fn copies_in(kept: &Path) -> Vec<PathBuf> {
 }
 
 /// The characters an emulator's figure maker offered, kept with the
-/// emulator's version so a newer emulator is asked again.
+/// emulator's version so a newer emulator is asked again, and whether the
+/// read reached both ends of the maker's list (`backends::kept_or_read`).
+/// A list kept by Omoio 0.3.5 or before doesn't say, so it is read once more.
 #[derive(serde::Serialize, serde::Deserialize)]
 struct Kept {
     version: String,
+    #[serde(default)]
+    whole: bool,
     characters: Vec<Character>,
 }
 
@@ -567,22 +571,14 @@ pub fn characters(
     let kept = std::fs::read_to_string(&file)
         .ok()
         .and_then(|text| serde_json::from_str::<Kept>(&text).ok())
-        .filter(|kept| !kept.characters.is_empty());
-    let listed = match kept {
-        Some(kept) if kept.version == version => Ok(kept.characters),
-        kept => backend
-            .portal_characters(pid)
-            .inspect(|characters| {
-                if let Ok(text) = serde_json::to_string(&Kept { version, characters: characters.clone() }) {
-                    let _ = std::fs::write(&file, text);
-                }
-            })
-            // The list kept from the emulator before names the same figures,
-            // if maybe not its newest ones, so the menu offers those until
-            // the new list can be read: Cemu's maker took a minute to show
-            // while a game ran (28 October 2026), and the menu showed none.
-            .or_else(|why| kept.map(|kept| kept.characters).ok_or(why)),
-    };
+        .map(|kept| (kept.version, Listed { items: kept.characters, whole: kept.whole }));
+    let read = || backend.portal_characters(pid);
+    let (listed, keep) = backends::kept_or_read(kept, &version, read, |a, b| a.name == b.name);
+    if let Some(keep) = keep.filter(|keep| !keep.items.is_empty()) {
+        if let Ok(text) = serde_json::to_string(&Kept { version, whole: keep.whole, characters: keep.items }) {
+            let _ = std::fs::write(&file, text);
+        }
+    }
     if backend.lists_characters() {
         return listed;
     }

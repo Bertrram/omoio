@@ -25,6 +25,7 @@ import { node, svg } from "./menu/dom";
 import { bumper, drive, hintRow, HOLD, keyHeld, MOVES, named, openedBy, skipHeld, type Move } from "./menu/input";
 import { notice, notify, problem, type Notice } from "./menu/notices";
 import { drawPiece, pictureOf, readPictures } from "./menu/pictures";
+import { attachRename, pressRename, renaming, startRename, stopRename } from "./menu/rename";
 import { act, acting, inTurn } from "./menu/turns";
 
 /// The LEGO Dimensions Toy Pad menu, drawn by Omoio over the running game in
@@ -264,7 +265,7 @@ function buildGroups() {
   groups = [
     {
       title: "Yours",
-      entries: yours.map((file) => ({ name: file.name, piece: filePiece(file), holds: holds(file), file })),
+      entries: yours.map(yourEntry),
       quiet: yours.length > 0 ? undefined : files.length > 0 ? "None of yours go here." : "Nothing saved yet. A tag made here is kept for next time.",
     },
   ];
@@ -285,6 +286,17 @@ function buildGroups() {
     groups.push({ title: "Minifigures", entries: minifigures.map((offer) => ({ name: offer.name, piece: "minifigure", offer })) });
   }
   if (asking && offers.length === 0) groups.push({ title: "", entries: [], quiet: "Getting the figures…" });
+}
+
+/// One of the player's tags. A Blank Tag the game has written a vehicle or
+/// gadget to is called by what it holds, with its file's name under it,
+/// until the player names it themselves.
+function yourEntry(file: ToyFile): Entry {
+  const piece = filePiece(file);
+  if (piece === "vehicle" && file.figure && !file.named) {
+    return { name: file.figure.name, piece, holds: file.name, file };
+  }
+  return { name: file.name, piece, holds: holds(file), file };
 }
 
 function entries(): Entry[] {
@@ -767,7 +779,7 @@ function renderFoot(): HTMLElement {
   const entry = selected();
   if (entry) hints.push(["South", "Put on"]);
   if (places[place]) hints.push(["North", "Move"], ["West", "Take off"]);
-  if (deletable(entry)) hints.push([HOLD, "Hold to delete"]);
+  if (deletable(entry)) hints.push(["Start", "Rename"], [HOLD, "Hold to delete"]);
   hints.push(["East", "Close"]);
   foot.append(hintRow(hints, true));
   return foot;
@@ -804,6 +816,7 @@ function render() {
   panel.querySelector<HTMLElement>(".toy-list")!.scrollTop = scrolled;
   if (!lifted) panel.querySelector(".portal-item.sel")?.scrollIntoView({ block: "nearest" });
   paintLights();
+  attachRename(root);
   drawHold();
 }
 
@@ -1088,6 +1101,7 @@ function press(input: string) {
     if (input === "East") void closePortalMenu();
     return;
   }
+  if (renaming()) return pressRename(input);
   // Anything else pressed lets go of a tag being held to delete it.
   if (holding && input !== "North") stopHold();
   if (lifted) return pressMoving(input);
@@ -1099,6 +1113,26 @@ function press(input: string) {
   if (input === "South") void act(choose);
   else if (input === "West") void act(takeOff);
   else if (input === "North") pressNorth();
+  else if (input === "Start") rename();
+}
+
+/// Opens the box to name the selected tag, unless it is on the Toy Pad,
+/// which is dealt with as deleting it is (`startHold`, below).
+function rename() {
+  const entry = selected();
+  if (!deletable(entry) || acting || lifted || holding) return;
+  if (placeOf(entry) >= 0) {
+    notify({ kind: "info", title: `Take ${the(entry.name)} off the Toy Pad first`, detail: `Then press ${named("Start")} on it to rename it.` });
+    return;
+  }
+  startRename(entry.file, "tag", async (path) => {
+    files = await toyFiles().catch(() => files);
+    const now = entries().findIndex((each) => each.file?.path === path);
+    if (now >= 0) at = now;
+    render();
+    const name = files.find((file) => file.path === path)?.name;
+    if (name) notify({ kind: "done", title: `Renamed to ${name}` });
+  });
 }
 
 /// Whether the keys are named, so the last press was a key's. The keyboard
@@ -1259,6 +1293,7 @@ void onPortalMenu((state) => {
     shown = false;
     holding = null;
     lifted = null;
+    stopRename();
     watchLights(false);
   }
 });

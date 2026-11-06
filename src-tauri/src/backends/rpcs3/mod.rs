@@ -466,7 +466,7 @@ impl super::EmulatorBackend for Rpcs3 {
         portal::clear(pid, slot)
     }
 
-    fn portal_characters(&self, pid: u32) -> Result<Vec<crate::core::figures::Character>, String> {
+    fn portal_characters(&self, pid: u32) -> Result<super::Listed<crate::core::figures::Character>, String> {
         portal::characters(pid)
     }
 
@@ -509,7 +509,7 @@ impl super::EmulatorBackend for Rpcs3 {
         app: &AppHandle,
         pid: u32,
         toy: crate::core::toys::Toy,
-    ) -> Result<Vec<crate::core::toys::ToyFigure>, String> {
+    ) -> Result<super::Listed<crate::core::toys::ToyFigure>, String> {
         match toy {
             crate::core::toys::Toy::Infinity => infinity::list(app, pid),
             crate::core::toys::Toy::ToyPad => dimensions::figures(pid),

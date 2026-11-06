@@ -23,9 +23,10 @@
 //! menu has none to show here.
 
 use super::portal::{
-    dismiss_message, free_turn, give_back_to_game, is_message, main_window, put_away, turn, END_WAIT, FILE_BUTTON,
-    FILE_NAME, START_WAIT, STEP_WAIT,
+    dismiss_message, free_turn, give_back_to_game, is_message, main_window, put_away, turn, FILE_BUTTON, FILE_NAME,
+    START_WAIT,
 };
+use crate::backends::Listed;
 use crate::backends::qt::{
     self, arrives, arrives_over, gone, hide, key, name, out_of_sight, showing, soon, title, value, visible,
     Automation as Qt, WAIT,
@@ -768,7 +769,7 @@ fn make(automation: &Qt, pid: u32, maker: HWND, number: u32, file: &Path) -> Res
 /// which makes nothing (lines 698 to 702). The menu keeps what this gives
 /// for each version of RPCS3 (toy_menu.rs, `listed`), since reading it
 /// takes a few seconds.
-pub fn figures(pid: u32) -> Result<Vec<ToyFigure>, String> {
+pub fn figures(pid: u32) -> Result<Listed<ToyFigure>, String> {
     let _turn = turn();
     let automation = automation()?;
     let window = manager(&automation, pid)?;
@@ -782,7 +783,8 @@ pub fn figures(pid: u32) -> Result<Vec<ToyFigure>, String> {
         put_away(pid, &LEFTOVERS);
         return Err(NO_LIST.to_string());
     }
-    with_vehicles(kept(&steps?))
+    let steps = steps?;
+    with_vehicles(kept(&steps.seen)).map(|items| Listed { items, whole: steps.whole })
 }
 
 /// The maker's minifigures, then every vehicle and gadget. A maker that
@@ -799,13 +801,13 @@ fn with_vehicles(mut found: Vec<ToyFigure>) -> Result<Vec<ToyFigure>, String> {
 /// Each step fills the box for the minifigure it lands on (lines 436 to
 /// 443). The list is sorted by name, with "--Unknown--" among them (lines
 /// 399 and 402).
-fn read_maker(automation: &Qt, maker: HWND) -> Result<Vec<(String, String)>, String> {
+fn read_maker(automation: &Qt, maker: HWND) -> Result<qt::Steps<(String, String)>, String> {
     let window = automation.window(maker).ok_or(LOOKS_DIFFERENT)?;
     let list = automation.first(&window, MAKER_LIST).ok_or(LOOKS_DIFFERENT)?;
     let number_box = number_box(automation, &window)?;
     let typing = automation.first(&window, MAKER_TYPING).ok_or(LOOKS_DIFFERENT)?;
     let read = || (value(&list), value(&number_box));
-    qt::step_through(maker, &typing, STEP_WAIT, END_WAIT, read).ok_or_else(|| LOOKS_DIFFERENT.to_string())
+    qt::step_through(maker, &typing, read).ok_or_else(|| LOOKS_DIFFERENT.to_string())
 }
 
 /// The figures the steps showed, once for each number. The box opens on 0
@@ -979,6 +981,8 @@ mod tests {
         assert!(cleared[3].is_empty(), "the left pad is empty again: {cleared:?}");
         let started = Instant::now();
         let listed = figures(pid).unwrap();
+        assert!(listed.whole, "the read reached both ends of the list");
+        let listed = listed.items;
         println!("{} figures in {:?}", listed.len(), started.elapsed());
         assert!(listed.contains(&figure("Batman", 1)), "{listed:?}");
         assert!(listed.contains(&figure("Blank Tag", 0)), "{listed:?}");

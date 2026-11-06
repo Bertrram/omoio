@@ -29,7 +29,8 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GetClassNameW, GetWindow, GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible, PostMessageW,
-    SetWindowPos, ShowWindow, GW_OWNER, SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, WM_KEYDOWN, WM_KEYUP,
+    SendMessageTimeoutW, SetWindowPos, ShowWindow, GW_OWNER, SMTO_NORMAL, SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER,
+    SW_HIDE, WM_KEYDOWN, WM_KEYUP,
 };
 
 /// How long a window or a widget may take to show.
@@ -193,16 +194,38 @@ pub fn press(button: &IUIAutomationElement, window: HWND) -> Option<()> {
 }
 
 /// A key going down and up in `window`, for whichever of its widgets has the
-/// keyboard. Qt reads the scan code too, so it comes along as Windows gives it.
+/// keyboard.
 pub fn key(window: HWND, key: VIRTUAL_KEY) {
-    let scan = unsafe { MapVirtualKeyW(u32::from(key.0), MAPVK_VK_TO_VSC_EX) } as isize;
-    let extended = isize::from(scan & 0xFF00 == 0xE000) << 24;
-    let down = 1 | ((scan & 0xFF) << 16) | extended;
-    let up = down | 0xC000_0000;
+    let (down, up) = key_words(key);
     unsafe {
         let _ = PostMessageW(Some(window), WM_KEYDOWN, WPARAM(usize::from(key.0)), LPARAM(down));
         let _ = PostMessageW(Some(window), WM_KEYUP, WPARAM(usize::from(key.0)), LPARAM(up));
     }
+}
+
+/// The same key, sent rather than posted: Windows hands it to the window
+/// and returns once the window has dealt with it, however long its thread
+/// is busy first, or gives up after `limit` (SendMessageTimeoutW with
+/// SMTO_NORMAL, Microsoft Learn). Says whether the window took the key both
+/// going down and coming up in time.
+pub fn key_taken(window: HWND, key: VIRTUAL_KEY, limit: Duration) -> bool {
+    let (down, up) = key_words(key);
+    let limit = u32::try_from(limit.as_millis()).unwrap_or(u32::MAX);
+    [(WM_KEYDOWN, down), (WM_KEYUP, up)].into_iter().all(|(message, word)| {
+        let taken = unsafe {
+            SendMessageTimeoutW(window, message, WPARAM(usize::from(key.0)), LPARAM(word), SMTO_NORMAL, limit, None)
+        };
+        taken.0 != 0
+    })
+}
+
+/// A key message's lParam going down and coming up. Qt reads the scan code
+/// too, so it comes along as Windows gives it.
+fn key_words(key: VIRTUAL_KEY) -> (isize, isize) {
+    let scan = unsafe { MapVirtualKeyW(u32::from(key.0), MAPVK_VK_TO_VSC_EX) } as isize;
+    let extended = isize::from(scan & 0xFF00 == 0xE000) << 24;
+    let down = 1 | ((scan & 0xFF) << 16) | extended;
+    (down, down | 0xC000_0000)
 }
 
 /// Asks `ready` every millisecond until it has an answer or `limit` is up.
@@ -341,40 +364,97 @@ fn menu_item_soon(automation: &Automation, pid: u32, menus: &IUIAutomationElemen
     })
 }
 
-/// Every step of a Qt list, read one at a time as the arrow keys posted to
+/// How long an emulator may take over one step through a list before the
+/// read gives up. Generous, since a game starting or a level loading can
+/// keep the emulator from answering for seconds on a slower PC.
+const STEP_LIMIT: Duration = Duration::from_secs(15);
+/// How long a step the emulator has taken may take to show in the list.
+const SHOW_WAIT: Duration = Duration::from_secs(1);
+/// More steps than any maker's list has (RPCS3's Skylanders list, the
+/// longest, has 473), so a read that never meets an end still stops.
+const MOST_STEPS: usize = 5000;
+
+/// What reading a list gave, and whether the read reached both of its ends.
+pub struct Steps<T> {
+    pub seen: Vec<T>,
+    pub whole: bool,
+}
+
+/// Every step of a Qt list, read one at a time as the arrow keys sent to
 /// `window` take them while `typing`, the list's own typing box, has the
 /// keyboard: as it opens, then down to the end, then up to the top, each
-/// as `read` gives it. A read can land half way through a step, so a change
-/// counts once two reads agree on it. An end is where a step changes
-/// nothing, and a step that hasn't shown within `step` gets `end` more
-/// before it counts as the end. Proven on RPCS3's Skylander Creator
+/// as `read` gives it. Proven on RPCS3's Skylander Creator
 /// (docs/what-we-verified.md, "Driving RPCS3's portal from outside works",
 /// 5 October 2026). `None` when the typing box won't take the keyboard.
-pub fn step_through<T: PartialEq + Clone>(
-    window: HWND,
-    typing: &IUIAutomationElement,
-    step: Duration,
-    end: Duration,
-    read: impl Fn() -> T,
-) -> Option<Vec<T>> {
+///
+/// A combo box gives no sign of its ends: the arrow key at the last entry
+/// does nothing, and UI Automation shows the entries only while the list is
+/// open on screen, and then only the ten in sight (tried on RPCS3
+/// 0.0.43-20564 with Qt 6.12.0, 6 November 2026). Nor does a step that
+/// hasn't shown yet tell an end from a busy emulator: Qt takes a key in the
+/// window's own procedure (qwindowscontext.cpp line 983 at Qt v6.12.0) but
+/// queues its event for its own loop to handle later
+/// (qwindowsysteminterface.cpp lines 120 to 134). Posted keys and a
+/// second's wait used to count a slow step as the end, and a list cut short
+/// was kept until RPCS3 updated.
+///
+/// So a step that shows nothing within `SHOW_WAIT` is checked with one step
+/// back. Qt handles the two keys in the order it took them, so the list can
+/// land on the entry the last step came from only if that step moved
+/// nothing: an end. A step that was only slow brings the list back to where
+/// it was, or on to a new entry, and the read stops there, not whole. Each
+/// key is sent and waited for rather than posted, so a busy emulator has
+/// `STEP_LIMIT` to take it, and a key it doesn't take stops the read too.
+/// The read is whole once both ends are proven, which costs one step at
+/// each.
+pub fn step_through<T: PartialEq + Clone>(window: HWND, typing: &IUIAutomationElement, read: impl Fn() -> T) -> Option<Steps<T>> {
     unsafe { typing.SetFocus() }.ok()?;
     let mut now = read();
     let mut seen = vec![now.clone()];
-    for arrow in [VK_DOWN, VK_UP] {
+    // The entry the list was on before the last step, in the direction
+    // being read.
+    let mut came_from: Option<T> = None;
+    let mut ends = vec![(VK_DOWN, VK_UP), (VK_UP, VK_DOWN)];
+    let mut bottom_unproven = false;
+    let mut pass = 0;
+    while pass < ends.len() {
+        let (arrow, back) = ends[pass];
+        pass += 1;
         loop {
-            key(window, arrow);
-            let moved = || {
+            if seen.len() > MOST_STEPS || !key_taken(window, arrow, STEP_LIMIT) {
+                return Some(Steps { seen, whole: false });
+            }
+            // A read can land half way through a step, between the list and
+            // the boxes, so a change counts once two reads agree on it.
+            let moved = |now: &T| {
                 let first = read();
-                (first != now && read() == first).then_some(first)
+                (first != *now && read() == first).then_some(first)
             };
-            let Some(next) = soon(step, moved).or_else(|| soon(end, moved)) else {
-                break;
+            if let Some(next) = soon(SHOW_WAIT, || moved(&now)) {
+                seen.push(next.clone());
+                came_from = Some(std::mem::replace(&mut now, next));
+                continue;
+            }
+            let Some(before) = came_from.take() else {
+                // A list that opens at its last entry has nothing to step
+                // back to yet: its top is read first, and its bottom again
+                // after.
+                if pass == 1 && !bottom_unproven {
+                    bottom_unproven = true;
+                    ends.push((VK_DOWN, VK_UP));
+                    break;
+                }
+                return Some(Steps { seen, whole: false });
             };
-            seen.push(next.clone());
-            now = next;
+            if !key_taken(window, back, STEP_LIMIT) || soon(STEP_LIMIT, || moved(&now)).as_ref() != Some(&before) {
+                return Some(Steps { seen, whole: false });
+            }
+            // One step into the other direction already.
+            came_from = Some(std::mem::replace(&mut now, before));
+            break;
         }
     }
-    Some(seen)
+    Some(Steps { seen, whole: true })
 }
 
 pub fn process_of(window: HWND) -> u32 {

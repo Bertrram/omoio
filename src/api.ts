@@ -1199,6 +1199,8 @@ export interface ToyFile {
   places: number[];
   /// Used lately, so listed first.
   recent: boolean;
+  /// Named by the player in the menu, so its name is the one to show.
+  named: boolean;
 }
 
 /// The running game's toy, and for Disney Infinity which game it is. Null
@@ -1238,6 +1240,12 @@ export function toyFiles(): Promise<ToyFile[]> {
 /// Moves one of the player's toy figures to the Recycle Bin.
 export function deleteToyFigure(path: string): Promise<void> {
   return invoke("delete_toy_figure", { path });
+}
+
+/// Gives one of the player's toy figures the name they typed. Resolves to
+/// its new path, or rejects with why in the player's words.
+export function renameToyFigure(path: string, name: string): Promise<string> {
+  return invoke("rename_toy_figure", { path, name });
 }
 
 /// The light the game last asked of one of the Toy Pad's three pads.

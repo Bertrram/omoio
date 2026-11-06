@@ -363,8 +363,8 @@ impl super::EmulatorBackend for Dolphin {
 
     /// The first game's figures, named as Dolphin's list names them, asked
     /// of its Customize window one by one (portal.rs, `characters`).
-    fn portal_characters(&self, pid: u32) -> Result<Vec<Character>, String> {
-        portal::characters(pid)
+    fn portal_characters(&self, pid: u32) -> Result<super::Listed<Character>, String> {
+        portal::characters(pid).map(super::Listed::whole)
     }
 
     /// Dolphin's figure maker makes a figure from any ID and Variant typed
@@ -399,7 +399,7 @@ impl super::EmulatorBackend for Dolphin {
 
     /// Dolphin's own list, read from its figure maker (infinity.rs,
     /// `figures`).
-    fn toy_list(&self, _app: &AppHandle, pid: u32, toy: Toy) -> Result<Vec<ToyFigure>, String> {
+    fn toy_list(&self, _app: &AppHandle, pid: u32, toy: Toy) -> Result<super::Listed<ToyFigure>, String> {
         self.base(toy)?;
         infinity::figures(pid)
     }
