@@ -15,7 +15,7 @@
 //! emulator make from its own record of what it asked for, and one the
 //! player brought only once the emulator has named it on the toy.
 
-use crate::backends::EmulatorBackend;
+use crate::backends::{self, EmulatorBackend, Listed};
 use crate::core::console::Console;
 use crate::core::dimensions;
 use crate::core::figures;
@@ -257,6 +257,11 @@ pub fn made(app: &AppHandle, toy: Toy, file: &Path, figure: &ToyFigure) {
 #[derive(Serialize, Deserialize)]
 struct Kept {
     version: String,
+    /// Whether the read reached both ends of the maker's list
+    /// (`backends::kept_or_read`). A list kept by Omoio 0.3.5 or before
+    /// doesn't say, so it is read once more.
+    #[serde(default)]
+    whole: bool,
     figures: Vec<ToyFigure>,
 }
 
@@ -288,23 +293,15 @@ fn kept_figures(app: &AppHandle, game: &ToyGame) -> Vec<ToyFigure> {
 fn listed(app: &AppHandle, backend: &dyn EmulatorBackend, pid: u32, game: &ToyGame) -> Result<Vec<ToyFigure>, String> {
     let file = kept_file(app, game.toy, game.console)?;
     let version = backend.detect_version(app).unwrap_or_default();
-    match read_kept(&file) {
-        Some(kept) if kept.version == version => Ok(kept.figures),
-        kept => backend
-            .toy_list(app, pid, game.toy)
-            .inspect(|figures| {
-                if figures.is_empty() {
-                    return;
-                }
-                if let Ok(text) = serde_json::to_string(&Kept { version, figures: figures.clone() }) {
-                    let _ = std::fs::write(&file, text);
-                }
-            })
-            // The list kept from the emulator before names the same
-            // figures, if maybe not its newest, so the menu offers those
-            // until the new list can be read, as for Skylanders.
-            .or_else(|why| kept.map(|kept| kept.figures).ok_or(why)),
+    let kept = read_kept(&file).map(|kept| (kept.version, Listed { items: kept.figures, whole: kept.whole }));
+    let read = || backend.toy_list(app, pid, game.toy);
+    let (offered, keep) = backends::kept_or_read(kept, &version, read, |a, b| a.number == b.number);
+    if let Some(keep) = keep.filter(|keep| !keep.items.is_empty()) {
+        if let Ok(text) = serde_json::to_string(&Kept { version, whole: keep.whole, figures: keep.items }) {
+            let _ = std::fs::write(&file, text);
+        }
     }
+    offered
 }
 
 /// What a known figure is, and where it may go in the running game.

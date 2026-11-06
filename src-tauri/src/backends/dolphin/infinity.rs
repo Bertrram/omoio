@@ -37,10 +37,10 @@ use crate::backends::qt::{
     self, arrives, gone, hide, key, name, out_of_sight, showing, soon, step_through, title, value, visible,
     Automation as Qt, WAIT,
 };
+use crate::backends::Listed;
 use crate::core::infinity::PLACES;
 use crate::core::toys::ToyFigure;
 use std::path::Path;
-use std::time::Duration;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Accessibility::{
     IUIAutomationElement, UIA_ButtonControlTypeId, UIA_ComboBoxControlTypeId, UIA_EditControlTypeId,
@@ -77,12 +77,6 @@ const MAKE_FAILED: &str = "Dolphin couldn't make that figure. Try again.";
 const MAKER_DIDNT_OPEN: &str = "Dolphin's figure maker didn't open. Try again.";
 const NO_LIST: &str = "Couldn't read Dolphin's list of figures.";
 
-/// How long one step through the figure maker's list may take to show, and
-/// how much longer a step that hasn't gets before it counts as the list's
-/// end, as for RPCS3's maker (backends/rpcs3/portal.rs, `STEP_WAIT`): a list
-/// cut short would be kept until Dolphin updates.
-const STEP_WAIT: Duration = Duration::from_millis(300);
-const END_WAIT: Duration = Duration::from_secs(1);
 
 /// The places whose figure makers offer, between them, every figure on
 /// Dolphin's list: the hexagon's first place its play sets and hexagonal
@@ -391,20 +385,23 @@ fn make(automation: &Automation, pid: u32, maker: HWND, number: u32, file: &Path
 /// done once for each Dolphin version, which keeps what it gives
 /// (toy_menu.rs, `listed`). Every place's list has to be read, or a whole
 /// kind of piece would be missing until Dolphin updates.
-pub fn figures(pid: u32) -> Result<Vec<ToyFigure>, String> {
+pub fn figures(pid: u32) -> Result<Listed<ToyFigure>, String> {
     let mut found: Vec<ToyFigure> = Vec::new();
+    let mut whole = true;
     for place in LISTED_IN {
-        for figure in listed_in(pid, place)? {
+        let listed = listed_in(pid, place)?;
+        whole &= listed.whole;
+        for figure in listed.items {
             if !found.iter().any(|known| known.number == figure.number) {
                 found.push(figure);
             }
         }
     }
-    Ok(found)
+    Ok(Listed { items: found, whole })
 }
 
 /// What the figure maker of `place` lists, a figure for each step.
-fn listed_in(pid: u32, place: usize) -> Result<Vec<ToyFigure>, String> {
+fn listed_in(pid: u32, place: usize) -> Result<Listed<ToyFigure>, String> {
     let _turn = turn();
     let automation = Automation::new()?;
     let window = manager(&automation, pid)?;
@@ -414,21 +411,22 @@ fn listed_in(pid: u32, place: usize) -> Result<Vec<ToyFigure>, String> {
     let steps = steps(&automation, maker);
     key(maker, VK_ESCAPE);
     gone(maker);
-    let found: Vec<ToyFigure> = steps?.iter().filter_map(listed).collect();
+    let steps = steps?;
+    let found: Vec<ToyFigure> = steps.seen.iter().filter_map(listed).collect();
     if found.is_empty() {
         Err(NO_LIST.to_string())
     } else {
-        Ok(found)
+        Ok(Listed { items: found, whole: steps.whole })
     }
 }
 
 /// Each step through the maker's list, as the list's typing box and the
 /// Figure Number box show it.
-fn steps(automation: &Automation, maker: HWND) -> Result<Vec<(String, String)>, String> {
+fn steps(automation: &Automation, maker: HWND) -> Result<qt::Steps<(String, String)>, String> {
     let window = automation.window(maker)?;
     let number = number_box(automation, &window)?;
     let typing = typing_box(automation, &window)?;
-    step_through(maker, &typing, STEP_WAIT, END_WAIT, || (value(&typing), value(&number)))
+    step_through(maker, &typing, || (value(&typing), value(&number)))
         .ok_or_else(|| LOOKS_DIFFERENT.to_string())
 }
 
@@ -527,6 +525,8 @@ mod tests {
         assert!(removed[3].is_empty(), "Player One is empty again: {removed:?}");
         let started = Instant::now();
         let listed = figures(pid).unwrap();
+        assert!(listed.whole, "the read reached both ends of the list");
+        let listed = listed.items;
         println!("list took {:?}: {} figures", started.elapsed(), listed.len());
         assert_eq!(listed.len(), 104, "Dolphin 2609a's list: {listed:?}");
         let made = Path::new(&figure).with_file_name(format!("omoio-made-{}.bin", std::process::id()));

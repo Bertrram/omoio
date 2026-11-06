@@ -1314,8 +1314,8 @@ impl super::EmulatorBackend for Cemu {
         portal::clear(pid, slot)
     }
 
-    fn portal_characters(&self, pid: u32) -> Result<Vec<crate::core::figures::Character>, String> {
-        portal::characters(pid)
+    fn portal_characters(&self, pid: u32) -> Result<super::Listed<crate::core::figures::Character>, String> {
+        portal::characters(pid).map(super::Listed::whole)
     }
 
     fn portal_create(
@@ -1359,10 +1359,10 @@ impl super::EmulatorBackend for Cemu {
         }
     }
 
-    fn toy_list(&self, _app: &AppHandle, pid: u32, toy: Toy) -> Result<Vec<ToyFigure>, String> {
+    fn toy_list(&self, _app: &AppHandle, pid: u32, toy: Toy) -> Result<super::Listed<ToyFigure>, String> {
         match toy {
-            Toy::Infinity => infinity::list(pid),
-            Toy::ToyPad => toypad::list(pid),
+            Toy::Infinity => infinity::list(pid).map(super::Listed::whole),
+            Toy::ToyPad => toypad::list(pid).map(super::Listed::whole),
             Toy::Skylanders => Err(super::NO_TOY.to_string()),
         }
     }

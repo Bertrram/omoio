@@ -20,9 +20,10 @@
 //! figure maker's list gives each figure's number and series.
 
 use super::portal::{
-    dismiss_message, free_turn, give_back_to_game, is_message, main_window, put_away, turn, END_WAIT, FILE_BUTTON,
-    FILE_NAME, START_WAIT, STEP_WAIT,
+    dismiss_message, free_turn, give_back_to_game, is_message, main_window, put_away, turn, FILE_BUTTON, FILE_NAME,
+    START_WAIT,
 };
+use crate::backends::{self, Listed};
 use crate::backends::qt::{
     self, arrives, gone, hide, key, name, out_of_sight, showing, soon, title, value, visible, Automation as Qt, WAIT,
 };
@@ -410,10 +411,15 @@ fn make(automation: &Qt, pid: u32, maker: HWND, number: u32, series: u8, file: &
     }
 }
 
-/// The list of figures RPCS3 makes, kept with the RPCS3 it came from.
+/// The list of figures RPCS3 makes, kept with the RPCS3 it came from, and
+/// whether the read reached both ends of the maker's list. A list kept
+/// before Omoio said so may have been cut short, so it counts as not whole
+/// and is read once more.
 #[derive(Serialize, Deserialize)]
 struct Kept {
     version: String,
+    #[serde(default)]
+    whole: bool,
     figures: Vec<ToyFigure>,
 }
 
@@ -421,47 +427,45 @@ struct Kept {
 /// the maker once for each version of RPCS3 and kept in Omoio's data
 /// folder, as the portal menu keeps RPCS3's Skylanders (portal_menu.rs,
 /// `characters`), since reading it takes a few seconds.
-pub fn list(app: &AppHandle, pid: u32) -> Result<Vec<ToyFigure>, String> {
+pub fn list(app: &AppHandle, pid: u32) -> Result<Listed<ToyFigure>, String> {
     let version = super::detect_version(app).unwrap_or_default();
     let file = app.path().data_dir().ok().map(|data| data.join("Omoio").join(KEPT));
     kept_or_read(file.as_deref(), &version, || from_maker(pid))
 }
 
 /// The list kept for `version`, else the one `read` gives, kept in its
-/// place. When it can't be read, a list kept from another RPCS3 names the
-/// same figures, if maybe not its newest, so the menu offers those.
+/// place as `backends::kept_or_read` says. What this gives is whole when
+/// the list kept or read is, so the menu keeps it the same way.
 fn kept_or_read(
     file: Option<&Path>,
     version: &str,
-    read: impl FnOnce() -> Result<Vec<ToyFigure>, String>,
-) -> Result<Vec<ToyFigure>, String> {
+    read: impl FnOnce() -> Result<Listed<ToyFigure>, String>,
+) -> Result<Listed<ToyFigure>, String> {
     let kept = file
         .and_then(|file| std::fs::read_to_string(file).ok())
         .and_then(|text| serde_json::from_str::<Kept>(&text).ok())
-        .filter(|kept| !kept.figures.is_empty());
-    match kept {
-        Some(kept) if kept.version == version => Ok(kept.figures),
-        kept => match read() {
-            Ok(figures) => {
-                let fresh = Kept { version: version.to_string(), figures };
-                if let (Some(file), Ok(text)) = (file, serde_json::to_string(&fresh)) {
-                    let _ = std::fs::write(file, text);
-                }
-                Ok(fresh.figures)
-            }
-            Err(why) => kept.map(|kept| kept.figures).ok_or(why),
-        },
+        .map(|kept| (kept.version, Listed { items: kept.figures, whole: kept.whole }));
+    let kept_whole = kept.as_ref().is_some_and(|(from, kept)| from == version && kept.whole);
+    let (offered, keep) = backends::kept_or_read(kept, version, read, |a, b| a.number == b.number);
+    let whole = keep.as_ref().map_or(kept_whole, |keep| keep.whole);
+    if let (Some(file), Some(keep)) = (file, keep) {
+        let fresh = Kept { version: version.to_string(), whole: keep.whole, figures: keep.items };
+        if let Ok(text) = serde_json::to_string(&fresh) {
+            let _ = std::fs::write(file, text);
+        }
     }
+    offered.map(|items| Listed { items, whole })
 }
 
 /// The figure maker's list, read from the makers of `MAKER_PLACES`. Each is
 /// closed again without making anything.
-fn from_maker(pid: u32) -> Result<Vec<ToyFigure>, String> {
+fn from_maker(pid: u32) -> Result<Listed<ToyFigure>, String> {
     let _turn = turn();
     let automation = automation()?;
     let window = manager(&automation, pid)?;
     put_away(pid, &LEFTOVERS);
     let mut found = Vec::new();
+    let mut whole = true;
     for place in MAKER_PLACES {
         let buttons = automation.window(window).ok_or(LOOKS_DIFFERENT)?;
         press(&place_button(&automation, &buttons, "Create", place)?, window)?;
@@ -472,14 +476,16 @@ fn from_maker(pid: u32) -> Result<Vec<ToyFigure>, String> {
             put_away(pid, &LEFTOVERS);
             return Err(NO_LIST.to_string());
         }
-        for step in steps? {
-            keep(&mut found, &step);
+        let steps = steps?;
+        whole &= steps.whole;
+        for step in &steps.seen {
+            keep(&mut found, step);
         }
     }
     if found.is_empty() {
         Err(NO_LIST.to_string())
     } else {
-        Ok(found)
+        Ok(Listed { items: found, whole })
     }
 }
 
@@ -488,14 +494,14 @@ fn from_maker(pid: u32) -> Result<Vec<ToyFigure>, String> {
 /// 544 to 555). The list is sorted by name, with "--Unknown--" among them,
 /// and its boxes open on the place's first figure by number, in series 1
 /// (lines 441 to 498 and 509 to 511).
-fn read_maker(automation: &Qt, maker: HWND) -> Result<Vec<(String, String, String)>, String> {
+fn read_maker(automation: &Qt, maker: HWND) -> Result<qt::Steps<(String, String, String)>, String> {
     let window = automation.window(maker).ok_or(LOOKS_DIFFERENT)?;
     let list = automation.first(&window, MAKER_LIST).ok_or(LOOKS_DIFFERENT)?;
     let boxes = soon(WAIT, || Some(automation.all(&window, MAKER_BOX)).filter(|found| found.len() == 2))
         .ok_or(LOOKS_DIFFERENT)?;
     let typing = automation.first(&window, MAKER_TYPING).ok_or(LOOKS_DIFFERENT)?;
     let read = || (value(&list), value(&boxes[0]), value(&boxes[1]));
-    qt::step_through(maker, &typing, STEP_WAIT, END_WAIT, read).ok_or_else(|| LOOKS_DIFFERENT.to_string())
+    qt::step_through(maker, &typing, read).ok_or_else(|| LOOKS_DIFFERENT.to_string())
 }
 
 /// Adds what one step showed, once for each number. "--Unknown--" leaves
@@ -597,8 +603,8 @@ mod tests {
         let path = std::env::temp_dir().join(format!("omoio-infinity-ps3-{}.json", std::process::id()));
         let _ = std::fs::remove_file(&path);
         let file = Some(path.as_path());
-        let old = [figure("Mr. Incredible", 1000001, 1)].to_vec();
-        let new = [figure("Mr. Incredible", 1000001, 1), figure("Stitch", 1000118, 2)].to_vec();
+        let old = Listed::whole([figure("Mr. Incredible", 1000001, 1)].to_vec());
+        let new = Listed::whole([figure("Mr. Incredible", 1000001, 1), figure("Stitch", 1000118, 2)].to_vec());
 
         // Nothing kept: read, and kept.
         let read = kept_or_read(file, "0.0.43-20400", || Ok(old.clone()));
@@ -606,15 +612,31 @@ mod tests {
         // Kept for this RPCS3: not read again.
         let kept = kept_or_read(file, "0.0.43-20400", || Err("read".to_string()));
         assert_eq!(kept, Ok(old.clone()));
-        // A newer RPCS3 that can't be read yet: the list kept before.
+        // A newer RPCS3 that can't be read yet: the list kept before, not
+        // whole for that RPCS3, so the menu reads it again next time.
         let fallback = kept_or_read(file, "0.0.43-20500", || Err("busy".to_string()));
-        assert_eq!(fallback, Ok(old.clone()));
+        assert_eq!(fallback, Ok(Listed { whole: false, ..old.clone() }));
         // A newer RPCS3: read again, and kept in its place.
         assert_eq!(kept_or_read(file, "0.0.43-20500", || Ok(new.clone())), Ok(new.clone()));
         assert_eq!(kept_or_read(file, "0.0.43-20500", || Err("read".to_string())), Ok(new.clone()));
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(text.contains(r#""version":"0.0.43-20500""#), "{text}");
         assert!(text.contains(r#"{"name":"Stitch","number":1000118,"series":2}"#), "{text}");
+
+        // A read cut short is offered with the list kept, and read again.
+        let cut = Listed { items: [figure("Stitch", 1000118, 2)].to_vec(), whole: false };
+        let joined =
+            Listed { items: [figure("Stitch", 1000118, 2), figure("Mr. Incredible", 1000001, 1)].to_vec(), whole: false };
+        assert_eq!(kept_or_read(file, "0.0.43-20600", || Ok(cut.clone())), Ok(joined));
+        assert_eq!(kept_or_read(file, "0.0.43-20600", || Ok(new.clone())), Ok(new.clone()));
+        assert_eq!(kept_or_read(file, "0.0.43-20600", || Err("read".to_string())), Ok(new.clone()));
+
+        // A list kept by Omoio 0.3.5, which didn't say whether it was whole,
+        // is read once more.
+        let from_035 = r#"{"version":"0.0.43-20600","figures":[{"name":"Stitch","number":1000118,"series":2}]}"#;
+        std::fs::write(&path, from_035).unwrap();
+        assert_eq!(kept_or_read(file, "0.0.43-20600", || Ok(new.clone())), Ok(new.clone()));
+        assert_eq!(kept_or_read(file, "0.0.43-20600", || Err("read".to_string())), Ok(new.clone()));
 
         // An empty list is never kept as the answer.
         std::fs::write(&path, r#"{"version":"0.0.43-20500","figures":[]}"#).unwrap();
@@ -663,6 +685,8 @@ mod tests {
         assert!(cleared[3].is_empty(), "Player One is empty again: {cleared:?}");
         let started = Instant::now();
         let listed = from_maker(pid).unwrap();
+        assert!(listed.whole, "the read reached both ends of the list");
+        let listed = listed.items;
         println!("{} figures in {:?}", listed.len(), started.elapsed());
         assert!(listed.contains(&figure("Mr. Incredible", 1_000_001, 1)), "{listed:?}");
         assert!(listed.iter().any(|f| f.number == 2_000_001), "a play set");

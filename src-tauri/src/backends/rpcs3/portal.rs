@@ -29,6 +29,7 @@ use crate::backends::qt::{
     self, all_windows, arrives, class, gone, hide, key, name, open_menus, out_of_sight, process_of, showing, soon,
     title, value, visible, Automation as Qt, WAIT,
 };
+use crate::backends::Listed;
 use crate::core::figures::{self, Character};
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard, PoisonError, TryLockError};
@@ -38,8 +39,8 @@ use std::time::Instant;
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::UI::Accessibility::IUIAutomationElement;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, VK_DOWN, VK_ESCAPE,
-    VK_LMENU, VK_RETURN, VK_UP,
+    SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, VK_ESCAPE,
+    VK_LMENU, VK_RETURN,
 };
 use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, PostMessageW, SetForegroundWindow, WM_CLOSE};
 
@@ -85,13 +86,6 @@ const MAKE_FAILED: &str = "RPCS3 couldn't make that figure. Try again.";
 
 /// How long RPCS3 may take to show its main window after it starts.
 pub(super) const START_WAIT: Duration = Duration::from_secs(30);
-/// How long one step through the figure maker's list may take to show. The
-/// list stops moving at either end, which is how its ends are found, so a
-/// step that hasn't shown by then gets `END_WAIT` more before it counts as
-/// the end: a game starting can keep RPCS3 too busy to answer at once, and
-/// a list cut short would be kept until RPCS3 updates.
-pub(super) const STEP_WAIT: Duration = Duration::from_millis(300);
-pub(super) const END_WAIT: Duration = Duration::from_secs(1);
 
 /// How long the portal server may take to answer once RPCS3's main window
 /// shows. RPCS3 starts it before that window and again as the game boots
@@ -664,7 +658,7 @@ fn make(automation: &Automation, pid: u32, maker: HWND, character: &Character, f
 
 /// Every character RPCS3's figure maker offers. The maker is closed again
 /// without making anything.
-pub fn characters(pid: u32) -> Result<Vec<Character>, String> {
+pub fn characters(pid: u32) -> Result<Listed<Character>, String> {
     let _turn = turn();
     let automation = Automation::new()?;
     let window = manager(&automation, pid)?;
@@ -677,20 +671,19 @@ pub fn characters(pid: u32) -> Result<Vec<Character>, String> {
     key(maker, VK_ESCAPE);
     gone(maker);
     match found {
-        Ok(found) if !found.is_empty() => {
-            know_names(found.clone());
+        Ok(found) if !found.items.is_empty() => {
+            know_names(found.items.clone());
             Ok(found)
         }
         _ => Err("Couldn't read RPCS3's list of characters.".to_string()),
     }
 }
 
-/// The figure maker's list, read one step at a time. Each step fills the ID
-/// and Variant boxes for the character it lands on, and the arrow keys take
-/// the steps. The list is sorted by name and opens on Whirlwind, so it is
-/// read down to the end, then up to the top; an end is where a step changes
-/// nothing.
-fn list(automation: &Automation, maker: HWND) -> Result<Vec<Character>, String> {
+/// The figure maker's list, read one step at a time (qt.rs, `step_through`).
+/// Each step fills the ID and Variant boxes for the character it lands on.
+/// The list is sorted by name and opens on Whirlwind (skylander_dialog.cpp
+/// lines 520 to 523).
+fn list(automation: &Automation, maker: HWND) -> Result<Listed<Character>, String> {
     let window = automation.window(maker)?;
     let shown = automation.first(&window, MAKER_LIST)?;
     let boxes = automation.all(&window, MAKER_BOX);
@@ -700,28 +693,13 @@ fn list(automation: &Automation, maker: HWND) -> Result<Vec<Character>, String> 
     // The arrows go to the widget with the keyboard, which has to be the
     // list's own typing box rather than one of the others.
     let typing = automation.first(&window, MAKER_TYPING)?;
-    unsafe { typing.SetFocus() }.map_err(|_| LOOKS_DIFFERENT.to_string())?;
     let read = || (value(&shown), value(id_box), value(variant_box));
+    let steps = qt::step_through(maker, &typing, read).ok_or(LOOKS_DIFFERENT)?;
     let mut found: Vec<Character> = Vec::new();
-    let mut now = read();
-    keep(&mut found, &now);
-    for arrow in [VK_DOWN, VK_UP] {
-        loop {
-            key(maker, arrow);
-            // A read can land half way through a step, between the list and
-            // the boxes, so a change counts once two reads agree on it.
-            let moved = || {
-                let first = read();
-                (first != now && read() == first).then_some(first)
-            };
-            let Some(next) = soon(STEP_WAIT, moved).or_else(|| soon(END_WAIT, moved)) else {
-                break;
-            };
-            keep(&mut found, &next);
-            now = next;
-        }
+    for step in &steps.seen {
+        keep(&mut found, step);
     }
-    Ok(found)
+    Ok(Listed { items: found, whole: steps.whole })
 }
 
 /// Adds what one step showed, once. "--Unknown--" leaves the boxes as the
@@ -837,6 +815,8 @@ mod tests {
         assert!(cleared[0].is_empty(), "slot 1 is empty again: {cleared:?}");
         let started = Instant::now();
         let list = characters(pid).unwrap();
+        assert!(list.whole, "the read reached both ends of the list");
+        let list = list.items;
         println!("{} characters in {:?}", list.len(), started.elapsed());
         assert!(list.iter().any(|c| c.name == "Spyro" && c.id == 16 && c.variant == 0));
         // Beside the figure, in a small folder like Omoio's own: Qt's save

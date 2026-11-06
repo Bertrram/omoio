@@ -104,7 +104,7 @@ pub trait EmulatorBackend: Sync {
     }
 
     /// Every character the emulator's own figure maker can make.
-    fn portal_characters(&self, _pid: u32) -> Result<Vec<Character>, String> {
+    fn portal_characters(&self, _pid: u32) -> Result<Listed<Character>, String> {
         Err(NO_PORTAL.to_string())
     }
 
@@ -151,7 +151,7 @@ pub trait EmulatorBackend: Sync {
     /// its number and, for Disney Infinity, its series. For the Toy Pad, the
     /// vehicles and gadgets too, which name a tag the game wrote one to; the
     /// menu makes none of them.
-    fn toy_list(&self, _app: &AppHandle, _pid: u32, _toy: Toy) -> Result<Vec<ToyFigure>, String> {
+    fn toy_list(&self, _app: &AppHandle, _pid: u32, _toy: Toy) -> Result<Listed<ToyFigure>, String> {
         Err(NO_TOY.to_string())
     }
 
@@ -462,6 +462,57 @@ pub trait EmulatorBackend: Sync {
     }
 }
 
+/// A figure maker's list as read, and whether the read reached both ends
+/// of it (qt.rs, `step_through`). A maker read some other way is whole once
+/// read.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Listed<T> {
+    pub items: Vec<T>,
+    pub whole: bool,
+}
+
+impl<T> Listed<T> {
+    pub fn whole(items: Vec<T>) -> Self {
+        Self { items, whole: true }
+    }
+}
+
+/// What a menu offers of a maker's list, and what it keeps of it for next
+/// time, if that changed. `kept` is the list kept before, with the version
+/// of the emulator it came from. A whole list kept for this `version` is
+/// offered without asking the emulator. Otherwise the list is read: a whole
+/// read is offered and kept. A read cut short is offered joined with what
+/// was kept, which names the same figures if maybe not the newest, and kept
+/// as not whole, so the next time the menu opens reads it again. A read
+/// that fails leaves the kept list to offer: Cemu's maker took a minute to
+/// show while a game ran (28 October 2026), and the menu showed none.
+pub fn kept_or_read<T: Clone>(
+    kept: Option<(String, Listed<T>)>,
+    version: &str,
+    read: impl FnOnce() -> Result<Listed<T>, String>,
+    same: impl Fn(&T, &T) -> bool,
+) -> (Result<Vec<T>, String>, Option<Listed<T>>) {
+    let kept = kept.filter(|(_, kept)| !kept.items.is_empty());
+    if let Some((from, kept)) = &kept {
+        if from == version && kept.whole {
+            return (Ok(kept.items.clone()), None);
+        }
+    }
+    match read() {
+        Ok(read) if read.whole => (Ok(read.items.clone()), Some(read)),
+        Ok(read) => {
+            let mut items = read.items;
+            for item in kept.into_iter().flat_map(|(_, kept)| kept.items) {
+                if !items.iter().any(|known| same(known, &item)) {
+                    items.push(item);
+                }
+            }
+            (Ok(items.clone()), Some(Listed { items, whole: false }))
+        }
+        Err(why) => (kept.map(|(_, kept)| kept.items).ok_or(why), None),
+    }
+}
+
 /// One folder in an emulator's storage that holds a game's saves.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SaveFolder {
@@ -701,6 +752,33 @@ fn consoles<'a>(names: impl Iterator<Item = &'a str>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_whole_list_is_kept_without_reading_again() {
+        let same = |a: &&str, b: &&str| a == b;
+        let whole = |items: &[&'static str]| Listed::whole(items.to_vec());
+        let cut = |items: &[&'static str]| Listed { items: items.to_vec(), whole: false };
+        let unread = || -> Result<Listed<&str>, String> { panic!("read again") };
+        // A whole list kept for this version is offered as it is.
+        let kept = Some(("20564".to_string(), whole(&["Bash", "Zook"])));
+        assert_eq!(kept_or_read(kept, "20564", unread, same), (Ok(vec!["Bash", "Zook"]), None));
+        // One cut short, or kept before Omoio said whether it was whole, is
+        // read again, and a whole read takes its place.
+        let kept = Some(("20564".to_string(), cut(&["Series 2 Bash", "Zook"])));
+        let read = || Ok(whole(&["Bash", "Series 2 Bash", "Zook"]));
+        let fresh = whole(&["Bash", "Series 2 Bash", "Zook"]);
+        assert_eq!(kept_or_read(kept, "20564", read, same), (Ok(fresh.items.clone()), Some(fresh)));
+        // A read cut short is offered with what was kept, and kept as not
+        // whole, so it is read once more next time.
+        let kept = Some(("20500".to_string(), whole(&["Bash", "Zook"])));
+        let read = || Ok(cut(&["Whirlwind", "Zook"]));
+        let joined = cut(&["Whirlwind", "Zook", "Bash"]);
+        assert_eq!(kept_or_read(kept, "20564", read, same), (Ok(joined.items.clone()), Some(joined)));
+        // A read that fails leaves the kept list, from any version.
+        let kept = Some(("20500".to_string(), cut(&["Zook"])));
+        assert_eq!(kept_or_read(kept, "20564", || Err("busy".to_string()), same), (Ok(vec!["Zook"]), None));
+        assert_eq!(kept_or_read(None, "20564", || Err("busy".to_string()), same), (Err("busy".to_string()), None));
+    }
 
     #[test]
     fn a_folder_of_several_games_is_told_so() {
