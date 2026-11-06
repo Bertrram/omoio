@@ -6,7 +6,8 @@
 ; that page, an install that is gone is forgotten: when neither its
 ; uninstaller nor its main program is where its keys say, the keys an
 ; install writes (lines 682 to 718) are removed as the uninstaller removes
-; them (lines 853 to 879). The page then finds nothing (lines 217 to 220),
+; them (lines 853 to 879). An install on a drive that isn't there now, such
+; as an external one unplugged, is left alone. The page then finds nothing (lines 217 to 220),
 ; the installer goes on as a fresh install, and Windows' list of installed
 ; apps loses the dead entry. No file or folder is touched. An install still
 ; there, Omoio's own updates (/UPDATE) and a silent install go as before.
@@ -38,6 +39,7 @@ Function ForgetGoneInstall
   Push $0
   Push $1
   Push $2
+  Push $3
   ClearErrors
   ${GetOptions} $CMDLINE "/UPDATE" $0
   ${If} ${Errors}
@@ -47,9 +49,11 @@ Function ForgetGoneInstall
     ; Both paths are written in quotes (lines 702 and 703).
     ${WordReplace} $0 '"' "" "+" $0
     ${WordReplace} $1 '"' "" "+" $1
+    ${GetRoot} $1 $3
     ${If} $0 != ""
     ${AndIf} $1 != ""
     ${AndIf} $2 != ""
+    ${AndIf} ${FileExists} "$3\*.*"
     ${AndIfNot} ${FileExists} "$0"
     ${AndIfNot} ${FileExists} "$1\$2"
       DeleteRegKey SHCTX "${OMOIO_UNINSTKEY}"
@@ -57,6 +61,7 @@ Function ForgetGoneInstall
       DeleteRegKey /ifempty SHCTX "${OMOIO_MANUKEY}"
     ${EndIf}
   ${EndIf}
+  Pop $3
   Pop $2
   Pop $1
   Pop $0
