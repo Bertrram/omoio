@@ -191,8 +191,12 @@ bright, a known RPCS3 problem.
 
 In LEGO Dimensions, minifigures go on any pad and can be moved from one pad to
 another when the game asks. For a vehicle or gadget, put a Blank Tag on the
-centre pad and build it in the game, which writes it to the tag. On PS3 Omoio
-can't see the colours the game lights the pads in.
+centre pad and build it in the game, which writes it to the tag. The tag then
+shows the vehicle's name. On PS3 Omoio can't see the colours the game lights
+the pads in.
+
+To name one of your own tags or figures, select it and press F2, or Menu on the
+pad. Type the name, then Enter to save or Esc to leave.
 
 Get pictures in the game's panel reads the figures' pictures from your own copy
 of Disney Infinity 1.0 or LEGO Dimensions, as it does for Skylanders. The menus
